@@ -80,7 +80,7 @@ function convValues(cvs, cols) {
     let val = null;
     try {
       if (c.type === 'status') val = cv.value ? String(JSON.parse(cv.value).index) : null;
-      else if (c.type === 'date') val = cv.value ? JSON.parse(cv.value).date : null;
+      else if (c.type === 'date') { const dv = cv.value ? JSON.parse(cv.value) : null; val = dv ? dv.date : null; if (dv && dv.time) v[c.id + '__t'] = dv.time; }
       else if (c.type === 'number') { const t = String(cv.text || '').replace(/,/g, ''); val = t ? Number(t) : null; if (Number.isNaN(val)) val = null; }
       else if (c.type === 'checkbox') val = cv.value ? (JSON.parse(cv.value).checked === true || JSON.parse(cv.value).checked === 'true') : null;
       else if (c.type === 'link') { const l = cv.value ? JSON.parse(cv.value) : null; val = l && l.url ? (l.text && l.text !== l.url ? l.text + ' | ' + l.url : l.url) : null; }

@@ -536,6 +536,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
       case 'number': { if (v === '' || v == null) return ''; const n = Number(v); return c.format === 'percent' ? n / 100 : n; }
       case 'status': return (labelOf(c, v) || {}).label || '';
       case 'checkbox': return !!v;
+      case 'date': { const t = (item.values || {})[id + '__t']; return v ? (t ? `${v}T${t}Z` : v) : ''; }
       case 'item_id': return String(item.mondayId || item.id);
       case 'created': return String(item.createdAt || '').slice(0, 10);
       default: return v == null ? '' : v;
