@@ -87,7 +87,7 @@ function convValues(cvs, cols) {
       else if (c.type === 'date') { const dv = cv.value ? JSON.parse(cv.value) : null; val = dv ? dv.date : null; if (dv && dv.date && dv.time) { const iso = `${dv.date}T${dv.time}Z`; v[c.id + '__dt'] = iso; val = localDay(iso); } }
       else if (c.type === 'number') { const t = String(cv.text || '').replace(/,/g, ''); val = t ? Number(t) : null; if (Number.isNaN(val)) val = null; }
       else if (c.type === 'checkbox') val = cv.value ? (JSON.parse(cv.value).checked === true || JSON.parse(cv.value).checked === 'true') : null;
-      else if (c.type === 'link') { const l = cv.value ? JSON.parse(cv.value) : null; val = l && l.url ? (l.text && l.text !== l.url ? l.text + ' | ' + l.url : l.url) : null; }
+      else if (c.type === 'link') val = cv.text || null; // Monday's own format: "name - https://…"
       else if (['formula', 'button', 'item_id', 'created'].includes(c.type)) val = null;
       else val = cv.text || null;
     } catch (e) { val = null; }

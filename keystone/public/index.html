@@ -555,7 +555,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     for (const c of b.columns) if (c.type === 'status') { const v = (item.values || {})[c.id]; if (v === undefined || v === null || v === '') { const d = (c.labels || []).find(l => l.id === '5' && l.label && l.label !== '(blank)'); if (d) item.values = { ...(item.values || {}), [c.id]: '5' }; } }
     return item;
   }
-  function linkParts(v) { const s2 = String(v || ''); const i = s2.lastIndexOf(' | '); const url = i >= 0 ? s2.slice(i + 3) : s2; return { text: i >= 0 ? s2.slice(0, i) : s2, url: /^https?:\/\//i.test(url) ? url : '' }; }
+  function linkParts(v) { const s2 = String(v || ''); const m = /^(.*?)\s+[-|]\s+(https?:\/\/\S+)$/i.exec(s2); if (m) return { text: m[1], url: m[2] }; return { text: s2, url: /^https?:\/\//i.test(s2) ? s2 : '' }; }
   const filterCount = () => Object.values(S.filters).filter(v => v && v.length).length;
   const toast = msg => { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; $('#toasts').appendChild(t); setTimeout(() => t.remove(), 2600); };
   function $(s) { return document.querySelector(s); }
