@@ -425,6 +425,25 @@ td.currency::before, td.percent::after { color: var(--muted); }
 .ov-rows span { display: flex; justify-content: space-between; gap: 10px; }
 .ring { width: 104px; height: 104px; flex: none; }
 .home-skel { color: var(--muted); text-align: center; padding: 40px 0; }
+.ff-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.ff-head h4 { margin: 0; font-size: 15px; font-weight: 600; }
+.ff-bar { height: 4px; border-radius: 99px; background: rgba(255,255,255,0.08); overflow: hidden; margin-top: 8px; }
+.ff-bar span { display: block; height: 100%; background: #fff; box-shadow: 0 0 10px rgba(255,255,255,0.6); }
+.ff { display: flex; flex-direction: column; gap: 14px; }
+.ff-q { display: flex; flex-direction: column; gap: 6px; }
+.ff-q label { font-size: 13px; color: rgba(255,255,255,0.82); font-weight: 500; display: flex; gap: 8px; align-items: baseline; }
+.ff-q label .n { color: var(--muted); font-family: var(--f-data); font-size: 11px; min-width: 18px; }
+.ff-q .hint { font-size: 12px; color: var(--muted); margin: -2px 0 0 26px; }
+.ff-box { margin-left: 26px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,0.035); position: relative; min-height: 40px; display: flex; align-items: center; }
+.ff-box.done { border-color: rgba(255,255,255,0.18); }
+.ff-box .cell-input { height: 40px; }
+.ff-box textarea.cell-input { min-height: 74px; }
+.ff-box .chip { width: auto; margin: 6px; padding: 0 12px; justify-content: flex-start; }
+.name-open { flex: 1; min-width: 0; text-align: left; border: 0; background: none; color: #fff; height: 37px; padding: 0 4px; font: inherit; display: flex; align-items: center; gap: 8px; }
+.name-open:active { background: rgba(255,255,255,0.06); }
+.upd-count { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; font-family: var(--f-data); }
+@media (max-width: 780px) { .board .name-cell { min-width: 190px; max-width: 220px; } .grip { display: none; } .scrim { z-index: 26; } .drawer { z-index: 27; border-radius: 0; } }
+.ff-box.currency::before { content: "$"; position: absolute; left: 10px; color: var(--muted); font-family: var(--f-data); }
 
 /* ---------- Bottom nav (phones) ---------- */
 .bnav { display: none; }
@@ -581,6 +600,8 @@ td.currency::before, td.percent::after { color: var(--muted); }
     if (renderTimer) return;
     renderTimer = setTimeout(() => { renderTimer = null; if (isEditing()) { S.pendingRender = true; return; } render(); }, S.importing && !S.importing.finished ? 1500 : 40);
   }
+  let wasNarrow = window.matchMedia('(max-width: 780px)').matches;
+  window.addEventListener('resize', () => { const n = window.matchMedia('(max-width: 780px)').matches; if (n !== wasNarrow) { wasNarrow = n; scheduleRender(); } });
   document.addEventListener('focusout', () => setTimeout(() => { if (S.pendingRender && !isEditing()) { S.pendingRender = false; render(); } }, 0));
 
   function render() {
@@ -731,6 +752,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
 
   function renderTable(b) {
     const items = visibleItems();
+    const narrow = window.matchMedia('(max-width: 780px)').matches;
     const cols = visCols(b);
     const sortMark = id => S.sort && S.sort.col === id ? `<span class="th-sort">${S.sort.dir === 'desc' ? '↓' : '↑'}</span>` : '';
     const head = cols.map(c => `<th class="w-${c.type}"><button class="col-head" data-act="col-menu" data-col="${esc(c.id)}" title="Sort, filter or hide">${esc(c.title)} ${sortMark(c.id)}${(S.filters[c.id] || []).length ? '<span class="th-filter" title="Filtered"></span>' : ''}</button></th>`).join('');
@@ -747,7 +769,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
         const exp = S.expanded.has(i.id) && subs.length;
         const sel = S.selected.has(i.id);
         const row = `<tr data-row="${esc(i.id)}" data-group="${esc(g.id)}" class="${sel ? 'sel' : ''}">
-          <td class="name-cell"><div class="name-wrap">${S.canWrite ? `<span class="grip" draggable="true" data-rowdrag="${esc(i.id)}" title="Drag to move" aria-hidden="true">⋮⋮</span>` : ''}<input type="checkbox" class="rowcheck" data-sel="${esc(i.id)}" ${sel ? 'checked' : ''} aria-label="Select ${esc(i.name)}">${subs.length ? `<button class="sub-toggle" data-act="subs" data-item="${esc(i.id)}" aria-expanded="${!!exp}" title="Subitems">${exp ? '▾' : '▸'} ${subs.length}</button>` : ''}<input class="cell-input" data-edit="name" data-item="${esc(i.id)}" value="${esc(i.name)}" aria-label="Item name" ${S.canWrite ? '' : 'readonly'} style="padding-left:2px"><button class="open-btn" data-act="open" data-item="${esc(i.id)}">Open${(i.updates || []).length ? ' · ' + i.updates.length : ''}</button></div></td>
+          <td class="name-cell"><div class="name-wrap">${S.canWrite ? `<span class="grip" draggable="true" data-rowdrag="${esc(i.id)}" title="Drag to move" aria-hidden="true">⋮⋮</span>` : ''}<input type="checkbox" class="rowcheck" data-sel="${esc(i.id)}" ${sel ? 'checked' : ''} aria-label="Select ${esc(i.name)}">${subs.length ? `<button class="sub-toggle" data-act="subs" data-item="${esc(i.id)}" aria-expanded="${!!exp}" title="Subitems">${exp ? '▾' : '▸'} ${subs.length}</button>` : ''}${narrow ? `<button class="name-open" data-act="open" data-item="${esc(i.id)}">${esc(i.name)}${(i.updates || []).length ? `<span class="upd-count">${i.updates.length}</span>` : ''}</button>` : `<input class="cell-input" data-edit="name" data-item="${esc(i.id)}" value="${esc(i.name)}" aria-label="Item name" ${S.canWrite ? '' : 'readonly'} style="padding-left:2px"><button class="open-btn" data-act="open" data-item="${esc(i.id)}">Open${(i.updates || []).length ? ' · ' + i.updates.length : ''}</button>`}</div></td>
           ${cols.map(c => `<td class="c-${c.type} ${c.type === 'number' ? 'num-cell' : ''} ${c.format || ''}">${cellEditor(c, i)}</td>`).join('')}<td></td>
         </tr>`;
         const subRow = exp ? `<tr class="sub-row"><td colspan="${span}"><table class="subtable"><thead><tr><th>Subitem</th>${subCols.map(c => `<th>${esc(c.title)}</th>`).join('')}</tr></thead><tbody>${subs.map(x => `<tr><td>${esc(x.name)}</td>${subCols.map(c => { const v = (x.values || {})[c.id]; const l = c.type === 'status' && labelOf(c, v); return l ? `<td><span class="pill" style="--c:${esc(l.color)}">${esc(l.label)}</span></td>` : `<td>${esc(v == null ? '' : describe(c, v) === 'empty' ? '' : describe(c, v))}</td>`; }).join('')}</tr>`).join('')}</tbody></table></td></tr>` : '';
@@ -854,7 +876,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
           <div class="drawer-head"><input class="drawer-title" data-edit="name" data-item="${esc(i.id)}" value="${esc(i.name)}" aria-label="Item name" ${S.canWrite ? '' : 'readonly'}>
             <div class="drawer-actions">${S.canWrite ? `<button class="btn" data-act="dup-item" data-item="${esc(i.id)}">Duplicate</button>` : ''}<button class="btn" data-act="close-item">Close</button></div></div>
           <div class="drawer-tabs" role="tablist">
-            ${[['updates', `Updates · ${(i.updates || []).length}`], ['info', 'Info'], ['activity', 'Activity log']].map(([k, l]) => `<button class="drawer-tab" role="tab" data-act="dtab" data-tab="${k}" aria-selected="${S.drawerTab === k}">${l}</button>`).join('')}
+            ${[...(b.form ? [['fact', 'Fact find']] : []), ['updates', `Updates · ${(i.updates || []).length}`], ['info', 'Info'], ['activity', 'Activity log']].map(([k, l]) => `<button class="drawer-tab" role="tab" data-act="dtab" data-tab="${k}" aria-selected="${S.drawerTab === k}">${l}</button>`).join('')}
           </div>
           <div class="drawer-body">
             ${S.drawerTab === 'info' ? `<div class="fields">${fields}${groupSel}</div>
@@ -863,6 +885,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
             ${S.drawerTab === 'updates' ? `<div>
               ${S.canWrite ? `<div class="composer"><textarea id="update-text" placeholder="Write an update. Call notes, next steps, what the client said."></textarea><div><button class="btn primary" data-act="post-update" data-item="${esc(i.id)}">Post update</button></div></div>` : ''}
               <div style="margin-top:12px">${updates || '<p class="rail-note">No updates yet. Post the first one above.</p>'}</div></div>` : ''}
+            ${S.drawerTab === 'fact' && b.form ? renderFactFind(b, i) : ''}
             ${S.drawerTab === 'activity' ? `<ul class="log">${log || '<li>No activity yet.</li>'}</ul>` : ''}
           </div>
         </aside>`;
@@ -981,6 +1004,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
           <select class="field-input" data-role-for="${esc(u.id)}" aria-label="Role for ${esc(u.name)}" ${u.id === S.uid ? 'disabled' : ''}>${['admin', 'member', 'viewer'].map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r[0].toUpperCase() + r.slice(1)}</option>`).join('')}</select>
           <input class="field-input" id="pw-${esc(u.id)}" type="password" placeholder="New password" aria-label="New password for ${esc(u.name)}" style="width:150px" autocomplete="new-password">
           <button class="icon-btn" data-act="reset-pw" data-id="${esc(u.id)}">Set password</button>
+          <select class="field-input" data-home-for="${esc(u.id)}" aria-label="Board ${esc(u.name)} opens to"><option value="">Opens to: Home</option>${S.boards.map(x => `<option value="${esc(x.id)}" ${x.id === u.home_board ? 'selected' : ''}>Opens to: ${esc(x.name)}</option>`).join('')}</select>
           ${u.id === S.uid ? '' : `<button class="icon-btn" data-act="toggle-person" data-id="${esc(u.id)}" data-off="${u.disabled ? 1 : 0}">${u.disabled ? 'Turn on' : 'Turn off'}</button>`}</div>`).join('');
       return `<h3>Team and settings</h3>
         <p>Admins manage people and workspace settings. Members change boards. Viewers only look.</p>
@@ -1040,7 +1064,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
       case 'sheet-profile': S.modal = { type: 'profile' }; renderLayer(); break;
       case 'quick-new': { const b2 = board(); if (b2 && b2.groups[0]) { S.page = 'board'; savePage(); render(); addItem(b2.groups[0].id, 'New lead', true); } else toast('Open a board first.'); break; }
       case 'view': S.view = t.dataset.v; try { localStorage.setItem('ks-view', S.view); } catch (x) {} render(); break;
-      case 'open': S.openItem = t.dataset.item; S.drawerTab = 'updates'; renderLayer(); fillNames(); break;
+      case 'open': S.openItem = t.dataset.item; S.drawerTab = (board() && board().form) ? 'fact' : 'updates'; renderLayer(); fillNames(); break;
       case 'close-item': S.openItem = null; renderLayer(); break;
       case 'subs': { const id = t.dataset.item; S.expanded.has(id) ? S.expanded.delete(id) : S.expanded.add(id); renderContent(); break; }
       case 'more': { const g = t.dataset.group; S.shown[g] = (S.shown[g] || PAGE) + PAGE; renderContent(); break; }
@@ -1168,6 +1192,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
       [...S.selected].map(itemById).filter(Boolean).forEach(i => { if (i.group === g.id) return; const activity = act(i, `Moved to “${g.name}”`); i.group = g.id; i.activity = activity; patchItem(i.id, { group: g.id, activity }); });
       toast(`Moved ${S.selected.size} items to ${g.name}`); S.selected = new Set(); render(); return;
     }
+    if (t.dataset && t.dataset.homeFor) { KS.updateUser(t.dataset.homeFor, { homeBoard: t.value }).then(() => { S.modal.msg = 'Saved. They land there next time they sign in.'; loadTeam(); }).catch(err => { S.modal.msg = err.message; renderLayer(); }); return; }
     if (t.dataset && t.dataset.roleFor) { KS.updateUser(t.dataset.roleFor, { role: t.value }).then(loadTeam).catch(err => { S.modal.msg = err.message; renderLayer(); }); return; }
     if (t.id === 'person-filter') { S.person = t.value; S.shown = {}; return render(); }
     if (t.id === 'r-col' || t.id === 'r-action' || t.id === 'r-tcol') {
@@ -1388,6 +1413,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
   async function checkImport() {
     try { S.isOwner = !!(S.user && await S.user.isOwner()); } catch (e) {}
     try { if (S.user) S.me = await S.user.me(); } catch (e) {}
+    tryLand();
     render();
     if (!S.isOwner) return;
     try { const d = await S.db.doc('meta/import').get(); S.importState = d.exists ? d.data() : {}; } catch (e) { S.importState = {}; }
@@ -1418,6 +1444,27 @@ td.currency::before, td.percent::after { color: var(--muted); }
     catch (e) { S.modal.msg = e.message; renderLayer(); }
   }
 
+  function renderFactFind(b, i) {
+    const qs = b.form.questions.map(q => ({ ...q, col: b.columns.find(c => c.id === q.col) })).filter(q => q.col);
+    const has = c => { const v = (i.values || {})[c.id]; return v !== undefined && v !== null && v !== ''; };
+    const done = qs.filter(q => has(q.col)).length;
+    return `<div class="ff-head"><div><h4>${esc(b.form.title || 'Fact find')}</h4><span class="group-count">${done} of ${qs.length} answered</span></div></div>
+      <div class="ff-bar"><span style="width:${qs.length ? (done / qs.length) * 100 : 0}%"></span></div>
+      <div class="ff">${qs.map((q, k) => `<div class="ff-q"><label><span class="n">${k + 1}</span>${esc(q.q || q.col.title)}</label>${q.desc ? `<span class="hint">${esc(q.desc)}</span>` : ''}
+        <div class="ff-box ${has(q.col) ? 'done' : ''} ${q.col.format === 'currency' ? 'currency' : ''} ${q.col.format === 'percent' ? 'percent' : ''}" ${q.col.format === 'currency' ? 'style="padding-left:12px"' : ''}>${cellEditor(q.col, i, true)}</div></div>`).join('')}</div>`;
+  }
+  // After sign-in, setters land on their own board (set under Team & settings, or matched by name, e.g. "Setter Desk (Jan)").
+  function tryLand() {
+    if (S.landed || !S.boards.length || !S.me) return false;
+    S.landed = true;
+    let seen = false; try { seen = !!sessionStorage.getItem('ks-landed'); sessionStorage.setItem('ks-landed', '1'); } catch (x) {}
+    if (seen) return false;
+    const first = String(S.me.name || '').split(/\s+/)[0].toLowerCase();
+    const own = S.boards.find(b => b.id === S.me.homeBoard) || (first && first !== 'your' && S.boards.find(b => /setter desk/i.test(b.name) && b.name.toLowerCase().includes('(' + first)));
+    if (!own) return false;
+    S.page = 'board'; S.view = 'table'; savePage(); S.boardId = null; selectBoard(own.id); render();
+    return true;
+  }
   function savePage() { try { localStorage.setItem('ks-page', S.page); localStorage.setItem('ks-view', S.view); } catch (e) {} }
   let summaryBusy = false;
   async function loadSummary(force) {
@@ -1498,6 +1545,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     db.collection('boards').onSnapshot(snap => {
       S.boards = snap.docs.map(d => ({ id: d.id, ...structuredClone(d.data()) })).sort((a, b) => (a.order || 0) - (b.order || 0));
       if (!snap.metadata.fromCache) { S.status = 'ready'; clearTimeout(slow); }
+      if (tryLand()) return;
       if (!S.boards.some(b => b.id === S.boardId) || !S.itemsUnsub) {
         const inWs = S.boards.find(b => wsOf(b).id === S.ws);
         const pick = S.boards.some(b => b.id === S.boardId) ? S.boardId : (inWs || S.boards[0] || {}).id;

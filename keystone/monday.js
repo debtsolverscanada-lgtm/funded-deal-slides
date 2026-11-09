@@ -95,7 +95,7 @@ async function syncFromMonday({ token, workspaceIds, save, removeStale, onProgre
     const w = (await gql(token, `{ workspaces(ids: [${Number(ws)}]) { id name } }`)).workspaces[0];
     const workspace = { id: String(ws), name: w ? w.name : String(ws) };
     const boards = (await gql(token, `{ boards(workspace_ids: [${Number(ws)}], limit: 500) { id name type items_count
-      groups { id title color position } columns { id title type settings_str } } }`)).boards;
+      groups { id title color position } columns { id title type settings_str } views { id name type settings_str } } }`)).boards;
     const folders = (await gql(token, `{ folders(workspace_ids: [${Number(ws)}]) { id name children { id } } }`)).folders;
     const folderOf = new Map(); folders.forEach(f => (f.children || []).forEach(ch => folderOf.set(String(ch.id), f.name)));
     const subBoards = new Map(boards.filter(b => b.type === 'sub_items_board').map(b => [b.name, b]));
@@ -110,6 +110,7 @@ async function syncFromMonday({ token, workspaceIds, save, removeStale, onProgre
       save('boards/' + bid, 'boards', bid, {
         name: b.name, order: ++order, workspace, folder: folderOf.get(String(b.id)) || '', source: 'monday', mondayId: b.id, syncedAt: at,
         groups: groups.map(g => ({ id: g.id, name: g.title, color: g.color || '#579bfc' })), columns: cols, subColumns: subCols, automations: [],
+        form: convForm(b.views, cols),
       }, { keep: ['automations'] });
       const seen = new Set();
       let pos = 0, cursor = null;
@@ -140,4 +141,18 @@ async function syncFromMonday({ token, workspaceIds, save, removeStale, onProgre
   return { boards: boardsDone, items: itemsDone, at };
 }
 
-module.exports = { syncFromMonday };
+// The board's Monday Form view, as an ordered list of fact-find questions tied to columns.
+function convForm(views, cols) {
+  const ids = new Set(cols.map(c => c.id));
+  for (const v of views || []) {
+    if (v.type !== 'FormBoardView') continue;
+    let st = {}; try { st = JSON.parse(v.settings_str || '{}') || {}; } catch (e) { continue; }
+    const qs = st.columns || {}, order = st.sortedQuestionsList || Object.keys(qs);
+    const questions = order.map(id => ({ id, q: qs[id] })).filter(({ id, q }) => q && q.visible && ids.has(id))
+      .map(({ id, q }) => ({ col: id, q: String(q.question || '').trim(), desc: String(q.description || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() }));
+    if (questions.length) return { title: st.formTitle || v.name || 'Fact find', questions };
+  }
+  return null;
+}
+
+module.exports = { syncFromMonday, convForm, convColumns };

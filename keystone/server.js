@@ -47,6 +47,7 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS docs_col ON docs(col);
 `);
+try { db.exec('ALTER TABLE users ADD COLUMN home_board TEXT'); } catch (e) { /* already there */ }
 
 // ---------- helpers ----------
 const now = () => new Date().toISOString();
@@ -82,7 +83,7 @@ function merge(target, patch) {
 const q = {
   userByEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
   userById: db.prepare('SELECT * FROM users WHERE id = ?'),
-  users: db.prepare('SELECT id, email, name, role, created_at, disabled FROM users ORDER BY name'),
+  users: db.prepare('SELECT id, email, name, role, created_at, disabled, home_board FROM users ORDER BY name'),
   userCount: db.prepare('SELECT COUNT(*) AS n FROM users'),
   insertUser: db.prepare('INSERT INTO users (id, email, name, role, pw, created_at) VALUES (?, ?, ?, ?, ?, ?)'),
   session: db.prepare('SELECT s.token, s.expires, u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?'),
@@ -149,9 +150,9 @@ function currentUser(req) {
   if (!token) return null;
   const row = q.session.get(token);
   if (!row || row.disabled || row.expires < now()) return null;
-  return { id: row.id, email: row.email, name: row.name, role: row.role, token };
+  return { id: row.id, email: row.email, name: row.name, role: row.role, homeBoard: row.home_board || '', token };
 }
-const publicUser = u => ({ id: u.id, email: u.email, name: u.name, role: u.role });
+const publicUser = u => ({ id: u.id, email: u.email, name: u.name, role: u.role, homeBoard: u.homeBoard ?? u.home_board ?? '' });
 const canWrite = u => u && (u.role === 'admin' || u.role === 'member');
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json' };
@@ -229,6 +230,7 @@ async function api(req, res, url) {
       if (b.password && String(b.password).length < 8) throw new HttpError(400, 'Passwords need at least 8 characters.');
       if (b.role) db.prepare('UPDATE users SET role = ? WHERE id = ?').run(b.role, target.id);
       if (b.name) db.prepare('UPDATE users SET name = ? WHERE id = ?').run(String(b.name).trim(), target.id);
+      if (typeof b.homeBoard === 'string') db.prepare('UPDATE users SET home_board = ? WHERE id = ?').run(b.homeBoard || null, target.id);
       if (b.password) { db.prepare('UPDATE users SET pw = ? WHERE id = ?').run(hashPassword(String(b.password)), target.id); q.deleteUserSessions.run(target.id); }
       if (typeof b.disabled === 'boolean') {
         if (target.id === user.id) throw new HttpError(400, 'You can’t turn off your own account.');
