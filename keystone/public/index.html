@@ -439,6 +439,15 @@ td.currency::before, td.percent::after { color: var(--muted); }
 .ff-box .cell-input { height: 40px; }
 .ff-box textarea.cell-input { min-height: 74px; }
 .ff-box .chip { width: auto; margin: 6px; padding: 0 12px; justify-content: flex-start; }
+.ro.fx { color: #fff; font-variant-numeric: tabular-nums; text-align: right; }
+.col-btn { margin: 0 6px; width: calc(100% - 12px); height: 28px; border-radius: 999px; border: 1px solid var(--line); background: rgba(255,255,255,0.06); color: #fff; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.col-btn:hover { background: rgba(255,255,255,0.12); }
+.cb { display: flex; justify-content: center; align-items: center; height: 37px; }
+.cb input { width: 16px; height: 16px; accent-color: #fff; }
+.dd-cell { gap: 4px; flex-wrap: nowrap; overflow: hidden; }
+.link-cell { display: flex; align-items: center; }
+.link-cell a { color: #fff; text-decoration: none; padding: 0 8px; opacity: .7; }
+.w-formula { width: 140px; } .w-button { width: 130px; } .w-checkbox { width: 90px; } .w-dropdown { width: 170px; } .w-link { width: 200px; } .w-item_id, .w-created { width: 130px; }
 .name-open { flex: 1; min-width: 0; text-align: left; border: 0; background: none; color: #fff; height: 37px; padding: 0 4px; font: inherit; display: flex; align-items: center; gap: 8px; }
 .name-open:active { background: rgba(255,255,255,0.06); }
 .upd-count { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; font-family: var(--f-data); }
@@ -478,6 +487,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
 <div id="layer"></div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 
+<script src="/formula.js"></script>
 <script src="/ks-client.js"></script>
 <script>
 (() => {
@@ -516,6 +526,29 @@ td.currency::before, td.percent::after { color: var(--muted); }
   function loadHidden() { try { S.hidden = new Set(JSON.parse(localStorage.getItem('ks-hidden-' + S.boardId) || '[]')); } catch (e) { S.hidden = new Set(); } }
   function saveHidden() { try { localStorage.setItem('ks-hidden-' + S.boardId, JSON.stringify([...S.hidden])); } catch (e) {} }
   const visCols = b => b.columns.filter(c => !S.hidden.has(c.id));
+  // ---- formulas: same rules as Monday (empty numbers count as 0, % columns as fractions) ----
+  function refValue(b, item, id, depth) {
+    if (id === 'name') return item.name || '';
+    const c = b.columns.find(x => x.id === id); if (!c) return '';
+    const v = (item.values || {})[id];
+    switch (c.type) {
+      case 'formula': { const r = formulaResult(b, item, c, depth); return r.error ? '' : r.value; }
+      case 'number': { if (v === '' || v == null) return ''; const n = Number(v); return c.format === 'percent' ? n / 100 : n; }
+      case 'status': return (labelOf(c, v) || {}).label || '';
+      case 'checkbox': return !!v;
+      case 'item_id': return String(item.mondayId || item.id);
+      case 'created': return String(item.createdAt || '').slice(0, 10);
+      default: return v == null ? '' : v;
+    }
+  }
+  function formulaResult(b, item, c, depth = 0) {
+    const refs = [...String(c.formula || '').matchAll(/\{([^}]+)\}/g)].map(m => m[1]);
+    const r = KSFormula.evaluate(c.formula, (id, d) => refValue(b, item, id, d), depth);
+    // Monday leaves an IF over number columns blank until any of those numbers is filled in.
+    if (!r.error && /^\s*IF\s*\(/i.test(c.formula) && refs.length && refs.every(id => { const x = b.columns.find(k => k.id === id); return x && x.type === 'number'; }) && refs.every(id => { const v = (item.values || {})[id]; return v === '' || v == null; })) return { value: '' };
+    return r;
+  }
+  function linkParts(v) { const s2 = String(v || ''); const i = s2.lastIndexOf(' | '); const url = i >= 0 ? s2.slice(i + 3) : s2; return { text: i >= 0 ? s2.slice(0, i) : s2, url: /^https?:\/\//i.test(url) ? url : '' }; }
   const filterCount = () => Object.values(S.filters).filter(v => v && v.length).length;
   const toast = msg => { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; $('#toasts').appendChild(t); setTimeout(() => t.remove(), 2600); };
   function $(s) { return document.querySelector(s); }
@@ -554,37 +587,130 @@ td.currency::before, td.percent::after { color: var(--muted); }
     const old = (item.values || {})[colId] ?? '';
     if (old === value) return;
     const patch = { values: { [colId]: value } };
-    const lines = [{ text: `${col.title}: ${describe(col, old)} → ${describe(col, value)}` }];
-    if (col.type === 'status') runAutomations(b, item, colId, value, patch, lines);
+    const lines = [{ text: `${col.title}: ${describe(col, old)} → ${describe(col, value)}` }], after = [];
+    const groupBefore = item.group;
+    fireRules(b, item, { type: 'value', col: colId, value }, patch, lines, after);
+    if (patch.group && patch.group !== groupBefore) fireRules(b, item, { type: 'moved_group', group: patch.group }, patch, lines, after);
+    commitAuto(b, item, patch, lines, after);
+  }
+
+  // ---------- automation engine ----------
+  // Rule: { id, title, on, source, trigger: 'status'|'column'|'created'|'moved_group'|'button'|'date_arrives',
+  //         col, value, group, conditions: [{col, op: 'is'|'is_not'|'empty'|'not_empty', value}], actions: [...] }
+  // Messaging and outside tools (email, SMS, webhooks, app integrations) are never run here: they're logged only.
+  function normRule(r) {
+    if (r.trigger) return r;
+    return { ...r, trigger: 'status', value: r.label, actions: [r.action === 'move' ? { type: 'move_group', group: r.target } : { type: 'set_status', col: r.targetCol, value: r.targetLabel }] };
+  }
+  const rulesOf = b => (b.automations || []).map(normRule).filter(r => r.on !== false);
+  function condOk(b, item, vals, c) {
+    if (c.col === '__group') { const gid = c.value === '__top__' ? (b.groups[0] || {}).id : c.value; return c.op === 'is_not' ? item.group !== gid : item.group === gid; }
+    const v = vals[c.col], empty = v === '' || v == null || v === false;
+    switch (c.op) {
+      case 'empty': return empty; case 'not_empty': return !empty;
+      case 'is_not': return String(v ?? '') !== String(c.value ?? '');
+      case 'contains': return String(v ?? '').toLowerCase().includes(String(c.value ?? '').toLowerCase());
+      default: return Array.isArray(c.value) ? c.value.map(String).includes(String(v ?? '')) : String(v ?? '') === String(c.value ?? '');
+    }
+  }
+  function ymdPlus(days) { const d = new Date(); d.setDate(d.getDate() + Number(days || 0)); return ymd(d); }
+  // Applies a rule's actions into `patch` (values/group) and `lines` (activity). Returns extra work to do after saving.
+  function applyActions(b, item, rule, patch, lines, after) {
+    const name = rule.title ? `“${rule.title}”` : 'Automation';
+    for (const a of rule.actions || []) {
+      const col = a.col && b.columns.find(c => c.id === a.col);
+      switch (a.type) {
+        case 'move_group': { const g = a.group === '__top__' ? b.groups[0] : b.groups.find(x => x.id === a.group); if (g && (patch.group || item.group) !== g.id) { patch.group = g.id; lines.push({ auto: true, text: `${name} moved this to “${g.name}”` }); } break; }
+        case 'set_status': case 'set_value': { if (!col) break; patch.values[col.id] = a.value; lines.push({ auto: true, text: `${name} set ${col.title} to ${describe(col, a.value)}` }); break; }
+        case 'set_date': { if (!col) break; const v = ymdPlus(a.offset); patch.values[col.id] = v; lines.push({ auto: true, text: `${name} set ${col.title} to ${v}` }); break; }
+        case 'clear': { if (!col) break; patch.values[col.id] = ''; lines.push({ auto: true, text: `${name} cleared ${col.title}` }); break; }
+        case 'assign': { if (!col) break; const cur = splitPeople(patch.values[col.id] ?? (item.values || {})[col.id]); const v = [...new Set([...cur, a.value])].join(', '); patch.values[col.id] = v; lines.push({ auto: true, text: `${name} assigned ${a.value}` }); break; }
+        case 'create_update': lines.push({ auto: true, text: `${name} posted an update` }); after.push({ kind: 'update', text: a.value || a.message || '' }); break;
+        case 'move_board': after.push({ kind: 'move_board', board: a.board, group: a.group, name }); break;
+        case 'copy_to_board': after.push({ kind: 'copy_board', board: a.board, group: a.group, name }); break;
+        case 'duplicate': after.push({ kind: 'duplicate', name }); break;
+        case 'external': lines.push({ auto: true, text: `${name} would ${a.label} in Monday. Not run in Keystone, so nothing was sent.` }); break;
+        case 'notify': lines.push({ auto: true, text: `${name} would notify ${a.to || 'someone'} in Monday: ${a.message || ''}`.trim() }); break;
+        default: lines.push({ auto: true, text: `${name} would ${a.label || a.type.replace(/_/g, ' ')} in Monday. Not run in Keystone, so nothing was sent.` });
+      }
+    }
+  }
+  // Finds rules for an event and applies them. event: { type, col, value, group }
+  function fireRules(b, item, ev, patch, lines, after) {
+    const vals = { ...(item.values || {}), ...(patch.values || {}) };
+    const hit = rulesOf(b).filter(r => {
+      if (ev.type === 'value' && r.trigger === 'status' && r.col === ev.col) return r.value == null || r.value === '' ? true : String(r.value) === String(ev.value);
+      if (ev.type === 'value' && r.trigger === 'column' && r.col === ev.col) return r.value == null || r.value === '' || String(r.value) === String(ev.value);
+      if (ev.type === 'created' && r.trigger === 'created') return !r.group || r.group === ev.group;
+      if (ev.type === 'moved_board' && r.trigger === 'moved_board') return true;
+      if (ev.type === 'moved_group' && r.trigger === 'moved_group') return !r.group || r.group === ev.group || (r.group === '__top__' && b.groups[0] && b.groups[0].id === ev.group);
+      if (ev.type === 'button' && r.trigger === 'button') return r.col === ev.col;
+      return false;
+    }).filter(r => (r.conditions || []).every(c => condOk(b, { ...item, group: patch.group || item.group }, vals, c)));
+    hit.forEach(r => applyActions(b, item, r, patch, lines, after));
+    return hit;
+  }
+  function finishAfter(b, item, after) {
+    for (const x of after) {
+      if (x.kind === 'update' && x.text) { item.updates = [...(item.updates || []), { at: now(), by: 'automation', byName: 'Automation', text: x.text }]; patchItem(item.id, { updates: item.updates }); }
+      if (x.kind === 'move_board') moveItemToBoard(b, item, x.board, x.group, x.name, true);
+      if (x.kind === 'copy_board') moveItemToBoard(b, item, x.board, x.group, x.name, false);
+      if (x.kind === 'duplicate') duplicateItem(item, false);
+    }
+  }
+  function moveItemToBoard(b, item, targetBoardId, groupId, why, removeHere = true) {
+    const tb = S.boards.find(x => x.id === targetBoardId); if (!tb) { toast('The board this automation moves items to isn’t in Keystone.'); return; }
+    const g = (groupId === '__top__' ? tb.groups[0] : tb.groups.find(x => x.id === groupId)) || tb.groups[0];
+    const values = {};
+    Object.entries(item.values || {}).forEach(([k, v]) => { const sc = b.columns.find(c => c.id === k), tc = tb.columns.find(c => c.id === k) || (sc && tb.columns.find(c => c.title === sc.title && c.type === sc.type)); if (tc) values[tc.id] = v; });
+    const newId = removeHere ? item.id : rid('i');
+    const data = { ...item, values, group: g ? g.id : '', pos: Date.now(), activity: [{ at: now(), by: 'automation', text: `${why || 'Automation'} ${removeHere ? 'moved' : 'copied'} this here from “${b.name}”` }, ...(removeHere ? (item.activity || []) : [])].slice(0, 40) };
+    delete data.id; if (!removeHere) { delete data.mondayId; data.updates = []; data.createdAt = now(); }
+    // the target board's own "when an item is moved to / created on this board" rules
+    const tPatch = { values: {} }, tLines = [], tAfter = [];
+    fireRules(tb, { ...data, id: newId }, { type: removeHere ? 'moved_board' : 'created', group: data.group }, tPatch, tLines, tAfter);
+    Object.assign(data.values, tPatch.values); if (tPatch.group) data.group = tPatch.group;
+    tLines.forEach(l => { data.activity = [{ at: now(), by: 'automation', text: l.text }, ...data.activity].slice(0, 40); });
+    const dst = 'boards/' + tb.id + '/items/' + newId, src = 'boards/' + b.id + '/items/' + item.id;
+    const w = write(dst, () => S.db.doc(dst).set(data));
+    if (removeHere) { w.then(() => write(src, () => S.db.doc(src).delete())); S.items = S.items.filter(x => x.id !== item.id); if (S.openItem === item.id) S.openItem = null; }
+    toast(`${removeHere ? 'Moved' : 'Copied'} to ${tb.name}`); scheduleRender();
+  }
+  // Moving an item into a group by hand runs that group's "when moved to group" rules, like Monday.
+  function moveToGroup(b, item, groupId, extra = {}) {
+    const g = b.groups.find(x => x.id === groupId); if (!g || item.group === groupId) return;
+    const patch = { values: {}, group: groupId, ...extra }, lines = [{ text: `Moved to “${g.name}”` }], after = [];
+    fireRules(b, item, { type: 'moved_group', group: groupId }, patch, lines, after);
+    commitAuto(b, item, patch, lines, after);
+  }
+  // Runs rules picked by the caller (used by buttons).
+  function runRules(b, item, rules, why) {
+    const patch = { values: {} }, lines = [{ text: why }], after = [];
+    rules.forEach(r => applyActions(b, item, normRule(r), patch, lines, after));
+    commitAuto(b, item, patch, lines, after);
+  }
+  function commitAuto(b, item, patch, lines, after) {
     let activity = item.activity || [];
     lines.forEach(l => { activity = [{ at: now(), by: l.auto ? 'automation' : S.uid, text: l.text }, ...activity]; });
     patch.activity = activity.slice(0, 40);
-    // optimistic local update so the row reflects the change before the store answers
     item.values = { ...(item.values || {}), ...patch.values }; if (patch.group) item.group = patch.group; item.activity = patch.activity;
-    patchItem(itemId, patch);
+    patchItem(item.id, patch);
+    lines.filter(l => l.auto).slice(0, 2).forEach(l => toast(l.text));
+    finishAfter(b, item, after);
     scheduleRender();
-  }
-
-  function runAutomations(b, item, colId, value, patch, lines) {
-    (b.automations || []).forEach(r => {
-      if (r.on === false || r.col !== colId || r.label !== value) return;
-      if (r.action === 'move') {
-        const g = b.groups.find(x => x.id === r.target);
-        if (g && item.group !== g.id) { patch.group = g.id; lines.push({ auto: true, text: `Automation moved this to “${g.name}”` }); toast(`Automation: moved to ${g.name}`); }
-      } else if (r.action === 'set') {
-        const tc = b.columns.find(c => c.id === r.targetCol);
-        const tl = tc && labelOf(tc, r.targetLabel);
-        if (tl) { patch.values[tc.id] = tl.id; lines.push({ auto: true, text: `Automation set ${tc.title} to ${tl.label}` }); toast(`Automation: ${tc.title} set to ${tl.label}`); }
-      }
-    });
   }
 
   function addItem(groupId, name, open) {
     const b = board(); if (!b || !name.trim()) return;
     const ref = itemsCol().doc(rid('i'));
     const data = { name: name.trim(), group: groupId, pos: Date.now(), values: {}, updates: [], activity: [{ at: now(), by: S.uid, text: 'Created this item' }], createdAt: now() };
+    const patch = { values: {} }, lines = [], after = [];
+    fireRules(b, { id: ref.id, ...data }, { type: 'created', group: groupId }, patch, lines, after);
+    Object.assign(data.values, patch.values); if (patch.group) data.group = patch.group;
+    lines.forEach(l => { data.activity = [{ at: now(), by: 'automation', text: l.text }, ...data.activity]; });
     write(ref.path, () => ref.set(data));
     S.items.push({ id: ref.id, ...data });
+    if (after.length) setTimeout(() => finishAfter(b, itemById(ref.id), after), 300);
     if (open) S.openItem = ref.id;
     scheduleRender();
   }
@@ -698,6 +824,13 @@ td.currency::before, td.percent::after { color: var(--muted); }
     const v = (item.values || {})[col.id] ?? '';
     const ro = S.canWrite ? '' : 'readonly';
     const base = `class="cell-input" data-edit="value" data-item="${esc(item.id)}" data-col="${esc(col.id)}" aria-label="${esc(col.title)}" ${ro}`;
+    if (col.type === 'formula') { const r = formulaResult(board(), item, col); const t = r.error ? '⚠' : KSFormula.format(r.value); return `<div class="ro fx" title="${esc(r.error ? 'Formula problem: ' + r.error : col.formula)}">${esc(t)}</div>`; }
+    if (col.type === 'item_id') return `<div class="ro">${esc(item.mondayId || item.id)}</div>`;
+    if (col.type === 'created') return `<div class="ro">${esc(fmtTime(item.createdAt))}</div>`;
+    if (col.type === 'button') return `<button class="col-btn" data-act="col-button" data-item="${esc(item.id)}" data-col="${esc(col.id)}">${esc(col.title)}</button>`;
+    if (col.type === 'checkbox') return `<label class="cb"><input type="checkbox" data-edit="check" data-item="${esc(item.id)}" data-col="${esc(col.id)}" ${v ? 'checked' : ''} ${S.canWrite ? '' : 'disabled'} aria-label="${esc(col.title)}"></label>`;
+    if (col.type === 'dropdown') { const vals = splitPeople(v); return `<button class="people-cell dd-cell" data-act="dropdown" data-item="${esc(item.id)}" data-col="${esc(col.id)}" ${S.canWrite ? '' : 'disabled'}>${vals.length ? vals.map(x => `<span class="pill">${esc(x)}</span>`).join('') : `<span class="pempty">${inDrawer ? 'Choose' : ''}</span>`}</button>`; }
+    if (col.type === 'link') { const lp = linkParts(v); return `<div class="link-cell"><input type="text" ${base} value="${esc(v)}" placeholder="${inDrawer ? 'https://' : ''}">${lp.url ? `<a href="${esc(lp.url)}" target="_blank" rel="noopener" aria-label="Open link">↗</a>` : ''}</div>`; }
     if (col.readonly) return `<div class="ro" title="${esc(v)}">${esc(v)}</div>`;
     if (col.long && inDrawer) return `<textarea ${base} rows="3" style="height:auto;padding:8px 10px;resize:vertical">${esc(v)}</textarea>`;
     switch (col.type) {
@@ -929,6 +1062,13 @@ td.currency::before, td.percent::after { color: var(--muted); }
         ${names.filter(n => !q || n.toLowerCase().includes(q)).map(n => `<label class="pop-check"><input type="checkbox" data-ptoggle="${esc(n)}" ${cur.includes(n) ? 'checked' : ''}><span class="av" style="background:${hue(n)};margin:0">${esc(initials(n))}</span>${esc(n)}</label>`).join('') || '<p class="rail-note">No one matches. Press Enter to add this name.</p>'}
       </div>`;
     }
+    if (p.type === 'dropdown') {
+      const col = b.columns.find(c => c.id === p.col), item = itemById(p.item); if (!col || !item) return '';
+      const cur = splitPeople((item.values || {})[col.id]);
+      const opts = [...new Set([...(col.options || []), ...cur])];
+      return `<div class="pop" style="${style};width:250px" data-pop><div class="pop-section">${esc(col.title)}</div>
+        ${opts.map(o => `<label class="pop-check"><input type="checkbox" data-ddtoggle="${esc(o)}" ${cur.includes(o) ? 'checked' : ''}>${esc(o)}</label>`).join('') || '<p class="rail-note">No options yet.</p>'}</div>`;
+    }
     if (p.type === 'colmenu') {
       const c = p.col === 'name' ? { id: 'name', title: 'Item', type: 'text' } : b.columns.find(x => x.id === p.col);
       if (!c) return '';
@@ -960,14 +1100,21 @@ td.currency::before, td.percent::after { color: var(--muted); }
     const m = S.modal;
     const statusCols = b ? b.columns.filter(c => c.type === 'status') : [];
     if (m.type === 'automations') {
-      const rules = (b.automations || []).map(r => {
-        const col = b.columns.find(c => c.id === r.col), l = col && labelOf(col, r.label);
-        let then = '';
-        if (r.action === 'move') then = `move it to <span class="tok">${esc((b.groups.find(g => g.id === r.target) || {}).name || 'a deleted group')}</span>`;
-        else { const tc = b.columns.find(c => c.id === r.targetCol); then = `set <span class="tok">${esc(tc ? tc.title : '?')}</span> to <span class="tok">${esc(tc && labelOf(tc, r.targetLabel) ? labelOf(tc, r.targetLabel).label : '?')}</span>`; }
-        return `<div class="rule ${r.on === false ? 'off' : ''}"><div class="rule-text">When <span class="tok">${esc(col ? col.title : '?')}</span> changes to <span class="pill" style="--c:${esc(l ? l.color : '#6b7280')}">${esc(l ? l.label : '?')}</span>, ${then}.</div>
-          ${S.canWrite ? `<button class="toggle" data-act="toggle-rule" data-id="${esc(r.id)}" aria-pressed="${r.on !== false}">${r.on === false ? 'Off' : 'On'}</button><button class="icon-btn" data-act="delete-rule" data-id="${esc(r.id)}">Delete</button>` : ''}</div>`;
-      }).join('');
+      const RUNS = ['move_group', 'set_status', 'set_value', 'set_date', 'clear', 'assign', 'create_update', 'move_board', 'copy_to_board', 'duplicate'];
+      const describeRule = r => {
+        r = normRule(r);
+        if (r.source === 'monday' && r.title) return esc(r.title);
+        const col = b.columns.find(c => c.id === r.col), l = col && labelOf(col, r.value);
+        const then = (r.actions || []).map(a => a.type === 'move_group' ? `move it to <span class="tok">${esc((b.groups.find(g => g.id === a.group) || {}).name || 'a deleted group')}</span>` : a.type === 'set_status' ? (() => { const tc = b.columns.find(c => c.id === a.col); const tl = tc && labelOf(tc, a.value); return `set <span class="tok">${esc(tc ? tc.title : '?')}</span> to <span class="tok">${esc(tl ? tl.label : '?')}</span>`; })() : esc(a.type)).join(', ');
+        return `When <span class="tok">${esc(col ? col.title : '?')}</span> changes to <span class="pill" style="--c:${esc(l ? l.color : '#6b7280')}">${esc(l ? l.label : '?')}</span>, ${then}.`;
+      };
+      const all = (b.automations || []).map(normRule);
+      const runsHere = r => r.trigger !== 'monday_only' && (r.actions || []).some(a => RUNS.includes(a.type));
+      const shown = all.filter(r => m.showAll || r.mondayActive !== false || r.source !== 'monday');
+      const rules = shown.map(r => `<div class="rule ${r.on === false ? 'off' : ''}"><div class="rule-text">${describeRule(r)}
+          <div class="card-meta" style="margin-top:4px">${runsHere(r) ? '<span class="pill">Runs in Keystone</span>' : '<span class="pill">Monday only, logged here</span>'}${r.source === 'monday' && r.mondayActive === false ? '<span class="pill">Off in Monday</span>' : ''}${(r.actions || []).some(a => !RUNS.includes(a.type)) && runsHere(r) ? '<span class="pill">Emails, texts and outside tools are skipped</span>' : ''}</div></div>
+          ${S.canWrite ? `<button class="toggle" data-act="toggle-rule" data-id="${esc(r.id)}" aria-pressed="${r.on !== false}">${r.on === false ? 'Off' : 'On'}</button>${r.source === 'monday' ? '' : `<button class="icon-btn" data-act="delete-rule" data-id="${esc(r.id)}">Delete</button>`}` : ''}</div>`).join('')
+        + (all.length > shown.length ? `<button class="btn" data-act="rules-all">Show ${all.length - shown.length} automations that are off in Monday</button>` : '');
       const draft = m.draft || {};
       const dcol = statusCols.find(c => c.id === draft.col) || statusCols[0];
       const tcol = statusCols.find(c => c.id === draft.targetCol) || statusCols[0];
@@ -983,7 +1130,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
           <button class="btn primary" data-act="save-rule">Add automation</button>
         </div>` : '<p>Add a Status column first. Automations start from a status change.</p>';
       return `<h3>Automations on ${esc(b.name)}</h3>
-        <p>These run inside this test board only. They move items and change statuses. None of them send texts or emails.</p>
+        <p>Copied from Monday. The ones marked “Runs in Keystone” move items, change statuses and dates, assign people and copy or move items between boards here. Emails, texts, notifications and your outside tools (webhooks) stay with Monday and are only logged here, so nobody gets messaged twice.</p>
         ${rules || '<p>No automations yet.</p>'}
         ${S.canWrite ? form : ''}
         <div><button class="btn" data-act="close-modal-btn">Done</button></div>`;
@@ -1050,7 +1197,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
   // ---------- events ----------
   document.addEventListener('click', e => {
     const t = e.target.closest('[data-act]');
-    const OPENERS = ['status', 'person', 'col-menu', 'hidden-cols', 'bulk-status', 'group-color'];
+    const OPENERS = ['status', 'person', 'col-menu', 'hidden-cols', 'bulk-status', 'group-color', 'dropdown'];
     if (S.pop && !e.target.closest('[data-pop]') && !(t && OPENERS.includes(t.dataset.act))) { S.pop = null; if (!t) { renderLayer(); return; } }
     if (!t) return;
     const a = t.dataset.act, b = board();
@@ -1118,6 +1265,8 @@ td.currency::before, td.percent::after { color: var(--muted); }
       case 'hidden-cols': { const r = t.getBoundingClientRect(); S.pop = { type: 'hidden', x: r.left, y: r.bottom + 4 }; renderLayer(); break; }
       case 'show-all-cols': S.hidden = new Set(); saveHidden(); S.pop = null; render(); break;
       case 'person': { if (!S.canWrite) return; const r = t.getBoundingClientRect(); S.pop = { type: 'person', item: t.dataset.item, col: t.dataset.col, x: r.left, y: r.bottom + 4, q: '' }; renderLayer(); setTimeout(() => $('#person-q') && $('#person-q').focus(), 0); break; }
+      case 'dropdown': { if (!S.canWrite) return; const r = t.getBoundingClientRect(); S.pop = { type: 'dropdown', item: t.dataset.item, col: t.dataset.col, x: r.left, y: r.bottom + 4 }; renderLayer(); break; }
+      case 'col-button': runButton(t.dataset.item, t.dataset.col); break;
       case 'dtab': S.drawerTab = t.dataset.tab; renderLayer(); fillNames(); break;
       case 'dup-item': { const i = itemById(t.dataset.item); if (i) { duplicateItem(i, true); } break; }
       case 'cal-nav': {
@@ -1142,6 +1291,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
         else r.target = $('#r-target').value;
         const automations = [...(b.automations || []), r]; patchBoard({ automations }); localBoard({ automations }); S.modal.draft = {}; toast('Automation added'); renderLayer(); break;
       }
+      case 'rules-all': S.modal.showAll = true; renderLayer(); break;
       case 'toggle-rule': { const automations = (b.automations || []).map(r => r.id === t.dataset.id ? { ...r, on: r.on === false } : r); patchBoard({ automations }); localBoard({ automations }); break; }
       case 'delete-rule': { const automations = (b.automations || []).filter(r => r.id !== t.dataset.id); patchBoard({ automations }); localBoard({ automations }); break; }
       case 'save-column': {
@@ -1187,9 +1337,15 @@ td.currency::before, td.percent::after { color: var(--muted); }
       const next = t.checked ? [...new Set([...cur, n])] : cur.filter(x => x !== n);
       setValue(p.item, p.col, next.join(', ')); return;
     }
+    if (t.dataset && t.dataset.ddtoggle !== undefined && S.pop && S.pop.type === 'dropdown') {
+      const p = S.pop, i = itemById(p.item); if (!i) return;
+      const cur = splitPeople((i.values || {})[p.col]), o = t.dataset.ddtoggle;
+      setValue(p.item, p.col, (t.checked ? [...new Set([...cur, o])] : cur.filter(x => x !== o)).join(', ')); return;
+    }
+    if (t.dataset && t.dataset.edit === 'check') { setValue(t.dataset.item, t.dataset.col, t.checked ? true : ''); return; }
     if (t.id === 'bulk-move') {
       const g = b.groups.find(x => x.id === t.value); if (!g) return;
-      [...S.selected].map(itemById).filter(Boolean).forEach(i => { if (i.group === g.id) return; const activity = act(i, `Moved to “${g.name}”`); i.group = g.id; i.activity = activity; patchItem(i.id, { group: g.id, activity }); });
+      [...S.selected].map(itemById).filter(Boolean).forEach(i => moveToGroup(b, i, g.id));
       toast(`Moved ${S.selected.size} items to ${g.name}`); S.selected = new Set(); render(); return;
     }
     if (t.dataset && t.dataset.homeFor) { KS.updateUser(t.dataset.homeFor, { homeBoard: t.value }).then(() => { S.modal.msg = 'Saved. They land there next time they sign in.'; loadTeam(); }).catch(err => { S.modal.msg = err.message; renderLayer(); }); return; }
@@ -1209,8 +1365,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     }
     if (ed === 'group') {
       const i = itemById(t.dataset.item), g = b.groups.find(x => x.id === t.value); if (!i || !g) return;
-      const activity = act(i, `Moved to “${g.name}”`); i.group = g.id; i.activity = activity;
-      patchItem(i.id, { group: g.id, activity }); render(); return;
+      moveToGroup(b, i, g.id); render(); return;
     }
     if (ed === 'group-name') {
       const v = t.value.trim(); if (!v) return;
@@ -1285,10 +1440,8 @@ td.currency::before, td.percent::after { color: var(--muted); }
       pos = Math.max(0, ...S.items.filter(i => i.group === group).map(i => i.pos || 0)) + 1;
     } else return;
     e.preventDefault();
-    const patch = { group, pos };
-    if (group !== item.group) { const g = b.groups.find(x => x.id === group); patch.activity = act(item, `Moved to “${g ? g.name : 'another group'}”`); item.activity = patch.activity; }
-    item.group = group; item.pos = pos;
-    patchItem(id, patch);
+    if (group !== item.group) { item.pos = pos; moveToGroup(b, item, group, { pos }); }
+    else { item.pos = pos; patchItem(id, { pos }); }
     if (S.sort) toast('Moved. The board is sorted, so the new order shows once you clear the sort.');
     render();
   });
@@ -1464,6 +1617,12 @@ td.currency::before, td.percent::after { color: var(--muted); }
     if (!own) return false;
     S.page = 'board'; S.view = 'table'; savePage(); S.boardId = null; selectBoard(own.id); render();
     return true;
+  }
+  function runButton(itemId, colId) {
+    const b = board(), item = itemById(itemId), col = b && b.columns.find(c => c.id === colId); if (!item || !col) return;
+    const rules = (b.automations || []).filter(r => r.on !== false && r.trigger === 'button' && r.col === colId);
+    if (!rules.length) { toast(`“${col.title}” runs a Monday tool. It isn’t connected in Keystone.`); return; }
+    runRules(b, item, rules, `Pressed ${col.title}`);
   }
   function savePage() { try { localStorage.setItem('ks-page', S.page); localStorage.setItem('ks-view', S.view); } catch (e) {} }
   let summaryBusy = false;

@@ -24,8 +24,8 @@ async function gql(token, query, variables = {}) {
   throw new Error('Monday kept timing out. Try again later.');
 }
 
-const SKIP = new Set(['name', 'subtasks', 'button', 'direct_doc', 'doc']);
-const READONLY = new Set(['formula', 'mirror', 'last_updated', 'item_id', 'board_relation', 'time_tracking', 'file', 'location', 'country', 'dropdown', 'link']);
+const SKIP = new Set(['name', 'subtasks', 'direct_doc', 'doc']);
+const READONLY = new Set(['mirror', 'last_updated', 'board_relation', 'time_tracking', 'file']);
 
 function convColumns(cols) {
   const out = [];
@@ -52,6 +52,16 @@ function convColumns(cols) {
       col.type = 'number';
       const sym = (s.unit || {}).symbol || '';
       if (sym === '$') col.format = 'currency'; else if (sym === '%') col.format = 'percent';
+    } else if (c.type === 'formula') {
+      col.type = 'formula'; col.formula = String(s.formula || '');
+    } else if (c.type === 'checkbox') col.type = 'checkbox';
+    else if (c.type === 'button') col.type = 'button';
+    else if (c.type === 'link') col.type = 'link';
+    else if (c.type === 'item_id') col.type = 'item_id';
+    else if (c.type === 'creation_log') col.type = 'created';
+    else if (c.type === 'dropdown') {
+      col.type = 'dropdown';
+      col.options = (Array.isArray(s.labels) ? s.labels.map(l => l.name) : Object.values(s.labels || {})).filter(Boolean);
     } else {
       col.type = 'text';
       if (READONLY.has(c.type)) { col.readonly = true; col.source = c.type; }
@@ -72,9 +82,12 @@ function convValues(cvs, cols) {
       if (c.type === 'status') val = cv.value ? String(JSON.parse(cv.value).index) : null;
       else if (c.type === 'date') val = cv.value ? JSON.parse(cv.value).date : null;
       else if (c.type === 'number') { const t = String(cv.text || '').replace(/,/g, ''); val = t ? Number(t) : null; if (Number.isNaN(val)) val = null; }
+      else if (c.type === 'checkbox') val = cv.value ? (JSON.parse(cv.value).checked === true || JSON.parse(cv.value).checked === 'true') : null;
+      else if (c.type === 'link') { const l = cv.value ? JSON.parse(cv.value) : null; val = l && l.url ? (l.text && l.text !== l.url ? l.text + ' | ' + l.url : l.url) : null; }
+      else if (['formula', 'button', 'item_id', 'created'].includes(c.type)) val = null;
       else val = cv.text || null;
     } catch (e) { val = null; }
-    if (val !== null && val !== undefined && val !== '' && val !== 'undefined') v[c.id] = val;
+    if (val !== null && val !== undefined && val !== '' && val !== 'undefined' && val !== false) v[c.id] = val;
   }
   return v;
 }
