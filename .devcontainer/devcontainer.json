@@ -1,18 +1,18 @@
 {
-  "name": "Keystone CRM",
+  "name": "Solver.ca",
   "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
   "forwardPorts": [3000],
   "portsAttributes": {
-    "3000": { "label": "Keystone CRM", "onAutoForward": "openBrowser" }
+    "3000": { "label": "Solver.ca CRM", "onAutoForward": "openBrowser" }
   },
   "containerEnv": {
     "PORT": "3000",
     "MONDAY_WORKSPACE_IDS": "11508737,7066043,7749105,7500872,6052089,9005040,12791794,6163139,13069785,9342139"
   },
   "secrets": {
-    "MONDAY_API_TOKEN": { "description": "Monday API token (Monday: avatar > Developers > My access tokens). Lets Keystone copy your boards. It only reads Monday." },
-    "ADMIN_EMAIL": { "description": "Email you'll sign in to Keystone with." },
+    "MONDAY_API_TOKEN": { "description": "Monday API token (Monday: avatar > Developers > My access tokens). Lets Solver.ca copy your boards. It only reads Monday." },
+    "ADMIN_EMAIL": { "description": "Email you'll sign in to Solver.ca with." },
     "ADMIN_PASSWORD": { "description": "Password for that sign-in (8+ characters)." }
   },
-  "postStartCommand": "bash keystone/scripts/codespace-start.sh"
+  "postStartCommand": "bash solver/scripts/codespace-start.sh"
 }

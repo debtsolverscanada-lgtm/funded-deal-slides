@@ -1,4 +1,4 @@
-// Keystone formula engine: evaluates Monday-style column formulas such as
+// Solver.ca formula engine: evaluates Monday-style column formulas such as
 //   IF({date_x}="", "", WORKDAYS(TODAY(), {date_x}) - 1)
 // getRef(columnId) must return the column's value: a number, a string ("YYYY-MM-DD" for dates), a boolean, or "" when empty.
 (function (root) {

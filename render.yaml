@@ -1,18 +1,18 @@
-# Render Blueprint for Keystone CRM (the app lives in keystone/).
+# Render Blueprint for Solver.ca (the app lives in solver/).
 # Render dashboard > New > Blueprint > pick this repo. Fill in the four values marked sync: false.
 services:
   - type: web
-    name: keystone-crm
+    name: solver-crm
     runtime: docker
-    dockerfilePath: ./keystone/Dockerfile   # paths are from the repo root
-    dockerContext: ./keystone
+    dockerfilePath: ./solver/Dockerfile   # paths are from the repo root
+    dockerContext: ./solver
     plan: starter            # persistent disks need a paid instance
     region: oregon
     branch: claude/dreamy-hamilton-i65yx7
     healthCheckPath: /healthz
     disk:
-      name: keystone-data
-      mountPath: /data       # keystone.db lives here; Render snapshots disks daily
+      name: solver-data
+      mountPath: /data       # solver.db lives here; Render snapshots disks daily
       sizeGB: 2
     envVars:
       - key: COOKIE_SECURE

@@ -1,4 +1,4 @@
-// Loads a Monday export (made by scripts/monday_export.py + scripts/monday_transform.py) into Keystone.
+// Loads a Monday export (made by scripts/monday_export.py + scripts/monday_transform.py) into Solver.ca.
 // Usage: node scripts/import-monday.js path/to/import-dir [--replace]
 // Re-running is safe: boards and items are written by id, so existing copies are overwritten, not duplicated.
 const fs = require('node:fs');

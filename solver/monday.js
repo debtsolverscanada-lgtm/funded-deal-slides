@@ -1,4 +1,4 @@
-// One-way copy from Monday into Keystone. Reads Monday only; never writes to it.
+// One-way copy from Monday into Solver.ca. Reads Monday only; never writes to it.
 // Needs MONDAY_API_TOKEN. Workspaces come from MONDAY_WORKSPACE_IDS (comma-separated).
 'use strict';
 

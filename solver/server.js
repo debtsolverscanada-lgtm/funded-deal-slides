@@ -3,13 +3,13 @@
 //
 //   PORT=3000 DATA_DIR=./data node server.js
 //
-// Data lives in DATA_DIR/keystone.db. Back that file up and you have everything.
+// Data lives in DATA_DIR/solver.db. Back that file up and you have everything.
 
 'use strict';
 {
   const [maj, min] = process.versions.node.split('.').map(Number);
   if (maj < 22 || (maj === 22 && min < 5)) {
-    console.error(`Keystone needs Node.js 22.5 or newer, and this computer has ${process.versions.node}. Install the LTS version from https://nodejs.org and run it again.`);
+    console.error(`Solver.ca needs Node.js 22.5 or newer, and this computer has ${process.versions.node}. Install the LTS version from https://nodejs.org and run it again.`);
     process.exit(1);
   }
 }
@@ -29,7 +29,10 @@ const MAX_BODY = 2 * 1024 * 1024;
 const SECURE_COOKIE = process.env.COOKIE_SECURE === '1';
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
-const db = new DatabaseSync(path.join(DATA_DIR, 'keystone.db'));
+// Earlier versions called the file keystone.db: carry it over once.
+{ const oldDb = path.join(DATA_DIR, 'keystone.db'), newDb = path.join(DATA_DIR, 'solver.db');
+  if (!fs.existsSync(newDb) && fs.existsSync(oldDb)) for (const ext of ['', '-wal', '-shm']) if (fs.existsSync(oldDb + ext)) fs.renameSync(oldDb + ext, newDb + ext); }
+const db = new DatabaseSync(path.join(DATA_DIR, 'solver.db'));
 db.exec(`
   PRAGMA journal_mode = WAL;
   PRAGMA foreign_keys = ON;
@@ -200,7 +203,7 @@ async function api(req, res, url) {
   const user = currentUser(req);
   if (!user) throw new HttpError(401, 'Sign in to continue.');
   // simple CSRF guard: state-changing calls must come from our own page (JSON + same-origin header)
-  if (method !== 'GET' && req.headers['x-keystone'] !== '1') throw new HttpError(403, 'Request refused.');
+  if (method !== 'GET' && req.headers['x-solver'] !== '1') throw new HttpError(403, 'Request refused.');
 
   if (p === '/api/logout' && method === 'POST') { q.deleteSession.run(user.token); return send(res, 200, { ok: true }, { 'Set-Cookie': 'ks_session=; Path=/; Max-Age=0' }); }
   if (p === '/api/me') return send(res, 200, publicUser(user));

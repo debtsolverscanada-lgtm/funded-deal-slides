@@ -1,8 +1,8 @@
-// Keystone browser client: talks to the Keystone server (REST + live updates over server-sent events).
+// Solver.ca browser client: talks to the Solver.ca server (REST + live updates over server-sent events).
 // It exposes the small document-store interface the CRM page uses: claude.use('db') and claude.use('user').
 (() => {
   'use strict';
-  const HEADERS = { 'Content-Type': 'application/json', 'X-Keystone': '1' };
+  const HEADERS = { 'Content-Type': 'application/json', 'X-Solver': '1' };
 
   async function call(method, url, body) {
     let r;

@@ -1,5 +1,5 @@
 {
-  "name": "keystone-crm",
+  "name": "solver-crm",
   "version": "0.1.0",
   "private": true,
   "description": "Self-hosted, Monday-style CRM for MortgageSolvers. No dependencies; Node 22+.",

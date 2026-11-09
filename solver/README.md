@@ -12,7 +12,7 @@ It's one Node process and one SQLite file. No packages to install, no outside se
 Needs Node 22.5 or newer.
 
 ```bash
-cd keystone
+cd solver
 node scripts/create-user.js you@yourcompany.ca "Your Name" admin "a-strong-password"
 npm start            # http://localhost:3000
 ```
@@ -40,7 +40,7 @@ Open https://codespaces.new/debtsolverscanada-lgtm/funded-deal-slides?ref=claude
 and add the suggested secrets (MONDAY_API_TOKEN, ADMIN_EMAIL, ADMIN_PASSWORD) when GitHub asks.
 Solver.ca starts by itself on port 3000 and opens in a browser tab. The forwarded port is private,
 so only you (signed in to GitHub) can open it. Without ADMIN_* secrets the sign-in is
-admin@keystone.local / keystone-admin. Data lives in the codespace and is gone if you delete it.
+admin@solver.local / solver-admin. Data lives in the codespace and is gone if you delete it.
 
 ## Put it on Render
 
@@ -52,24 +52,24 @@ The repo has a `render.yaml` Blueprint at its root.
 3. When it's live, sign in, open **Team & settings**, and press **Copy from Monday now**.
    It runs on the server. The first full copy takes roughly 20 to 40 minutes.
 
-Cost: Starter instance plus a 2 GB disk, about US$7.50 a month. The disk keeps `keystone.db`
+Cost: Starter instance plus a 2 GB disk, about US$7.50 a month. The disk keeps `solver.db`
 and Render snapshots it daily.
 
 ## Put it online somewhere else
 
 Any host that runs a Docker container **with a persistent disk** works (Render, Railway, Fly.io,
-DigitalOcean, or your own server). Mount the disk at `/data`. That's where `keystone.db` lives.
+DigitalOcean, or your own server). Mount the disk at `/data`. That's where `solver.db` lives.
 
 ```bash
-docker build -t keystone .
-docker run -p 3000:3000 -v keystone-data:/data \
+docker build -t solver .
+docker run -p 3000:3000 -v solver-data:/data \
   -e ADMIN_EMAIL=you@yourcompany.ca -e ADMIN_PASSWORD='a-strong-password' -e ADMIN_NAME='Your Name' \
-  -e COOKIE_SECURE=1 keystone
+  -e COOKIE_SECURE=1 solver
 ```
 
 - `ADMIN_*` only creates the first admin when there are no accounts yet.
 - Serve it over HTTPS (every host above does this for you) and set `COOKIE_SECURE=1`.
-- Back up `/data/keystone.db` daily. That one file is the whole CRM.
+- Back up `/data/solver.db` daily. That one file is the whole CRM.
 - Add the rest of the team from **Team** in the sidebar (admins only).
 
 ## Roles
