@@ -525,7 +525,17 @@ td.currency::before, td.percent::after { color: var(--muted); }
   const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   function loadHidden() { try { S.hidden = new Set(JSON.parse(localStorage.getItem('ks-hidden-' + S.boardId) || '[]')); } catch (e) { S.hidden = new Set(); } }
   function saveHidden() { try { localStorage.setItem('ks-hidden-' + S.boardId, JSON.stringify([...S.hidden])); } catch (e) {} }
-  const visCols = b => b.columns.filter(c => !S.hidden.has(c.id));
+  const curView = () => { const b = board(); return b && S.viewId ? (b.views || []).find(v => v.id === S.viewId) : null; };
+  const visCols = b => { const v = curView(); let cols = b.columns; if (v && Array.isArray(v.columns) && v.columns.length) { const order = v.columns.filter(id => id !== 'name'); cols = order.map(id => b.columns.find(c => c.id === id)).filter(Boolean); } return cols.filter(c => !S.hidden.has(c.id)); };
+  function viewMatch(b, item, r) {
+    const c = b.columns.find(x => x.id === r.col); const raw = (item.values || {})[r.col]; const empty = raw === undefined || raw === null || raw === '';
+    if (r.op === 'empty') return empty; if (r.op === 'not_empty') return !empty;
+    const me = String((S.me && S.me.name) || '').toLowerCase();
+    const vals = (r.values || []).map(v => v === '@me' ? me : String(v).toLowerCase());
+    if (c && c.type === 'person') { const ps = splitPeople(raw).map(x => x.toLowerCase()); return vals.some(v => ps.includes(v) || (v && ps.some(p2 => p2.split(' ')[0] === v.split(' ')[0] && v === me))); }
+    if (c && c.type === 'status') { const l = (labelOf(c, raw) || {}).label || ''; return vals.includes(String(raw).toLowerCase()) || vals.includes(l.toLowerCase()); }
+    return vals.includes(String(raw ?? '').toLowerCase());
+  }
   // ---- formulas: same rules as Monday (empty numbers count as 0, % columns as fractions) ----
   function refValue(b, item, id, depth) {
     if (id === 'name') return item.name || '';
@@ -634,8 +644,8 @@ td.currency::before, td.percent::after { color: var(--muted); }
         case 'clear': { if (!col) break; patch.values[col.id] = ''; lines.push({ auto: true, text: `${name} cleared ${col.title}` }); break; }
         case 'assign': { if (!col) break; const cur = splitPeople(patch.values[col.id] ?? (item.values || {})[col.id]); const v = [...new Set([...cur, a.value])].join(', '); patch.values[col.id] = v; lines.push({ auto: true, text: `${name} assigned ${a.value}` }); break; }
         case 'create_update': lines.push({ auto: true, text: `${name} posted an update` }); after.push({ kind: 'update', text: a.value || a.message || '' }); break;
-        case 'move_board': after.push({ kind: 'move_board', board: a.board, group: a.group, name }); break;
-        case 'copy_to_board': after.push({ kind: 'copy_board', board: a.board, group: a.group, name }); break;
+        case 'move_board': after.push({ kind: 'move_board', board: a.board, group: a.group, name, map: a.map }); break;
+        case 'copy_to_board': after.push({ kind: 'copy_board', board: a.board, group: a.group, name, map: a.map }); break;
         case 'duplicate': after.push({ kind: 'duplicate', name, withUpdates: !!a.withUpdates }); break;
         case 'external': lines.push({ auto: true, text: `${name} would ${a.label} in Monday. Not run in Keystone, so nothing was sent.` }); break;
         case 'notify': lines.push({ auto: true, text: `${name} would notify ${a.to || 'someone'} in Monday: ${a.message || ''}`.trim() }); break;
@@ -666,18 +676,29 @@ td.currency::before, td.percent::after { color: var(--muted); }
   function finishAfter(b, item, after) {
     for (const x of after) {
       if (x.kind === 'update' && x.text) { item.updates = [...(item.updates || []), { at: now(), by: 'automation', byName: 'Automation', text: x.text }]; patchItem(item.id, { updates: item.updates }); }
-      if (x.kind === 'move_board') moveItemToBoard(b, item, x.board, x.group, x.name, true);
-      if (x.kind === 'copy_board') moveItemToBoard(b, item, x.board, x.group, x.name, false);
+      if (x.kind === 'move_board') moveItemToBoard(b, item, x.board, x.group, x.name, true, x.map);
+      if (x.kind === 'copy_board') moveItemToBoard(b, item, x.board, x.group, x.name, false, x.map);
       if (x.kind === 'duplicate') duplicateItem(item, false, x.withUpdates);
     }
   }
-  function moveItemToBoard(b, item, targetBoardId, groupId, why, removeHere = true) {
+  function moveItemToBoard(b, item, targetBoardId, groupId, why, removeHere = true, map = null) {
     const tb = S.boards.find(x => x.id === targetBoardId); if (!tb) { toast('The board this automation moves items to isn’t in Keystone.'); return; }
     const g = (groupId === '__top__' ? tb.groups[0] : tb.groups.find(x => x.id === groupId)) || tb.groups[0];
     const values = {};
+    // 1) Monday's own mapping for this automation (target column ← source column)
+    const mapped = new Set();
+    const carry = (sc, tc, v, srcId) => {
+      if (v === undefined || v === null || v === '') return;
+      if (sc && sc.type === 'status' && tc.type === 'status') { const name = (labelOf(sc, v) || {}).label; const tl = name && (tc.labels || []).find(l => l.label.toLowerCase() === name.toLowerCase()); if (!tl) return; v = tl.id; }
+      values[tc.id] = v; mapped.add(tc.id);
+      const dt = (item.values || {})[srcId + '__dt']; if (dt && tc.type === 'date') values[tc.id + '__dt'] = dt;
+    };
+    Object.entries(map || {}).forEach(([tgt, src]) => { const tc = tb.columns.find(c => c.id === tgt), sc = b.columns.find(c => c.id === src); if (tc) carry(sc, tc, (item.values || {})[src], src); });
+    // 2) everything else: same column id, then same title and type
     Object.entries(item.values || {}).forEach(([k, v]) => {
-      if (k.endsWith('__t') || k.endsWith('__dt')) { const base = k.replace(/__d?t$/, ''); if (tb.columns.some(c => c.id === base)) values[k] = v; return; }
-      const sc = b.columns.find(c => c.id === k); const tc = tb.columns.find(c => c.id === k && (!sc || c.type === sc.type)) || (sc && tb.columns.find(c => c.title.toLowerCase() === sc.title.toLowerCase() && c.type === sc.type)); if (!tc) return;
+      if (k.endsWith('__t') || k.endsWith('__dt')) { const base = k.replace(/__d?t$/, ''); if (!map && tb.columns.some(c => c.id === base)) values[k] = v; return; }
+      if (map && Object.values(map).includes(k)) return;
+      const sc = b.columns.find(c => c.id === k); const tc = tb.columns.find(c => c.id === k && (!sc || c.type === sc.type)) || (sc && tb.columns.find(c => c.title.toLowerCase() === sc.title.toLowerCase() && c.type === sc.type)); if (!tc || mapped.has(tc.id)) return;
       if (sc && sc.type === 'status') { const name = (labelOf(sc, v) || {}).label; const tl = name && (tc.labels || []).find(l => l.label.toLowerCase() === name.toLowerCase()); if (!tl) return; v = tl.id; }
       values[tc.id] = v; });
     const newId = removeHere ? item.id : rid('i');
@@ -788,7 +809,8 @@ td.currency::before, td.percent::after { color: var(--muted); }
       </div>
       <div class="head-row">
         <div class="tabs" role="group" aria-label="View">
-          <button class="tab" data-act="view" data-v="table" aria-pressed="${S.view === 'table'}">Main table</button>
+          <button class="tab" data-act="view" data-v="table" aria-pressed="${S.view === 'table' && !S.viewId}">Main table</button>
+          ${(b.views || []).map(v => `<button class="tab" data-act="saved-view" data-id="${esc(v.id)}" aria-pressed="${S.view === 'table' && S.viewId === v.id}">${esc(v.name)}</button>`).join('')}
           <button class="tab" data-act="view" data-v="kanban" aria-pressed="${S.view === 'kanban'}">Kanban</button>
           <button class="tab" data-act="view" data-v="calendar" aria-pressed="${S.view === 'calendar'}">Calendar</button>
         </div>
@@ -799,6 +821,8 @@ td.currency::before, td.percent::after { color: var(--muted); }
         ${filterCount() ? `<button class="btn" data-act="clear-filters">Filtered · ${filterCount()} ✕</button>` : ''}
         ${S.sort ? `<button class="btn" data-act="clear-sort">Sorted: ${esc(S.sort.col === 'name' ? 'Name' : ((b.columns.find(c => c.id === S.sort.col) || {}).title || ''))} ${S.sort.dir === 'desc' ? '↓' : '↑'} ✕</button>` : ''}
         ${S.hidden.size ? `<button class="btn" data-act="hidden-cols">Hidden columns · ${S.hidden.size}</button>` : ''}
+        ${S.view === 'table' && S.canWrite && (filterCount() || S.sort || S.person || S.hidden.size) ? '<button class="btn" data-act="save-view">Save as view</button>' : ''}
+        ${curView() && curView().source !== 'monday' && S.canWrite ? `<button class="btn" data-act="delete-view">${S.confirmDelete === 'v:' + S.viewId ? 'Click again to delete view' : 'Delete view'}</button>` : ''}
         <span class="group-count">${visibleItems().length} of ${S.items.length} items</span>
         <span class="spacer"></span>
         <button class="btn" data-act="automations">Automations · ${(b.automations || []).filter(r => r.on !== false).length}</button>
@@ -820,9 +844,11 @@ td.currency::before, td.percent::after { color: var(--muted); }
       if ((i.name || '').toLowerCase().includes(q)) return true;
       return b.columns.some(c => describe(c, (i.values || {})[c.id]).toLowerCase().includes(q));
     });
+    const view = curView(); if (view && b) list = list.filter(i => (view.rules || []).every(r => viewMatch(b, i, r)));
     Object.entries(S.filters).forEach(([cid, vals]) => { if (vals && vals.length) list = list.filter(i => vals.includes(String((i.values || {})[cid] ?? ''))); });
-    if (S.sort && b) {
-      const c = S.sort.col === 'name' ? null : b.columns.find(x => x.id === S.sort.col);
+    const sortBy = S.sort || (view && view.sort);
+    if (sortBy && b) {
+      const c = sortBy.col === 'name' ? null : b.columns.find(x => x.id === sortBy.col);
       const key = i => {
         if (!c) return (i.name || '').toLowerCase();
         const v = (i.values || {})[c.id];
@@ -831,7 +857,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
         if (c.type === 'number') return Number(v);
         return String(v).toLowerCase();
       };
-      const d = S.sort.dir === 'desc' ? -1 : 1;
+      const d = sortBy.dir === 'desc' ? -1 : 1;
       list.sort((x, y) => { const a = key(x), z = key(y); if (a === null && z === null) return 0; if (a === null) return 1; if (z === null) return -1; return (a < z ? -1 : a > z ? 1 : 0) * d; });
     }
     return list;
@@ -919,10 +945,10 @@ td.currency::before, td.percent::after { color: var(--muted); }
         const exp = S.expanded.has(i.id) && subs.length;
         const sel = S.selected.has(i.id);
         const row = `<tr data-row="${esc(i.id)}" data-group="${esc(g.id)}" class="${sel ? 'sel' : ''}">
-          <td class="name-cell"><div class="name-wrap">${S.canWrite ? `<span class="grip" draggable="true" data-rowdrag="${esc(i.id)}" title="Drag to move" aria-hidden="true">⋮⋮</span>` : ''}<input type="checkbox" class="rowcheck" data-sel="${esc(i.id)}" ${sel ? 'checked' : ''} aria-label="Select ${esc(i.name)}">${subs.length ? `<button class="sub-toggle" data-act="subs" data-item="${esc(i.id)}" aria-expanded="${!!exp}" title="Subitems">${exp ? '▾' : '▸'} ${subs.length}</button>` : ''}${narrow ? `<button class="name-open" data-act="open" data-item="${esc(i.id)}">${esc(i.name)}${(i.updates || []).length ? `<span class="upd-count">${i.updates.length}</span>` : ''}</button>` : `<input class="cell-input" data-edit="name" data-item="${esc(i.id)}" value="${esc(i.name)}" aria-label="Item name" ${S.canWrite ? '' : 'readonly'} style="padding-left:2px"><button class="open-btn" data-act="open" data-item="${esc(i.id)}">Open${(i.updates || []).length ? ' · ' + i.updates.length : ''}</button>`}</div></td>
+          <td class="name-cell"><div class="name-wrap">${S.canWrite ? `<span class="grip" draggable="true" data-rowdrag="${esc(i.id)}" title="Drag to move" aria-hidden="true">⋮⋮</span>` : ''}<input type="checkbox" class="rowcheck" data-sel="${esc(i.id)}" ${sel ? 'checked' : ''} aria-label="Select ${esc(i.name)}">${(subs.length || (b.subColumns || []).length) ? `<button class="sub-toggle" data-act="subs" data-item="${esc(i.id)}" aria-expanded="${!!exp}" title="Subitems">${exp ? '▾' : '▸'} ${subs.length}</button>` : ''}${narrow ? `<button class="name-open" data-act="open" data-item="${esc(i.id)}">${esc(i.name)}${(i.updates || []).length ? `<span class="upd-count">${i.updates.length}</span>` : ''}</button>` : `<input class="cell-input" data-edit="name" data-item="${esc(i.id)}" value="${esc(i.name)}" aria-label="Item name" ${S.canWrite ? '' : 'readonly'} style="padding-left:2px"><button class="open-btn" data-act="open" data-item="${esc(i.id)}">Open${(i.updates || []).length ? ' · ' + i.updates.length : ''}</button>`}</div></td>
           ${cols.map(c => `<td class="c-${c.type} ${c.type === 'number' ? 'num-cell' : ''} ${c.format || ''}">${cellEditor(c, i)}</td>`).join('')}<td></td>
         </tr>`;
-        const subRow = exp ? `<tr class="sub-row"><td colspan="${span}"><table class="subtable"><thead><tr><th>Subitem</th>${subCols.map(c => `<th>${esc(c.title)}</th>`).join('')}</tr></thead><tbody>${subs.map(x => `<tr><td>${esc(x.name)}</td>${subCols.map(c => { const v = (x.values || {})[c.id]; const l = c.type === 'status' && labelOf(c, v); return l ? `<td><span class="pill" style="--c:${esc(l.color)}">${esc(l.label)}</span></td>` : `<td>${esc(v == null ? '' : describe(c, v) === 'empty' ? '' : describe(c, v))}</td>`; }).join('')}</tr>`).join('')}</tbody></table></td></tr>` : '';
+        const subRow = exp ? `<tr class="sub-row"><td colspan="${span}">${subTable(b, i)}</td></tr>` : '';
         return row + subRow;
       }).join('');
       const more = gi.length > limit ? `<tr class="more-row"><td class="name-cell" colspan="${Math.min(span, 3)}"><button data-act="more" data-group="${esc(g.id)}">Show ${Math.min(PAGE, gi.length - limit)} more · ${gi.length - limit} hidden</button></td>${cols.slice(1).map(() => '<td></td>').join('')}</tr>` : '';
@@ -1030,7 +1056,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
           </div>
           <div class="drawer-body">
             ${S.drawerTab === 'info' ? `<div class="fields">${fields}${groupSel}</div>
-            ${subs ? `<div><h4 class="sec-title">Subitems · ${(i.subitems || []).length}</h4><div class="sublist">${subs}</div></div>` : ''}
+            ${(b.subColumns || []).length || (i.subitems || []).length ? `<div><h4 class="sec-title">Subitems · ${(i.subitems || []).length}</h4>${subTable(b, i)}</div>` : ''}
             ${S.canWrite ? `<div><button class="btn danger" data-act="delete-item" data-item="${esc(i.id)}">${S.confirmDelete === 'i:' + i.id ? 'Click again to delete this item' : 'Delete item'}</button></div>` : ''}` : ''}
             ${S.drawerTab === 'updates' ? `<div>
               ${S.canWrite ? `<div class="composer"><textarea id="update-text" placeholder="Write an update. Call notes, next steps, what the client said."></textarea><div><button class="btn primary" data-act="post-update" data-item="${esc(i.id)}">Post update</button></div></div>` : ''}
@@ -1062,7 +1088,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     const p = S.pop;
     const style = `left:${Math.min(p.x, innerWidth - 236)}px;top:${Math.min(p.y, innerHeight - 320)}px`;
     if (p.type === 'status') {
-      const col = b.columns.find(c => c.id === p.col);
+      const col = (p.sub ? (b.subColumns || []) : b.columns).find(c => c.id === p.col);
       if (!col) return '';
       return `<div class="pop" style="${style}" data-pop>
         ${(col.labels || []).filter(l => !l.hidden).map(l => `<button class="chip" style="--c:${esc(l.color)}" title="${esc(l.desc || '')}" data-act="pick-status" data-val="${esc(l.id)}">${esc(l.label)}</button>`).join('')}
@@ -1151,6 +1177,10 @@ td.currency::before, td.percent::after { color: var(--muted); }
         ${rules || '<p>No automations yet.</p>'}
         ${S.canWrite ? form : ''}
         <div><button class="btn" data-act="close-modal-btn">Done</button></div>`;
+    }
+    if (m.type === 'save-view') {
+      return `<h3>Save as view</h3><p>Saves the current filters, person, sort and visible columns as a tab on this board, for everyone.</p>
+        <div class="form-row"><input class="field-input" id="sv-name" placeholder="View name, e.g. My follow-ups" style="flex:1 1 220px"><button class="btn primary" data-act="do-save-view">Save view</button><button class="btn" data-act="close-modal-btn">Cancel</button></div>`;
     }
     if (m.type === 'integrations') {
       const I = m.data; const EV = ['item.created', 'item.updated', 'item.moved', 'item.status_changed', 'item.deleted', 'update.created', 'reminder.due'];
@@ -1243,12 +1273,12 @@ td.currency::before, td.percent::after { color: var(--muted); }
   // ---------- events ----------
   document.addEventListener('click', e => {
     const t = e.target.closest('[data-act]');
-    const OPENERS = ['status', 'person', 'col-menu', 'hidden-cols', 'bulk-status', 'group-color', 'dropdown'];
+    const OPENERS = ['status', 'person', 'col-menu', 'hidden-cols', 'bulk-status', 'group-color', 'dropdown', 'sub-status'];
     if (S.pop && !e.target.closest('[data-pop]') && !(t && OPENERS.includes(t.dataset.act))) { S.pop = null; if (!t) { renderLayer(); return; } }
     if (!t) return;
     const a = t.dataset.act, b = board();
     if (a === 'close-modal' && e.target !== t) return; // clicks inside the modal box
-    if (a !== 'delete-item' && a !== 'delete-group' && a !== 'delete-column' && a !== 'bulk-del') S.confirmDelete = null;
+    if (!['delete-item', 'delete-group', 'delete-column', 'bulk-del', 'delete-view'].includes(a)) S.confirmDelete = null;
     switch (a) {
       case 'board': S.page = 'board'; savePage(); S.modal = null; selectBoard(t.dataset.id); render(); break;
       case 'go-home': S.page = 'home'; savePage(); S.modal = null; loadSummary(true); render(); break;
@@ -1256,9 +1286,16 @@ td.currency::before, td.percent::after { color: var(--muted); }
       case 'sheet-boards': S.modal = { type: 'boards' }; renderLayer(); break;
       case 'sheet-profile': S.modal = { type: 'profile' }; renderLayer(); break;
       case 'quick-new': { const b2 = board(); if (b2 && b2.groups[0]) { S.page = 'board'; savePage(); render(); addItem(b2.groups[0].id, 'New lead', true); } else toast('Open a board first.'); break; }
-      case 'view': S.view = t.dataset.v; try { localStorage.setItem('ks-view', S.view); } catch (x) {} render(); break;
+      case 'saved-view': S.viewId = t.dataset.id; S.view = 'table'; S.shown = {}; render(); break;
+      case 'save-view': S.modal = { type: 'save-view' }; renderLayer(); setTimeout(() => $('#sv-name') && $('#sv-name').focus(), 0); break;
+      case 'do-save-view': { const name = ($('#sv-name').value || '').trim(); if (!name) return; const rules = []; Object.entries(S.filters).forEach(([cid, vals]) => { if (vals && vals.length) rules.push({ col: cid, op: 'any', values: vals }); }); if (S.person) { const pc = b.columns.find(c => c.type === 'person'); if (pc) rules.push({ col: pc.id, op: 'any', values: [S.person] }); }
+        const v = { id: rid('v'), name, rules, sort: S.sort, columns: b.columns.filter(c => !S.hidden.has(c.id)).map(c => c.id), source: 'keystone' }; const views = [...(b.views || []), v]; patchBoard({ views }); localBoard({ views }); S.filters = {}; S.sort = null; S.person = ''; S.viewId = v.id; S.modal = null; toast(`Saved view “${name}”`); render(); break; }
+      case 'delete-view': { if (S.confirmDelete !== 'v:' + S.viewId) { S.confirmDelete = 'v:' + S.viewId; renderHead(); return; } S.confirmDelete = null; const views = (b.views || []).filter(v => v.id !== S.viewId); S.viewId = null; patchBoard({ views }); localBoard({ views }); break; }
+      case 'view': S.viewId = null; S.view = t.dataset.v; try { localStorage.setItem('ks-view', S.view); } catch (x) {} render(); break;
       case 'open': S.openItem = t.dataset.item; S.drawerTab = (board() && board().form) ? 'fact' : 'updates'; renderLayer(); fillNames(); break;
       case 'close-item': S.openItem = null; renderLayer(); break;
+      case 'sub-status': { if (!S.canWrite) return; const r = t.getBoundingClientRect(); S.pop = { type: 'status', item: t.dataset.item, sub: t.dataset.sub, col: t.dataset.col, x: r.left, y: r.bottom + 4 }; renderLayer(); break; }
+      case 'sub-del': { const item = itemById(t.dataset.item); if (!item) return; const subs = (item.subitems || []).filter(x => String(x.id) !== String(t.dataset.sub)); item.subitems = subs; patchItem(item.id, { subitems: subs }); scheduleRender(); break; }
       case 'subs': { const id = t.dataset.item; S.expanded.has(id) ? S.expanded.delete(id) : S.expanded.add(id); renderContent(); break; }
       case 'more': { const g = t.dataset.group; S.shown[g] = (S.shown[g] || PAGE) + PAGE; renderContent(); break; }
       case 'run-import': runImport(); break;
@@ -1286,7 +1323,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
         S.pop = { type: 'status', item: t.dataset.item, col: t.dataset.col, x: r.left, y: r.bottom + 4 };
         renderLayer(); const ni = $('#new-label'); break;
       }
-      case 'pick-status': { const p = S.pop; S.pop = null; (p.items || [p.item]).forEach(id => setValue(id, p.col, t.dataset.val)); if (p.items) toast(`Updated ${p.items.length} items`); renderLayer(); break; }
+      case 'pick-status': { const p = S.pop; S.pop = null; if (p.sub) { setSub(p.item, p.sub, p.col, t.dataset.val); renderLayer(); break; } (p.items || [p.item]).forEach(id => setValue(id, p.col, t.dataset.val)); if (p.items) toast(`Updated ${p.items.length} items`); renderLayer(); break; }
       case 'group-color': { const r = t.getBoundingClientRect(); S.pop = { type: 'color', group: t.dataset.group, x: r.left, y: r.bottom + 4 }; renderLayer(); break; }
       case 'pick-color': { const g = S.pop.group; S.pop = null; patchBoard({ groups: b.groups.map(x => x.id === g ? { ...x, color: t.dataset.val } : x) }); localBoard({ groups: b.groups.map(x => x.id === g ? { ...x, color: t.dataset.val } : x) }); break; }
       case 'add-group': { const g = { id: rid('g'), name: 'New group', color: PALETTE[b.groups.length % PALETTE.length] }; const groups = [...b.groups, g]; patchBoard({ groups }); localBoard({ groups }); break; }
@@ -1398,6 +1435,8 @@ td.currency::before, td.percent::after { color: var(--muted); }
       const cur = splitPeople((i.values || {})[p.col]), o = t.dataset.ddtoggle;
       setValue(p.item, p.col, (t.checked ? [...new Set([...cur, o])] : cur.filter(x => x !== o)).join(', ')); return;
     }
+    if (t.dataset && t.dataset.sub !== undefined && t.hasAttribute('data-sub-edit')) { setSub(t.dataset.item, t.dataset.sub, t.dataset.col, t.value.trim()); return; }
+    if (t.dataset && t.hasAttribute && t.hasAttribute('data-sub-check')) { setSub(t.dataset.item, t.dataset.sub, t.dataset.col, t.checked ? true : ''); return; }
     if (t.dataset && t.dataset.edit === 'check') { setValue(t.dataset.item, t.dataset.col, t.checked ? true : ''); return; }
     if (t.id === 'bulk-move') {
       const g = b.groups.find(x => x.id === t.value); if (!g) return;
@@ -1441,6 +1480,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     if (e.key !== 'Enter') return;
     if (t.classList && t.classList.contains('card')) { S.openItem = t.dataset.item; renderLayer(); fillNames(); return; }
     if (t.dataset && t.dataset.actKey === 'add-item') { const v = t.value; const g = t.dataset.group; t.value = ''; t.blur(); addItem(g, v, false); return; }
+    if (t.dataset && t.dataset.actKey === 'add-sub') { const v = t.value.trim(); const item = itemById(t.dataset.item); if (!v || !item) return; t.value = ''; const subs = [...(item.subitems || []), { id: rid('s'), name: v, values: {} }]; item.subitems = subs; S.expanded.add(item.id); patchItem(item.id, { subitems: subs, activity: act(item, `Added subitem “${v}”`) }); const inDrawer = !!t.closest('.drawer'); render(); const again = document.querySelector(`${inDrawer ? '.drawer ' : ''}[data-act-key="add-sub"][data-item="${item.id}"]`); if (again) again.focus(); return; }
     if (t.id === 'new-board') { createBoard(t.value); t.value = ''; return; }
     if (t.id === 'person-q' && S.pop && S.pop.type === 'person') {
       const n = t.value.trim(); if (!n) return; const p = S.pop, i = itemById(p.item); if (!i) return;
@@ -1535,7 +1575,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     if (!S.boards.some(b => b.id === id)) return;
     if (S.boardId === id && S.itemsUnsub) { render(); return; }
     S.boardId = id; S.openItem = null; S.modal = null; S.pop = null; S.search = ''; S.person = ''; S.shown = {}; S.expanded = new Set();
-    S.sort = null; S.filters = {}; S.selected = new Set(); loadHidden();
+    S.sort = null; S.filters = {}; S.selected = new Set(); S.viewId = null; loadHidden();
     S.ws = wsOf(S.boards.find(b => b.id === id)).id; try { localStorage.setItem('ks-ws', S.ws); } catch (e) {}
     try { localStorage.setItem('ks-board', id); } catch (e) {}
     if (S.itemsUnsub) S.itemsUnsub();
@@ -1683,6 +1723,42 @@ td.currency::before, td.percent::after { color: var(--muted); }
     const rules = (b.automations || []).filter(r => r.on !== false && r.trigger === 'button' && r.col === colId);
     if (!rules.length) { toast(`“${col.title}” runs a Monday tool. It isn’t connected in Keystone.`); return; }
     runRules(b, item, rules, `Pressed ${col.title}`);
+  }
+  // ---------- subitems (editable, with their own automations) ----------
+  function subCell(b, item, sub, c) {
+    const v = (sub.values || {})[c.id] ?? '', ro = !S.canWrite || c.readonly || ['formula', 'button', 'item_id', 'created'].includes(c.type);
+    const attrs = `data-item="${esc(item.id)}" data-sub="${esc(sub.id)}" data-col="${esc(c.id)}"`;
+    if (c.type === 'status') { const l = labelOf(c, v); return `<button class="chip ${l ? '' : 'none'}" style="${l ? '--c:' + esc(l.color) : ''}" data-act="sub-status" ${attrs} ${ro ? 'disabled' : ''}>${l ? esc(l.label) : ''}</button>`; }
+    if (ro) return `<span class="ro">${esc(c.type === 'formula' ? '' : describe(c, v) === 'empty' ? '' : describe(c, v))}</span>`;
+    if (c.type === 'date') return `<input type="date" class="cell-input" data-sub-edit ${attrs} value="${esc(v)}">`;
+    if (c.type === 'checkbox') return `<label class="cb"><input type="checkbox" data-sub-check ${attrs} ${v ? 'checked' : ''}></label>`;
+    return `<input class="cell-input" data-sub-edit ${attrs} value="${esc(v)}" ${c.type === 'number' ? 'inputmode="decimal"' : ''}>`;
+  }
+  function subTable(b, item) {
+    const sc = (b.subColumns || []).filter(c => c.type !== 'formula' || true);
+    const rows = (item.subitems || []).map(sb => `<tr><td><div class="name-wrap"><input class="cell-input" data-sub-edit data-item="${esc(item.id)}" data-sub="${esc(sb.id)}" data-col="name" value="${esc(sb.name)}" ${S.canWrite ? '' : 'readonly'} aria-label="Subitem name">${S.canWrite ? `<button class="icon-btn" data-act="sub-del" data-item="${esc(item.id)}" data-sub="${esc(sb.id)}" aria-label="Delete subitem">×</button>` : ''}</div></td>${sc.map(c => `<td class="c-${c.type}">${subCell(b, item, sb, c)}</td>`).join('')}</tr>`).join('');
+    const add = S.canWrite ? `<tr><td colspan="${sc.length + 1}"><input class="cell-input" data-act-key="add-sub" data-item="${esc(item.id)}" placeholder="+ Add subitem" aria-label="Add subitem"></td></tr>` : '';
+    return `<div class="tablewrap" style="border-radius:14px"><table class="board subtable-edit"><thead><tr><th class="name-cell" style="min-width:220px">Subitem</th>${sc.map(c => `<th class="w-${c.type}">${esc(c.title)}</th>`).join('')}</tr></thead><tbody>${rows}${add}</tbody></table></div>`;
+  }
+  function setSub(itemId, subId, colId, value) {
+    const b = board(), item = itemById(itemId); if (!b || !item) return;
+    const subs = JSON.parse(JSON.stringify(item.subitems || [])); const sb = subs.find(x => String(x.id) === String(subId)); if (!sb) return;
+    const lines = [];
+    if (colId === 'name') { if (!value || value === sb.name) return; sb.name = value; }
+    else {
+      const c = (b.subColumns || []).find(x => x.id === colId); if (!c) return;
+      if (c.type === 'number' && value !== '') value = Number(String(value).replace(/[^0-9.\-]/g, ''));
+      if (String((sb.values || {})[colId] ?? '') === String(value ?? '')) return;
+      sb.values = { ...(sb.values || {}), [colId]: value };
+      lines.push(`Subitem “${sb.name}”: ${c.title} → ${describe(c, value)}`);
+      rulesOf(b).filter(r => r.trigger === 'sub_status' && r.col === colId && (r.value == null || String(r.value) === String(value))).forEach(r => {
+        (r.actions || []).forEach(a => { const tc = (b.subColumns || []).find(x => x.id === a.col); if (!tc) return;
+          if (a.type === 'set_date') sb.values[tc.id] = ymdPlus(a.offset); else if (a.type === 'set_status' || a.type === 'set_value') sb.values[tc.id] = a.value; else if (a.type === 'clear') sb.values[tc.id] = ''; else return;
+          lines.push(`“${r.title}” set ${tc.title} on subitem “${sb.name}”`); });
+      });
+    }
+    item.subitems = subs; let activity = item.activity || []; lines.forEach(t => { activity = [{ at: now(), by: t.startsWith('“') ? 'automation' : S.uid, text: t }, ...activity]; });
+    item.activity = activity.slice(0, 40); patchItem(item.id, { subitems: subs, activity: item.activity }); scheduleRender();
   }
   function savePage() { try { localStorage.setItem('ks-page', S.page); localStorage.setItem('ks-view', S.view); } catch (e) {} }
   let summaryBusy = false;
