@@ -1,5 +1,5 @@
-// Keystone integrations: a REST API with keys, outgoing webhooks, and incoming lead links.
-// Keystone itself never texts, emails or calls anyone. Webhooks only tell YOUR tools what changed.
+// Solver.ca integrations: a REST API with keys, outgoing webhooks, and incoming lead links.
+// Solver.ca itself never texts, emails or calls anyone. Webhooks only tell YOUR tools what changed.
 'use strict';
 const crypto = require('node:crypto');
 
@@ -102,7 +102,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     const body = JSON.stringify(payload);
     const sig = 'sha256=' + crypto.createHmac('sha256', h.secret).update(body).digest('hex');
     try {
-      const r = await fetch(h.url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': 'Keystone-Webhooks/1', 'X-Keystone-Event': payload.event, 'X-Keystone-Signature': sig, 'X-Keystone-Delivery': payload.delivery }, body, signal: AbortSignal.timeout(10000) });
+      const r = await fetch(h.url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': 'Solver.ca-Webhooks/1', 'X-Solver-Event': payload.event, 'X-Solver-Signature': sig, 'X-Solver-Delivery': payload.delivery }, body, signal: AbortSignal.timeout(10000) });
       setHookResult.run(now(), String(r.status), r.ok ? null : `Got ${r.status}`, h.id);
       if (!r.ok && r.status >= 500 && attempt < 3) setTimeout(() => deliver(h, payload, attempt + 1), 5000 * attempt);
       return r.status;
@@ -291,7 +291,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
         const ev = (Array.isArray(b.events) ? b.events : []).filter(e => EVENTS.includes(e));
         const secret = crypto.randomBytes(24).toString('base64url');
         db.prepare("INSERT INTO hooks (id, kind, name, url, secret, events, board, created_at) VALUES (?, 'out', ?, ?, ?, ?, ?, ?)").run(rid('h_'), name, u, secret, JSON.stringify(ev), b.board || null, now());
-        return send(res, 201, { ok: true, secret, note: 'Use this secret to check the X-Keystone-Signature header. It won’t be shown again.' });
+        return send(res, 201, { ok: true, secret, note: 'Use this secret to check the X-Solver-Signature header. It won’t be shown again.' });
       }
     }
     const hm = /^\/api\/admin\/hooks\/(h_[A-Za-z0-9_-]+)(\/test)?$/.exec(p);
@@ -299,7 +299,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
       const h = db.prepare('SELECT * FROM hooks WHERE id = ?').get(hm[1]); if (!h) throw new HttpError(404, 'Not found.');
       if (hm[2] && method === 'POST') {
         if (h.kind !== 'out') throw new HttpError(400, 'Only outgoing webhooks can be tested.');
-        const status = await deliver(h, { event: 'test', delivery: rid('d_'), at: now(), message: 'This is a test from Keystone.' });
+        const status = await deliver(h, { event: 'test', delivery: rid('d_'), at: now(), message: 'This is a test from Solver.ca.' });
         return send(res, 200, { status });
       }
       if (method === 'PATCH') { const b = await readBody(req); if (typeof b.active === 'boolean') db.prepare('UPDATE hooks SET active = ? WHERE id = ?').run(b.active ? 1 : 0, h.id); return send(res, 200, { ok: true }); }

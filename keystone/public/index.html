@@ -7,7 +7,7 @@
 <meta name="theme-color" content="#000000">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>Keystone CRM</title>
+<title>Solver.ca</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
@@ -647,9 +647,9 @@ td.currency::before, td.percent::after { color: var(--muted); }
         case 'move_board': after.push({ kind: 'move_board', board: a.board, group: a.group, name, map: a.map }); break;
         case 'copy_to_board': after.push({ kind: 'copy_board', board: a.board, group: a.group, name, map: a.map }); break;
         case 'duplicate': after.push({ kind: 'duplicate', name, withUpdates: !!a.withUpdates }); break;
-        case 'external': lines.push({ auto: true, text: `${name} would ${a.label} in Monday. Not run in Keystone, so nothing was sent.` }); break;
+        case 'external': lines.push({ auto: true, text: `${name} would ${a.label} in Monday. Not run in Solver.ca, so nothing was sent.` }); break;
         case 'notify': lines.push({ auto: true, text: `${name} would notify ${a.to || 'someone'} in Monday: ${a.message || ''}`.trim() }); break;
-        default: lines.push({ auto: true, text: `${name} would ${a.label || a.type.replace(/_/g, ' ')} in Monday. Not run in Keystone, so nothing was sent.` });
+        default: lines.push({ auto: true, text: `${name} would ${a.label || a.type.replace(/_/g, ' ')} in Monday. Not run in Solver.ca, so nothing was sent.` });
       }
     }
   }
@@ -682,7 +682,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     }
   }
   function moveItemToBoard(b, item, targetBoardId, groupId, why, removeHere = true, map = null) {
-    const tb = S.boards.find(x => x.id === targetBoardId); if (!tb) { toast('The board this automation moves items to isn’t in Keystone.'); return; }
+    const tb = S.boards.find(x => x.id === targetBoardId); if (!tb) { toast('The board this automation moves items to isn’t in Solver.ca.'); return; }
     const g = (groupId === '__top__' ? tb.groups[0] : tb.groups.find(x => x.id === groupId)) || tb.groups[0];
     const values = {};
     // 1) Monday's own mapping for this automation (target column ← source column)
@@ -781,8 +781,8 @@ td.currency::before, td.percent::after { color: var(--muted); }
     const list = shown.filter(b => !b.folder).map(link).join('') + folders.map(f => `<div class="folder-name">${esc(f)}</div>` + shown.filter(b => b.folder === f).map(link).join('')).join('');
     const filterEl = document.activeElement && document.activeElement.id === 'board-filter';
     $('#rail').innerHTML = `
-      <div class="brand"><div class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="var(--accent-fg)" stroke-width="2.4" stroke-linecap="round"><path d="M4 20 L12 4 L20 20"/><path d="M8 13h8"/></svg></div>
-        <div><div class="brand-name">Keystone</div><div class="brand-tag">CRM · test build</div></div></div>
+      <div class="brand"><div class="brand-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><text x="12" y="17" text-anchor="middle" font-size="16" font-weight="700" font-family="-apple-system, system-ui, sans-serif" fill="#fff">S</text></svg></div>
+        <div><div class="brand-name">Solver.ca</div><div class="brand-tag">CRM · test build</div></div></div>
       ${S.me ? `<div class="whoami"><span class="role">${S.isOwner ? 'Admin' : S.canWrite ? 'Member' : 'Viewer'}</span><b>${esc(S.me.name || 'Signed in')}</b></div>` : ''}
       <button class="board-link" data-act="go-home" aria-current="${S.page === 'home'}"><span class="dot"></span>Home</button>
       <div><h2>Workspace</h2><select class="kbd-select ws-select" id="ws-select" aria-label="Workspace">${workspaces().map(w => `<option value="${esc(w.id)}" ${w.id === S.ws ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select></div>
@@ -1155,7 +1155,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
       const runsHere = r => r.trigger !== 'monday_only' && (r.actions || []).some(a => RUNS.includes(a.type));
       const shown = all.filter(r => m.showAll || r.mondayActive !== false || r.source !== 'monday');
       const rules = shown.map(r => `<div class="rule ${r.on === false ? 'off' : ''}"><div class="rule-text">${describeRule(r)}
-          <div class="card-meta" style="margin-top:4px">${runsHere(r) ? '<span class="pill">Runs in Keystone</span>' : '<span class="pill">Monday only, logged here</span>'}${r.source === 'monday' && r.mondayActive === false ? '<span class="pill">Off in Monday</span>' : ''}${(r.actions || []).some(a => !RUNS.includes(a.type)) && runsHere(r) ? '<span class="pill">Emails, texts and outside tools are skipped</span>' : ''}</div></div>
+          <div class="card-meta" style="margin-top:4px">${runsHere(r) ? '<span class="pill">Runs in Solver.ca</span>' : '<span class="pill">Monday only, logged here</span>'}${r.source === 'monday' && r.mondayActive === false ? '<span class="pill">Off in Monday</span>' : ''}${(r.actions || []).some(a => !RUNS.includes(a.type)) && runsHere(r) ? '<span class="pill">Emails, texts and outside tools are skipped</span>' : ''}</div></div>
           ${S.canWrite ? `<button class="toggle" data-act="toggle-rule" data-id="${esc(r.id)}" aria-pressed="${r.on !== false}">${r.on === false ? 'Off' : 'On'}</button>${r.source === 'monday' ? '' : `<button class="icon-btn" data-act="delete-rule" data-id="${esc(r.id)}">Delete</button>`}` : ''}</div>`).join('')
         + (all.length > shown.length ? `<button class="btn" data-act="rules-all">Show ${all.length - shown.length} automations that are off in Monday</button>` : '');
       const draft = m.draft || {};
@@ -1173,7 +1173,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
           <button class="btn primary" data-act="save-rule">Add automation</button>
         </div>` : '<p>Add a Status column first. Automations start from a status change.</p>';
       return `<h3>Automations on ${esc(b.name)}</h3>
-        <p>Copied from Monday. The ones marked “Runs in Keystone” move items, change statuses and dates, assign people and copy or move items between boards here. Emails, texts, notifications and your outside tools (webhooks) stay with Monday and are only logged here, so nobody gets messaged twice.</p>
+        <p>Copied from Monday. The ones marked “Runs in Solver.ca” move items, change statuses and dates, assign people and copy or move items between boards here. Emails, texts, notifications and your outside tools (webhooks) stay with Monday and are only logged here, so nobody gets messaged twice.</p>
         ${rules || '<p>No automations yet.</p>'}
         ${S.canWrite ? form : ''}
         <div><button class="btn" data-act="close-modal-btn">Done</button></div>`;
@@ -1195,12 +1195,12 @@ td.currency::before, td.percent::after { color: var(--muted); }
         return `<div class="rule ${h.active ? '' : 'off'}"><div class="rule-text"><b>${esc(h.name)}</b> → ${esc(bname(h.board))}${g ? ' / ' + esc(g) : ''}<div class="card-meta"><code style="word-break:break-all">${esc(link)}</code></div><div class="card-meta">${h.last_at ? `Last lead: ${esc(h.last_status)} ${esc(fmtTime(h.last_at))}` : 'No leads yet'}</div></div>
           <button class="icon-btn" data-act="int-copy" data-link="${esc(link)}">Copy link</button><button class="toggle" data-act="int-toggle" data-id="${esc(h.id)}" data-on="${h.active ? 1 : 0}" aria-pressed="${!!h.active}">${h.active ? 'On' : 'Off'}</button><button class="icon-btn" data-act="int-del" data-id="${esc(h.id)}">Delete</button></div>`; }).join('');
       return `<h3>Integrations</h3>
-        <p>Connect Keystone to n8n, Zapier, Make, your website, forms, RingCentral, Google Sheets, or anything that can send or receive a web request. Keystone never texts, emails or calls anyone itself. Setup guide: <a href="/developers" target="_blank" rel="noopener" style="color:#fff">/developers</a></p>
+        <p>Connect Solver.ca to n8n, Zapier, Make, your website, forms, RingCentral, Google Sheets, or anything that can send or receive a web request. Solver.ca never texts, emails or calls anyone itself. Setup guide: <a href="/developers" target="_blank" rel="noopener" style="color:#fff">/developers</a></p>
         ${m.msg ? `<div class="rule"><div class="rule-text">${m.msg}</div></div>` : ''}
         <h3 style="font-size:16px">API keys</h3><p>For tools that read or change leads (n8n, Zapier, scripts).</p>
         ${keys || '<p class="rail-note">No keys yet.</p>'}
         <div class="form-row"><input class="field-input" id="ik-name" placeholder="What will use it, e.g. n8n" style="flex:1 1 180px"><select class="field-input" id="ik-scope"><option value="write">Read and write</option><option value="read">Read only</option></select><button class="btn primary" data-act="int-key">Create key</button></div>
-        <h3 style="font-size:16px">Outgoing webhooks</h3><p>Keystone tells another tool the moment something happens.</p>
+        <h3 style="font-size:16px">Outgoing webhooks</h3><p>Solver.ca tells another tool the moment something happens.</p>
         ${outs || '<p class="rail-note">None yet.</p>'}
         <div class="form-row"><input class="field-input" id="io-name" placeholder="Name, e.g. n8n new leads" style="flex:1 1 160px"><input class="field-input" id="io-url" placeholder="https://…" style="flex:2 1 220px"></div>
         <div class="form-row">${EV.map(e => `<label class="pop-check" style="padding:2px 6px"><input type="checkbox" class="io-ev" value="${e}" ${e === 'item.created' ? 'checked' : ''}>${evName[e]}</label>`).join('')}</div>
@@ -1303,7 +1303,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
       case 'integrations': S.pop = null; S.modal = { type: 'integrations', data: null, msg: '' }; renderLayer(); loadIntegrations(); break;
       case 'int-key': { const name = $('#ik-name').value, scope = $('#ik-scope').value; KS.api('POST', '/api/admin/keys', { name, scope }).then(r => { S.modal.msg = `New key for <b>${esc(name)}</b>: <code style="word-break:break-all;user-select:all">${esc(r.key)}</code><br>Copy it now. It won’t be shown again.`; loadIntegrations(); }).catch(e => { S.modal.msg = esc(e.message); renderLayer(); }); break; }
       case 'int-revoke': KS.api('DELETE', '/api/admin/keys/' + t.dataset.id).then(loadIntegrations); break;
-      case 'int-out': { const events = [...document.querySelectorAll('.io-ev:checked')].map(x => x.value); KS.api('POST', '/api/admin/hooks', { kind: 'out', name: $('#io-name').value, url: $('#io-url').value, events, board: $('#io-board').value }).then(r => { S.modal.msg = `Webhook added. Its signing secret is <code style="word-break:break-all;user-select:all">${esc(r.secret)}</code>. Copy it now if the receiving tool checks signatures.`; loadIntegrations(); }).catch(e => { S.modal.msg = esc(e.message); renderLayer(); }); break; }
+      case 'int-out': { const events = [...document.querySelectorAll('.io-ev:checked')].map(x => x.value); KS.api('POST', '/api/admin/hooks', { kind: 'out', name: $('#io-name').value, url: $('#io-url').value, events, board: $('#io-board').value }).then(r => { S.modal.msg = `Webhook added. Its signing secret is <code style="word-break:break-all;user-select:all">${esc(r.secret)}</code>. Copy it now if the receiving tool checks the X-Solver-Signature header.`; loadIntegrations(); }).catch(e => { S.modal.msg = esc(e.message); renderLayer(); }); break; }
       case 'int-in': { const bd = S.boards.find(x => x.id === $('#ii-board').value); const gname = $('#ii-group').value.trim(); const g = gname && bd && bd.groups.find(x => x.name.toLowerCase() === gname.toLowerCase()); if (gname && !g) { S.modal.msg = `No group called “${esc(gname)}” on ${esc(bd ? bd.name : 'that board')}.`; renderLayer(); break; }
         const phone = bd && bd.columns.find(c => c.type === 'phone'); KS.api('POST', '/api/admin/hooks', { kind: 'in', name: $('#ii-name').value, board: $('#ii-board').value, group: g ? g.id : '', dedupe: $('#ii-dedupe').checked && phone ? phone.id : '' }).then(() => { S.modal.msg = 'Lead link created. Copy it below and paste it into your form tool.'; loadIntegrations(); }).catch(e => { S.modal.msg = esc(e.message); renderLayer(); }); break; }
       case 'int-test': KS.api('POST', '/api/admin/hooks/' + t.dataset.id + '/test', {}).then(r => { S.modal.msg = r.status >= 200 && r.status < 300 ? `Test delivered (${r.status}).` : `The other tool answered ${r.status || 'nothing'}. Check the address.`; loadIntegrations(); }); break;
@@ -1674,7 +1674,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     if (!st.configured) return '<p>Not set up yet. Add a Monday API token as MONDAY_API_TOKEN in the server settings (on Render: Environment), then reload this page.</p>';
     const last = st.finishedAt ? (st.error ? `Last copy failed: ${esc(st.error)}` : `Last copied ${esc(fmtTime(st.finishedAt))}: ${st.boards} boards, ${Number(st.items).toLocaleString('en-CA')} items.`) : 'Not copied yet.';
     if (st.running) return `<p><b>Copying now.</b> ${esc(st.msg)}. ${st.boards} boards and ${Number(st.items).toLocaleString('en-CA')} items so far. You can close this window. It keeps going on the server.</p>`;
-    return `<p>Reads ${st.workspaces.length} Monday workspace${st.workspaces.length === 1 ? '' : 's'} and refreshes their boards here. Monday itself is never changed. Items added in Keystone stay; items copied from Monday are replaced with Monday’s current version, so edits made here to those items are overwritten.</p>
+    return `<p>Reads ${st.workspaces.length} Monday workspace${st.workspaces.length === 1 ? '' : 's'} and refreshes their boards here. Monday itself is never changed. Items added in Solver.ca stay; items copied from Monday are replaced with Monday’s current version, so edits made here to those items are overwritten.</p>
       <p>${last}</p><div><button class="btn primary" data-act="monday-sync">Copy from Monday now</button></div>`;
   }
   let syncTimer = null;
@@ -1721,7 +1721,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
   function runButton(itemId, colId) {
     const b = board(), item = itemById(itemId), col = b && b.columns.find(c => c.id === colId); if (!item || !col) return;
     const rules = (b.automations || []).filter(r => r.on !== false && r.trigger === 'button' && r.col === colId);
-    if (!rules.length) { toast(`“${col.title}” runs a Monday tool. It isn’t connected in Keystone.`); return; }
+    if (!rules.length) { toast(`“${col.title}” runs a Monday tool. It isn’t connected in Solver.ca.`); return; }
     runRules(b, item, rules, `Pressed ${col.title}`);
   }
   // ---------- subitems (editable, with their own automations) ----------

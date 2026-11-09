@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Keystone API</title>
+<title>Solver.ca API</title>
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <meta name="theme-color" content="#000000">
 <style>
@@ -30,9 +30,9 @@ a { color: #fff; }
 </head>
 <body>
 <main>
-<h1>Keystone API</h1>
-<p class="lead">Connect Keystone to n8n, Zapier, Make, your website, form tools, RingCentral, Google Sheets, or your own scripts. Admins set up keys, webhooks and lead links under <b>Integrations</b> in the app.</p>
-<div class="note"><p style="margin:0">Keystone never texts, emails or calls anyone by itself. Webhooks only tell <i>your</i> tools what changed. If a tool you connect sends messages, it must follow the house rules: never message Junk/Unqualified, referred, opted-out or “(copy)” leads.</p></div>
+<h1>Solver.ca API</h1>
+<p class="lead">Connect Solver.ca to n8n, Zapier, Make, your website, form tools, RingCentral, Google Sheets, or your own scripts. Admins set up keys, webhooks and lead links under <b>Integrations</b> in the app.</p>
+<div class="note"><p style="margin:0">Solver.ca never texts, emails or calls anyone by itself. Webhooks only tell <i>your</i> tools what changed. If a tool you connect sends messages, it must follow the house rules: never message Junk/Unqualified, referred, opted-out or “(copy)” leads.</p></div>
 
 <h2>1. Incoming lead links (no code)</h2>
 <p>Create one under <b>Integrations → Incoming lead links</b>, pick the board (and group), and paste the link into your form tool's “webhook” or “HTTP POST” step. Send JSON or form fields. Any field whose name matches a column title (for example <code>Phone</code>, <code>Email</code>, <code>Province</code>) fills that column. Everything else is added to the item's first update.</p>
@@ -47,7 +47,7 @@ a { color: #fff; }
 <div class="tw"><table>
 <tr><th>Request</th><th>What it does</th></tr>
 <tr><td><code>GET /api/v1/boards</code></td><td>Every board with its groups, columns and status labels.</td></tr>
-<tr><td><code>GET /api/v1/boards/{board}</code></td><td>One board. <code>{board}</code> can be the Keystone id, the Monday id, or the board name.</td></tr>
+<tr><td><code>GET /api/v1/boards/{board}</code></td><td>One board. <code>{board}</code> can be the Solver.ca id, the Monday id, or the board name.</td></tr>
 <tr><td><code>GET /api/v1/boards/{board}/items</code></td><td>Items, newest change first. Filters: <code>?group=</code>, <code>?updated_since=2026-11-09T00:00:00Z</code>, <code>?limit=</code> (max 500), <code>?offset=</code>.</td></tr>
 <tr><td><code>GET /api/v1/boards/{board}/items/{id}</code></td><td>One item with its updates and subitems.</td></tr>
 <tr><td><code>POST /api/v1/boards/{board}/items</code></td><td>Create an item: <code>{"name", "group", "fields": {"Column title": value}, "update": "first note"}</code>. The board's automations run, as in the app.</td></tr>
@@ -63,7 +63,7 @@ curl -X PATCH https://YOUR-SITE/api/v1/boards/Setter%20Desk%20(Jan)/items/ITEM_I
   -d '{"group":"Appointment Booked","fields":{"Status":"Contacted"}}'</code></pre>
 
 <h2>3. Outgoing webhooks</h2>
-<p>Add one under <b>Integrations → Outgoing webhooks</b>. Keystone sends a <code>POST</code> with JSON within a second of the change, and retries up to 3 times if your tool doesn't answer.</p>
+<p>Add one under <b>Integrations → Outgoing webhooks</b>. Solver.ca sends a <code>POST</code> with JSON within a second of the change, and retries up to 3 times if your tool doesn't answer.</p>
 <div class="tw"><table>
 <tr><th>Event</th><th>When</th><th>Extra data</th></tr>
 <tr><td><code>item.created</code></td><td>A new item, from the app, the API, an automation or a lead link</td><td></td></tr>
@@ -82,12 +82,12 @@ curl -X PATCH https://YOUR-SITE/api/v1/boards/Setter%20Desk%20(Jan)/items/ITEM_I
             "fields": { "Status": "NA 1", "Phone": "4035550101" } },
   "change": { "column": "Status", "from": "Uncontacted", "to": "NA 1" }
 }</code></pre>
-<h3>Checking it's really Keystone</h3>
-<p>Each request has <code>X-Keystone-Signature: sha256=…</code>, an HMAC-SHA256 of the raw body using the secret shown when you created the webhook. Bulk copies from Monday don't send webhooks.</p>
+<h3>Checking it's really Solver.ca</h3>
+<p>Each request has <code>X-Solver-Signature: sha256=…</code>, an HMAC-SHA256 of the raw body using the secret shown when you created the webhook. Bulk copies from Monday don't send webhooks.</p>
 
 <h2>Recipes</h2>
 <ul>
-<li><b>n8n:</b> a Webhook node receives Keystone events; an HTTP Request node with your key creates or updates items.</li>
+<li><b>n8n:</b> a Webhook node receives Solver.ca events; an HTTP Request node with your key creates or updates items.</li>
 <li><b>Zapier / Make:</b> “Webhooks by Zapier → Catch Hook” for events, “POST” to a lead link or the API to create leads.</li>
 <li><b>RingCentral or Twilio:</b> look up the caller with <code>/api/v1/search?phone=</code>, then post the call note with <code>…/updates</code>.</li>
 <li><b>Google Sheets:</b> an outgoing webhook on <code>item.created</code> into a Zap or n8n flow that appends a row.</li>

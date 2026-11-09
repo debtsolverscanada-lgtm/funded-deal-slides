@@ -1,11 +1,11 @@
-# Keystone CRM
+# Solver.ca CRM
 
 A self-hosted, Monday-style CRM for MortgageSolvers: boards, groups, status columns, Main table and
 Kanban views, subitems, updates, activity log, simple automations, person filter, team logins, and
 live updates between everyone who has it open.
 
 It's one Node process and one SQLite file. No packages to install, no outside services.
-**Monday is not changed by anything here.** Keystone is a separate test copy.
+**Monday is not changed by anything here.** Solver.ca is a separate test copy.
 
 ## Run it on your computer
 
@@ -21,7 +21,7 @@ npm start            # http://localhost:3000
 
 Easiest: set `MONDAY_API_TOKEN` and `MONDAY_WORKSPACE_IDS` on the server, then press
 **Copy from Monday now** under **Team & settings**. Pressing it again refreshes the copy.
-Items created in Keystone are kept; items that came from Monday are replaced by Monday's current version.
+Items created in Solver.ca are kept; items that came from Monday are replaced by Monday's current version.
 
 Or offline, with files:
 
@@ -38,7 +38,7 @@ node scripts/import-monday.js import   # add --replace to wipe boards first
 
 Open https://codespaces.new/debtsolverscanada-lgtm/funded-deal-slides?ref=claude/dreamy-hamilton-i65yx7
 and add the suggested secrets (MONDAY_API_TOKEN, ADMIN_EMAIL, ADMIN_PASSWORD) when GitHub asks.
-Keystone starts by itself on port 3000 and opens in a browser tab. The forwarded port is private,
+Solver.ca starts by itself on port 3000 and opens in a browser tab. The forwarded port is private,
 so only you (signed in to GitHub) can open it. Without ADMIN_* secrets the sign-in is
 admin@keystone.local / keystone-admin. Data lives in the codespace and is gone if you delete it.
 

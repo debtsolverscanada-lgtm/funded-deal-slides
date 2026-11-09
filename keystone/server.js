@@ -1,4 +1,4 @@
-// Keystone CRM — a small, self-hosted, Monday-style CRM.
+// Solver.ca — a small, self-hosted, Monday-style CRM.
 // Zero dependencies: Node 22+ (built-in node:sqlite), one SQLite file, one process.
 //
 //   PORT=3000 DATA_DIR=./data node server.js
@@ -423,5 +423,5 @@ if (require.main === module) {
   } else if (q.userCount.get().n === 0) {
     console.log('No accounts yet. Set ADMIN_EMAIL and ADMIN_PASSWORD, or run:  node scripts/create-user.js you@example.com "Your Name" admin "a-strong-password"');
   }
-  server.listen(PORT, () => console.log(`Keystone CRM running on http://localhost:${PORT}  (data: ${DATA_DIR})`));
+  server.listen(PORT, () => console.log(`Solver.ca running on http://localhost:${PORT}  (data: ${DATA_DIR})`));
 }
