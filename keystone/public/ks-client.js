@@ -107,6 +107,7 @@
     logout: async () => { try { await call('POST', '/api/logout', {}); } catch (e) {} location.href = '/login'; },
     users: () => call('GET', '/api/users'),
     addUser: body => call('POST', '/api/users', body).then(r => { team = null; return r; }),
+    summary: ws => call('GET', '/api/summary?ws=' + encodeURIComponent(ws || 'main')),
     mondayStatus: () => call('GET', '/api/admin/monday-sync'),
     mondaySync: () => call('POST', '/api/admin/monday-sync', {}),
     updateUser: (id, body) => call('PATCH', '/api/users/' + encodeURIComponent(id), body).then(r => { team = null; return r; }),

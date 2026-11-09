@@ -266,6 +266,15 @@ async function api(req, res, url) {
     return send(res, 200, { ok: true, saved: docs.length });
   }
 
+  // ---- home summary for one workspace ----
+  if (p === '/api/summary' && method === 'GET') {
+    const ws = url.searchParams.get('ws') || 'main';
+    const hit = summaryCache.get(ws);
+    if (hit && Date.now() - hit.at < 60000) return send(res, 200, hit.data);
+    const data = buildSummary(ws); summaryCache.set(ws, { at: Date.now(), data });
+    return send(res, 200, data);
+  }
+
   // ---- documents ----
   if (p === '/api/col' && method === 'GET') {
     const col = url.searchParams.get('path') || '';
@@ -301,6 +310,37 @@ async function api(req, res, url) {
     }
   }
   throw new HttpError(404, 'Not found.');
+}
+
+// ---------- home summary ----------
+const summaryCache = new Map();
+function buildSummary(ws) {
+  const day = d => d.toISOString().slice(0, 10);
+  const today = day(new Date()), weekAgo = Date.now() - 7 * 864e5, inWeek = day(new Date(Date.now() + 7 * 864e5));
+  const spark = Array(14).fill(0), sparkStart = new Date(Date.now() - 13 * 864e5); sparkStart.setUTCHours(0, 0, 0, 0);
+  const boards = []; let total = 0, newWeek = 0, overdue = 0, dueToday = 0, upcoming = 0;
+  for (const r of q.docsInCol.all('boards')) {
+    let b; try { b = JSON.parse(r.data); } catch (e) { continue; }
+    const w = (b.workspace && b.workspace.id) || 'main'; if (w !== ws) continue;
+    const followCols = (b.columns || []).filter(c => c.type === 'date' && /follow|next|callback|due/i.test(c.title)).map(c => c.id);
+    let count = 0, bNew = 0;
+    for (const it of q.docsInCol.all(`boards/${r.id}/items`)) {
+      let d; try { d = JSON.parse(it.data); } catch (e) { continue; }
+      count++;
+      const c = d.createdAt ? Date.parse(d.createdAt) : NaN;
+      if (c >= weekAgo) bNew++;
+      if (c >= sparkStart.getTime()) { const k = Math.floor((c - sparkStart.getTime()) / 864e5); if (k >= 0 && k < 14) spark[k]++; }
+      for (const fc of followCols) {
+        const v = (d.values || {})[fc]; if (!v) continue;
+        if (v < today) overdue++; else if (v === today) dueToday++; else if (v <= inWeek) upcoming++;
+        break;
+      }
+    }
+    total += count; newWeek += bNew;
+    boards.push({ id: r.id, name: b.name, count, newWeek: bNew, folder: b.folder || '' });
+  }
+  boards.sort((x, y) => y.count - x.count);
+  return { ws, total, newWeek, spark, boards, followups: { overdue, dueToday, upcoming } };
 }
 
 // ---------- Monday sync job ----------
