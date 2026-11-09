@@ -34,6 +34,14 @@ node scripts/import-monday.js import   # add --replace to wipe boards first
 
 `import/` and `data/` hold real client data and are git-ignored. Never commit them.
 
+## Try it in GitHub Codespaces (private to your GitHub account)
+
+Open https://codespaces.new/debtsolverscanada-lgtm/funded-deal-slides?ref=claude/dreamy-hamilton-i65yx7
+and add the suggested secrets (MONDAY_API_TOKEN, ADMIN_EMAIL, ADMIN_PASSWORD) when GitHub asks.
+Keystone starts by itself on port 3000 and opens in a browser tab. The forwarded port is private,
+so only you (signed in to GitHub) can open it. Without ADMIN_* secrets the sign-in is
+admin@keystone.local / keystone-admin. Data lives in the codespace and is gone if you delete it.
+
 ## Put it on Render
 
 The repo has a `render.yaml` Blueprint at its root.
