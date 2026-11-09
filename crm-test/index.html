@@ -146,6 +146,7 @@ tr:hover .open-btn, .open-btn:focus-visible { opacity: 1; }
 .drawer-title { font-family: var(--f-display); font-size: 22px; font-weight: 700; border: 1px solid transparent; background: transparent; border-radius: 6px; width: 100%; padding: 2px 4px; margin-left: -5px; }
 .drawer-title:hover { border-color: var(--line); }
 .drawer-body { overflow-y: auto; padding: 16px 20px 30px; display: flex; flex-direction: column; gap: 22px; }
+.drawer-body > * { flex-shrink: 0; }
 .fields { display: grid; grid-template-columns: 130px minmax(0, 1fr); border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
 .fields > div { border-bottom: 1px solid var(--line); min-height: 38px; display: flex; align-items: center; }
 .fields > div:nth-last-child(-n+2) { border-bottom: 0; }
@@ -179,7 +180,7 @@ td.percent .cell-input { padding-right: 22px; }
 .ro { padding: 0 10px; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
 .board tbody tr:hover td { background: var(--surface-2); }
 .board tbody tr:hover td.name-cell { background: var(--surface-2); }
-.sub-toggle { border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); font-size: 11px; padding: 1px 6px; border-radius: 5px; font-family: var(--f-data); }
+.sub-toggle { white-space: nowrap; flex: none; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); font-size: 11px; padding: 1px 6px; border-radius: 5px; font-family: var(--f-data); }
 .sub-row > td { background: var(--surface-2); padding: 6px 10px 10px 34px !important; height: auto; }
 .subtable { border-collapse: collapse; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
 .subtable th, .subtable td { border: 1px solid var(--line); padding: 5px 10px; font-size: 12.5px; white-space: nowrap; height: 30px; }

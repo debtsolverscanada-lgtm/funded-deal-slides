@@ -1,0 +1,12 @@
+{
+  "name": "keystone-crm",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted, Monday-style CRM for MortgageSolvers. No dependencies; Node 22+.",
+  "engines": { "node": ">=22.5" },
+  "scripts": {
+    "start": "node server.js",
+    "create-user": "node scripts/create-user.js",
+    "import-monday": "node scripts/import-monday.js"
+  }
+}

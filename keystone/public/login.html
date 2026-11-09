@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sign in · Keystone CRM</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700&family=Figtree:wght@400;500;600&display=swap">
+<style>
+:root { --bg: #eef2f0; --surface: #ffffff; --line: #d6dedb; --fg: #15201d; --muted: #5a6964; --accent: #0e6b5b; --accent-fg: #ffffff; --danger: #b1384c; }
+@media (prefers-color-scheme: dark) { :root { --bg: #0d1412; --surface: #141d1a; --line: #283531; --fg: #e2ebe7; --muted: #92a39d; --accent: #45b89e; --accent-fg: #062019; --danger: #e07285; color-scheme: dark; } }
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.5 "Figtree", "Segoe UI", system-ui, sans-serif; display: grid; place-items: center; padding: 16px; }
+form { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 28px 26px; width: min(380px, 100%); display: flex; flex-direction: column; gap: 14px; }
+.brand { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.brand img { width: 34px; height: 34px; }
+h1 { font-family: "Bricolage Grotesque", "Segoe UI", sans-serif; font-size: 24px; margin: 0; letter-spacing: -.01em; }
+label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; color: var(--muted); font-weight: 500; }
+input { font: inherit; color: inherit; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+input:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
+button { font: inherit; font-weight: 600; padding: 11px; border: 0; border-radius: 8px; background: var(--accent); color: var(--accent-fg); cursor: pointer; }
+button:disabled { opacity: .6; }
+.err { color: var(--danger); font-size: 14px; min-height: 1.5em; margin: 0; }
+.note { color: var(--muted); font-size: 13px; margin: 0; }
+</style>
+</head>
+<body>
+<form id="f">
+  <div class="brand"><img src="/icon.svg" alt=""><h1>Keystone</h1></div>
+  <label>Email <input id="email" type="email" autocomplete="username" required></label>
+  <label>Password <input id="password" type="password" autocomplete="current-password" required></label>
+  <p class="err" id="err" role="alert"></p>
+  <button id="go">Sign in</button>
+  <p class="note">Forgot your password? Ask an admin to set a new one.</p>
+</form>
+<script>
+document.getElementById('f').addEventListener('submit', async e => {
+  e.preventDefault();
+  const go = document.getElementById('go'), err = document.getElementById('err');
+  go.disabled = true; err.textContent = '';
+  try {
+    const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: document.getElementById('email').value, password: document.getElementById('password').value }) });
+    if (r.ok) { location.href = '/'; return; }
+    const d = await r.json().catch(() => ({}));
+    err.textContent = d.error || 'Sign-in failed. Try again.';
+  } catch (x) { err.textContent = 'Can’t reach the server. Check your connection.'; }
+  go.disabled = false;
+});
+</script>
+</body>
+</html>
