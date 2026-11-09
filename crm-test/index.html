@@ -166,7 +166,38 @@ tr:hover .open-btn, .open-btn:focus-visible { opacity: 1; }
 .log .auto { color: var(--accent); }
 
 /* Popover and modal */
-.pop { position: fixed; z-index: 40; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 8px; width: 220px; display: flex; flex-direction: column; gap: 4px; }
+.pop { position: fixed; z-index: 40; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 8px; width: 220px; display: flex; flex-direction: column; gap: 4px; max-height: 340px; overflow-y: auto; }
+/* Monday-style table details */
+.board th { text-align: center; }
+.board th button.col-head { justify-content: center; }
+.board thead th.name-cell button.col-head, .board thead th.name-cell { text-align: left; }
+.board td.c-status, .board td.c-person, .board td.c-date { text-align: center; }
+.board td.c-person .cell-input, .board td.c-date .cell-input { text-align: center; }
+td.percent { position: relative; }
+td.percent::after { content: "%"; position: absolute; right: 8px; top: 50%; transform: translateY(-50%); color: var(--muted); font-family: var(--f-data); pointer-events: none; }
+td.percent .cell-input { padding-right: 22px; }
+.ro { padding: 0 10px; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+.board tbody tr:hover td { background: var(--surface-2); }
+.board tbody tr:hover td.name-cell { background: var(--surface-2); }
+.sub-toggle { border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); font-size: 11px; padding: 1px 6px; border-radius: 5px; font-family: var(--f-data); }
+.sub-row > td { background: var(--surface-2); padding: 6px 10px 10px 34px !important; height: auto; }
+.subtable { border-collapse: collapse; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+.subtable th, .subtable td { border: 1px solid var(--line); padding: 5px 10px; font-size: 12.5px; white-space: nowrap; height: 30px; }
+.subtable th { background: var(--surface-2); color: var(--muted); font-weight: 600; }
+.more-row td { height: 36px; }
+.more-row button { border: 0; background: none; color: var(--accent); font-weight: 600; padding: 0 12px; height: 36px; }
+.folder-name { font-size: 12px; color: var(--muted); padding: 8px 10px 2px; font-weight: 600; }
+.whoami { display: flex; flex-direction: column; gap: 2px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); font-size: 12.5px; }
+.whoami b { font-weight: 600; }
+.role { display: inline-block; font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: var(--accent); font-weight: 700; }
+.importer { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 14px 16px; margin-bottom: 18px; display: flex; flex-direction: column; gap: 10px; }
+.importer h3 { margin: 0; font-family: var(--f-display); font-size: 17px; }
+.importer p { margin: 0; line-height: 1.5; }
+.progress { height: 8px; background: var(--surface); border-radius: 99px; overflow: hidden; }
+.progress span { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+.sublist { display: flex; flex-direction: column; gap: 6px; }
+.subcard { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
+.subcard .card-meta { gap: 10px; }
 .pop .chip { height: 32px; border-radius: 6px; }
 .pop input { padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); margin-top: 4px; }
 .modal-wrap { position: fixed; inset: 0; z-index: 30; background: rgba(5, 15, 12, .4); display: grid; place-items: center; padding: 16px; }
@@ -201,7 +232,7 @@ tr:hover .open-btn, .open-btn:focus-visible { opacity: 1; }
 <div class="app" id="app">
   <aside class="rail" id="rail"></aside>
   <main class="main">
-    <div class="banner">Test workspace. Every lead here is sample data, kept separate from Monday. Nothing on this page texts, emails or calls anyone.</div>
+    <div class="banner">Test copy of your Monday workspace, with real client data. Changes here do not go back to Monday, and nothing on this page texts, emails or calls anyone. Share it only with your team.</div>
     <div class="head" id="head"></div>
     <div class="content" id="content">
       <div class="empty"><h3>Loading your boards</h3>Boards, groups and leads appear here once the workspace connects.</div>
@@ -219,8 +250,11 @@ tr:hover .open-btn, .open-btn:focus-visible { opacity: 1; }
     db: null, user: null, uid: '', canWrite: true, status: 'loading',
     boards: [], boardId: null, items: [], itemsLoaded: false, itemsUnsub: null,
     view: 'table', search: '', collapsed: new Set(), openItem: null, pop: null, modal: null,
-    confirmDelete: null, pendingRender: false, names: {}
+    confirmDelete: null, pendingRender: false, names: {},
+    person: '', boardFilter: '', shown: {}, expanded: new Set(), me: null, isOwner: false,
+    importManifest: null, importState: null, importing: null
   };
+  const PAGE = 50;
   try { S.view = localStorage.getItem('ks-view') || 'table'; S.boardId = localStorage.getItem('ks-board'); } catch (e) {}
 
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -256,12 +290,13 @@ tr:hover .open-btn, .open-btn:focus-visible { opacity: 1; }
     if (v === '' || v == null) return 'empty';
     if (col.type === 'status') return (labelOf(col, v) || {}).label || 'empty';
     if (col.type === 'number' && col.format === 'currency') return '$' + fmtMoney(v);
+    if (col.type === 'number' && col.format === 'percent') return v + '%';
     return String(v);
   }
 
   function setValue(itemId, colId, value) {
     const b = board(), item = itemById(itemId), col = b && b.columns.find(c => c.id === colId);
-    if (!item || !col) return;
+    if (!item || !col || col.readonly) return;
     if (col.type === 'number') value = value === '' ? '' : Number(String(value).replace(/[^0-9.\-]/g, ''));
     if (col.type === 'number' && value !== '' && isNaN(value)) { toast('Enter a number, like 245000.'); scheduleRender(); return; }
     const old = (item.values || {})[colId] ?? '';
@@ -307,7 +342,12 @@ tr:hover .open-btn, .open-btn:focus-visible { opacity: 1; }
     const a = document.activeElement;
     return a && a.matches && a.matches('input[type=text], input:not([type]), input[type=date], textarea') && a.closest('#app, #layer') && !a.matches('.search');
   }
-  function scheduleRender() { if (isEditing()) { S.pendingRender = true; return; } render(); }
+  let renderTimer = null;
+  function scheduleRender() {
+    if (isEditing()) { S.pendingRender = true; return; }
+    if (renderTimer) return;
+    renderTimer = setTimeout(() => { renderTimer = null; if (isEditing()) { S.pendingRender = true; return; } render(); }, S.importing && !S.importing.finished ? 1500 : 40);
+  }
   document.addEventListener('focusout', () => setTimeout(() => { if (S.pendingRender && !isEditing()) { S.pendingRender = false; render(); } }, 0));
 
   function render() {
@@ -316,13 +356,22 @@ tr:hover .open-btn, .open-btn:focus-visible { opacity: 1; }
   }
 
   function renderRail() {
-    const list = S.boards.map(b => `<button class="board-link" data-act="board" data-id="${esc(b.id)}" aria-current="${b.id === S.boardId}"><span class="dot"></span>${esc(b.name)}</button>`).join('');
+    const q = S.boardFilter.trim().toLowerCase();
+    const link = b => `<button class="board-link" data-act="board" data-id="${esc(b.id)}" aria-current="${b.id === S.boardId}"><span class="dot"></span>${esc(b.name)}</button>`;
+    const shown = S.boards.filter(b => !q || b.name.toLowerCase().includes(q));
+    const folders = [...new Set(shown.map(b => b.folder || '').filter(Boolean))];
+    const list = shown.filter(b => !b.folder).map(link).join('') + folders.map(f => `<div class="folder-name">${esc(f)}</div>` + shown.filter(b => b.folder === f).map(link).join('')).join('');
+    const filterEl = document.activeElement && document.activeElement.id === 'board-filter';
     $('#rail').innerHTML = `
       <div class="brand"><div class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="var(--accent-fg)" stroke-width="2.4" stroke-linecap="round"><path d="M4 20 L12 4 L20 20"/><path d="M8 13h8"/></svg></div>
         <div><div class="brand-name">Keystone</div><div class="brand-tag">CRM · test build</div></div></div>
-      <div><h2>Boards</h2><div class="board-list">${list || '<span class="rail-note">No boards yet.</span>'}</div></div>
+      ${S.me ? `<div class="whoami"><span class="role">${S.isOwner ? 'Admin · owner' : S.canWrite ? 'Member' : 'Viewer'}</span><b>${esc(S.me.name || 'Signed in')}</b></div>` : ''}
+      <div><h2>Workspace · ${S.boards.length} boards</h2>
+        ${S.boards.length > 6 ? `<input class="rail-input" id="board-filter" placeholder="Find a board" value="${esc(S.boardFilter)}" aria-label="Find a board" style="margin-bottom:6px;border-style:solid">` : ''}
+        <div class="board-list">${list || '<span class="rail-note">No boards yet.</span>'}</div></div>
       ${S.canWrite && S.db ? '<input class="rail-input" id="new-board" placeholder="+ New board" aria-label="New board name">' : ''}
       <p class="rail-note">Changes save for everyone who opens this page. Automations run the moment a status changes.</p>`;
+    if (filterEl) { const f = $('#board-filter'); if (f) { f.focus(); f.setSelectionRange(f.value.length, f.value.length); } }
   }
 
   function renderHead() {
@@ -334,24 +383,33 @@ tr:hover .open-btn, .open-btn:focus-visible { opacity: 1; }
       <div class="head-row">
         <select class="board-select" id="board-select" aria-label="Board">${opts}</select>
         <input class="board-title" id="board-title" value="${esc(b.name)}" aria-label="Board name" ${S.canWrite ? '' : 'readonly'}>
-        <button class="btn primary" data-act="new-item">+ New lead</button>
+        <button class="btn primary" data-act="new-item">+ New item</button>
       </div>
       <div class="head-row">
         <div class="tabs" role="group" aria-label="View">
-          <button class="tab" data-act="view" data-v="table" aria-pressed="${S.view === 'table'}">Table</button>
+          <button class="tab" data-act="view" data-v="table" aria-pressed="${S.view === 'table'}">Main table</button>
           <button class="tab" data-act="view" data-v="kanban" aria-pressed="${S.view === 'kanban'}">Kanban</button>
         </div>
         ${S.view === 'kanban' && statusCols.length > 1 ? `<select class="kbd-select" id="kanban-col" aria-label="Group cards by">${statusCols.map(c => `<option value="${c.id}" ${c.id === kanbanColId(b) ? 'selected' : ''}>By ${esc(c.title)}</option>`).join('')}</select>` : ''}
         <input class="search" id="search" type="search" placeholder="Search this board" value="${esc(S.search)}" aria-label="Search this board">
+        ${peopleOnBoard(b).length ? `<select class="kbd-select" id="person-filter" aria-label="Filter by person"><option value="">Person: everyone</option>${peopleOnBoard(b).map(p => `<option value="${esc(p)}" ${p === S.person ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>` : ''}
+        <span class="group-count">${visibleItems().length} of ${S.items.length} items</span>
         <span class="spacer"></span>
         <button class="btn" data-act="automations">Automations · ${(b.automations || []).filter(r => r.on !== false).length}</button>
         <button class="btn" data-act="add-column">+ Column</button>
       </div>`;
   }
 
+  function peopleOnBoard(b) {
+    const pc = b.columns.filter(c => c.type === 'person');
+    const names = new Set();
+    S.items.forEach(i => pc.forEach(c => String((i.values || {})[c.id] || '').split(',').map(s => s.trim()).filter(Boolean).forEach(n => names.add(n))));
+    return [...names].sort();
+  }
   function visibleItems() {
     const q = S.search.trim().toLowerCase(), b = board();
     let list = S.items.slice().sort((a, c) => (a.pos || 0) - (c.pos || 0));
+    if (S.person && b) { const pc = b.columns.filter(c => c.type === 'person'); list = list.filter(i => pc.some(c => String((i.values || {})[c.id] || '').split(',').map(s => s.trim()).includes(S.person))); }
     if (q && b) list = list.filter(i => {
       if ((i.name || '').toLowerCase().includes(q)) return true;
       return b.columns.some(c => describe(c, (i.values || {})[c.id]).toLowerCase().includes(q));
@@ -363,10 +421,12 @@ tr:hover .open-btn, .open-btn:focus-visible { opacity: 1; }
     const v = (item.values || {})[col.id] ?? '';
     const ro = S.canWrite ? '' : 'readonly';
     const base = `class="cell-input" data-edit="value" data-item="${esc(item.id)}" data-col="${esc(col.id)}" aria-label="${esc(col.title)}" ${ro}`;
+    if (col.readonly) return `<div class="ro" title="${esc(v)}">${esc(v)}</div>`;
+    if (col.long && inDrawer) return `<textarea ${base} rows="3" style="height:auto;padding:8px 10px;resize:vertical">${esc(v)}</textarea>`;
     switch (col.type) {
       case 'status': {
         const l = labelOf(col, v);
-        return `<button class="chip ${l ? '' : 'none'}" style="${l ? 'background:' + esc(l.color) : ''}" data-act="status" data-item="${esc(item.id)}" data-col="${esc(col.id)}">${l ? esc(l.label) : 'Set ' + esc(col.title.toLowerCase())}</button>`;
+        return `<button class="chip ${l ? '' : 'none'}" style="${l ? 'background:' + esc(l.color) : ''}" title="${esc(l && l.desc || '')}" data-act="status" data-item="${esc(item.id)}" data-col="${esc(col.id)}">${l ? esc(l.label) : inDrawer ? 'Set ' + esc(col.title.toLowerCase()) : ''}</button>`;
       }
       case 'date': return `<input type="date" ${base} value="${esc(v)}">`;
       case 'number': return `<input type="text" inputmode="decimal" ${base} value="${col.format === 'currency' ? esc(fmtMoney(v)) : esc(v)}" style="${col.format === 'currency' ? 'padding-left:20px' : ''}">`;
@@ -385,7 +445,8 @@ tr:hover .open-btn, .open-btn:focus-visible { opacity: 1; }
     }
     if (col.type === 'number') {
       const sum = items.reduce((s, i) => s + (Number((i.values || {})[col.id]) || 0), 0);
-      return `<div class="sumnum">${col.format === 'currency' ? '$' + fmtMoney(sum) : sum.toLocaleString('en-CA')}</div>`;
+      if (col.format === 'percent') return '';
+      return `<div class="sumnum">${col.format === 'currency' ? '$' + fmtMoney(sum) : sum.toLocaleString('en-CA', { maximumFractionDigits: 2 })}</div>`;
     }
     return '';
   }
@@ -395,28 +456,38 @@ tr:hover .open-btn, .open-btn:focus-visible { opacity: 1; }
     if (S.status === 'offline') { el.innerHTML = `<div class="empty"><h3>Open this page on claude.ai</h3>The test workspace keeps its boards in a shared store that only loads inside claude.ai. Sign in and open the link again.</div>`; return; }
     if (S.status === 'slow' && !S.boards.length) { el.innerHTML = `<div class="empty"><h3>Still connecting</h3>The boards can’t be reached yet. They will appear here by themselves once the connection comes back.</div>`; return; }
     if (!b) {
-      el.innerHTML = S.status === 'ready'
+      el.innerHTML = renderImporter() + (S.status === 'ready'
         ? `<div class="empty"><h3>No boards yet</h3>Type a name into “+ New board” on the left to make the first one.</div>`
-        : `<div class="empty"><h3>Loading your boards</h3>Boards, groups and leads appear here once the workspace connects.</div>`;
+        : `<div class="empty"><h3>Loading your boards</h3>Boards, groups and leads appear here once the workspace connects.</div>`);
       return;
     }
     const people = [...new Set(S.items.flatMap(i => b.columns.filter(c => c.type === 'person').map(c => (i.values || {})[c.id]).filter(Boolean)))];
     const dl = `<datalist id="people">${people.map(p => `<option value="${esc(p)}">`).join('')}</datalist>`;
-    if (!S.itemsLoaded && !S.items.length) { el.innerHTML = `<div class="empty"><h3>Loading ${esc(b.name)}</h3>Its leads appear here in a moment.</div>`; return; }
-    el.innerHTML = dl + (S.view === 'kanban' ? renderKanban(b) : renderTable(b));
+    const imp = renderImporter();
+    if (!S.itemsLoaded && !S.items.length) { el.innerHTML = imp + `<div class="empty"><h3>Loading ${esc(b.name)}</h3>Its items appear here in a moment.</div>`; return; }
+    el.innerHTML = imp + dl + (S.view === 'kanban' ? renderKanban(b) : renderTable(b));
   }
 
   function renderTable(b) {
     const items = visibleItems();
     const head = b.columns.map(c => `<th class="w-${c.type}"><button class="col-head" data-act="col-menu" data-col="${esc(c.id)}">${esc(c.title)} <span class="col-type">${esc(TYPES[c.type] || '')}</span></button></th>`).join('');
+    const subCols = b.subColumns || [];
     const groups = b.groups.map(g => {
       const gi = items.filter(i => i.group === g.id);
       const open = !S.collapsed.has(g.id);
-      const rows = gi.map(i => `<tr>
-          <td class="name-cell"><div class="name-wrap"><input class="cell-input" data-edit="name" data-item="${esc(i.id)}" value="${esc(i.name)}" aria-label="Item name" ${S.canWrite ? '' : 'readonly'} style="padding-left:2px"><button class="open-btn" data-act="open" data-item="${esc(i.id)}">Open${(i.updates || []).length ? ' · ' + i.updates.length : ''}</button></div></td>
-          ${b.columns.map(c => `<td class="${c.type === 'number' ? 'num-cell' : ''} ${c.format === 'currency' ? 'currency' : ''}">${cellEditor(c, i)}</td>`).join('')}
-        </tr>`).join('');
-      const addRow = S.canWrite ? `<tr class="add-row"><td class="name-cell"><input class="cell-input" data-act-key="add-item" data-group="${esc(g.id)}" placeholder="+ Add lead" aria-label="Add lead to ${esc(g.name)}"></td>${b.columns.map(() => '<td></td>').join('')}</tr>` : '';
+      const limit = S.shown[g.id] || PAGE;
+      const rows = gi.slice(0, limit).map(i => {
+        const subs = i.subitems || [];
+        const exp = S.expanded.has(i.id) && subs.length;
+        const row = `<tr>
+          <td class="name-cell"><div class="name-wrap">${subs.length ? `<button class="sub-toggle" data-act="subs" data-item="${esc(i.id)}" aria-expanded="${!!exp}" title="Subitems">${exp ? '▾' : '▸'} ${subs.length}</button>` : ''}<input class="cell-input" data-edit="name" data-item="${esc(i.id)}" value="${esc(i.name)}" aria-label="Item name" ${S.canWrite ? '' : 'readonly'} style="padding-left:2px"><button class="open-btn" data-act="open" data-item="${esc(i.id)}">Open${(i.updates || []).length ? ' · ' + i.updates.length : ''}</button></div></td>
+          ${b.columns.map(c => `<td class="c-${c.type} ${c.type === 'number' ? 'num-cell' : ''} ${c.format || ''}">${cellEditor(c, i)}</td>`).join('')}
+        </tr>`;
+        const subRow = exp ? `<tr class="sub-row"><td colspan="${b.columns.length + 1}"><table class="subtable"><thead><tr><th>Subitem</th>${subCols.map(c => `<th>${esc(c.title)}</th>`).join('')}</tr></thead><tbody>${subs.map(s => `<tr><td>${esc(s.name)}</td>${subCols.map(c => { const v = (s.values || {})[c.id]; const l = c.type === 'status' && labelOf(c, v); return l ? `<td style="background:${esc(l.color)};color:#fff">${esc(l.label)}</td>` : `<td>${esc(v == null ? '' : describe(c, v) === 'empty' ? '' : describe(c, v))}</td>`; }).join('')}</tr>`).join('')}</tbody></table></td></tr>` : '';
+        return row + subRow;
+      }).join('');
+      const more = gi.length > limit ? `<tr class="more-row"><td class="name-cell" colspan="${Math.min(b.columns.length + 1, 3)}"><button data-act="more" data-group="${esc(g.id)}">Show ${Math.min(PAGE, gi.length - limit)} more · ${gi.length - limit} hidden</button></td>${b.columns.slice(2).map(() => '<td></td>').join('')}</tr>` : '';
+      const addRow = (S.canWrite ? `<tr class="add-row"><td class="name-cell"><input class="cell-input" data-act-key="add-item" data-group="${esc(g.id)}" placeholder="+ Add item" aria-label="Add item to ${esc(g.name)}"></td>${b.columns.map(() => '<td></td>').join('')}</tr>` : '') + more;
       const sum = `<tr class="sum-row"><td class="name-cell"></td>${b.columns.map(c => `<td>${summaryCell(c, gi)}</td>`).join('')}</tr>`;
       return `<section class="group" style="--gc:${esc(g.color)}">
         <div class="group-head">
@@ -449,7 +520,7 @@ tr:hover .open-btn, .open-btn:focus-visible { opacity: 1; }
     const otherStatus = b.columns.find(c => c.type === 'status' && c.id !== colId);
     const lanes = [...(col.labels || []), { id: '', label: 'No status', color: '#6b7280' }].map(l => {
       const li = items.filter(i => ((i.values || {})[colId] || '') === l.id);
-      if (!l.id && !li.length) return '';
+      if (!li.length && (!l.id || l.hidden || (col.labels || []).length > 10)) return '';
       const cards = li.map(i => {
         const g = b.groups.find(x => x.id === i.group);
         const v = i.values || {};
@@ -481,12 +552,16 @@ tr:hover .open-btn, .open-btn:focus-visible { opacity: 1; }
         const fields = b.columns.map(c => `<div class="f-label">${esc(c.title)}</div><div class="f-value ${c.format === 'currency' ? 'currency' : ''}" ${c.format === 'currency' ? 'style="position:relative"' : ''}>${c.format === 'currency' ? '<span style="position:absolute;left:10px;color:var(--muted);font-family:var(--f-data)">$</span>' : ''}${cellEditor(c, i, true)}</div>`).join('');
         const groupSel = `<div class="f-label">Group</div><div class="f-value"><select class="kbd-select" data-edit="group" data-item="${esc(i.id)}" ${S.canWrite ? '' : 'disabled'} aria-label="Group">${b.groups.map(g => `<option value="${esc(g.id)}" ${g.id === i.group ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}${b.groups.some(g => g.id === i.group) ? '' : '<option selected>Pick a group</option>'}</select></div>`;
         const updates = (i.updates || []).slice().reverse().map(u => `<div class="update"><div class="u-meta"><b data-uid="${esc(u.by)}">${esc(u.byName || 'Someone')}</b><span>${esc(fmtTime(u.at))}</span></div><div class="u-text">${esc(u.text)}</div></div>`).join('');
-        const log = (i.activity || []).map(a => `<li><time>${esc(fmtTime(a.at))}</time><span class="${a.by === 'automation' ? 'auto' : ''}">${a.by === 'automation' ? '' : `<span data-uid="${esc(a.by)}">Someone</span>: `}${esc(a.text)}</span></li>`).join('');
+        const sys = a => a.by === 'automation' || a.by === 'import' || a.by === 'seed';
+        const log = (i.activity || []).map(a => `<li><time>${esc(fmtTime(a.at))}</time><span class="${sys(a) ? 'auto' : ''}">${sys(a) ? '' : `<span data-uid="${esc(a.by)}">Someone</span>: `}${esc(a.text)}</span></li>`).join('');
+        const sc = b.subColumns || [];
+        const subs = (i.subitems || []).map(s => `<div class="subcard"><b>${esc(s.name)}</b><span class="card-meta">${sc.map(c => { const v = (s.values || {})[c.id]; if (v == null || v === '') return ''; const l = c.type === 'status' && labelOf(c, v); return l ? `<span class="pill" style="background:${esc(l.color)}">${esc(l.label)}</span>` : `<span>${esc(c.title)}: ${esc(describe(c, v))}</span>`; }).join('')}</span></div>`).join('');
         html += `<div class="scrim" data-act="close-item"></div>
         <aside class="drawer" role="dialog" aria-label="${esc(i.name)}">
           <div class="drawer-head"><input class="drawer-title" data-edit="name" data-item="${esc(i.id)}" value="${esc(i.name)}" aria-label="Item name" ${S.canWrite ? '' : 'readonly'}><button class="btn" data-act="close-item">Close</button></div>
           <div class="drawer-body">
             <div class="fields">${fields}${groupSel}</div>
+            ${subs ? `<div><h4 class="sec-title">Subitems · ${(i.subitems || []).length}</h4><div class="sublist">${subs}</div></div>` : ''}
             <div><h4 class="sec-title">Updates</h4>
               ${S.canWrite ? `<div class="composer"><textarea id="update-text" placeholder="Write an update for the team. Call notes, next steps, what the client said."></textarea><div><button class="btn primary" data-act="post-update" data-item="${esc(i.id)}">Post update</button></div></div>` : ''}
               <div style="margin-top:12px">${updates || '<p class="rail-note">No updates yet.</p>'}</div></div>
@@ -511,7 +586,7 @@ tr:hover .open-btn, .open-btn:focus-visible { opacity: 1; }
       const col = b.columns.find(c => c.id === p.col);
       if (!col) return '';
       return `<div class="pop" style="${style}" data-pop>
-        ${(col.labels || []).map(l => `<button class="chip" style="background:${esc(l.color)}" data-act="pick-status" data-val="${esc(l.id)}">${esc(l.label)}</button>`).join('')}
+        ${(col.labels || []).filter(l => !l.hidden).map(l => `<button class="chip" style="background:${esc(l.color)}" title="${esc(l.desc || '')}" data-act="pick-status" data-val="${esc(l.id)}">${esc(l.label)}</button>`).join('')}
         <button class="chip none" data-act="pick-status" data-val="">Clear</button>
         ${S.canWrite ? `<input id="new-label" placeholder="+ New label, press Enter" aria-label="New label">` : ''}
       </div>`;
@@ -575,7 +650,7 @@ tr:hover .open-btn, .open-btn:focus-visible { opacity: 1; }
   async function fillNames() {
     if (!S.user) return;
     const els = [...document.querySelectorAll('[data-uid]')];
-    const ids = [...new Set(els.map(e => e.dataset.uid).filter(id => id && id !== 'automation' && id !== 'seed'))];
+    const ids = [...new Set(els.map(e => e.dataset.uid).filter(id => id && id.startsWith('u_')))];
     els.forEach(e => { if (e.dataset.uid === 'seed') e.textContent = 'Sample data'; });
     if (!ids.length) return;
     try {
@@ -597,6 +672,9 @@ tr:hover .open-btn, .open-btn:focus-visible { opacity: 1; }
       case 'view': S.view = t.dataset.v; try { localStorage.setItem('ks-view', S.view); } catch (x) {} render(); break;
       case 'open': S.openItem = t.dataset.item; renderLayer(); fillNames(); break;
       case 'close-item': S.openItem = null; renderLayer(); break;
+      case 'subs': { const id = t.dataset.item; S.expanded.has(id) ? S.expanded.delete(id) : S.expanded.add(id); renderContent(); break; }
+      case 'more': { const g = t.dataset.group; S.shown[g] = (S.shown[g] || PAGE) + PAGE; renderContent(); break; }
+      case 'run-import': runImport(); break;
       case 'collapse': { const g = t.dataset.group; S.collapsed.has(g) ? S.collapsed.delete(g) : S.collapsed.add(g); renderContent(); break; }
       case 'new-item': if (b && b.groups[0]) addItem(b.groups[0].id, 'New lead', true); else toast('Add a group first.'); break;
       case 'status': {
@@ -673,6 +751,7 @@ tr:hover .open-btn, .open-btn:focus-visible { opacity: 1; }
     const t = e.target, b = board();
     if (t.id === 'board-select') return selectBoard(t.value);
     if (t.id === 'kanban-col') { S.kanbanCol = t.value; return renderContent(); }
+    if (t.id === 'person-filter') { S.person = t.value; S.shown = {}; return render(); }
     if (t.id === 'r-col' || t.id === 'r-action' || t.id === 'r-tcol') {
       const d = readRuleForm(); S.modal.draft = { ...d, label: t.id === 'r-col' ? '' : d.label, targetCol: $('#r-tcol') ? $('#r-tcol').value : '' }; return renderLayer();
     }
@@ -697,7 +776,8 @@ tr:hover .open-btn, .open-btn:focus-visible { opacity: 1; }
   });
 
   document.addEventListener('input', e => {
-    if (e.target.id === 'search') { S.search = e.target.value; renderContent(); }
+    if (e.target.id === 'search') { S.search = e.target.value; S.shown = {}; renderContent(); }
+    if (e.target.id === 'board-filter') { S.boardFilter = e.target.value; renderRail(); }
   });
 
   document.addEventListener('keydown', e => {
@@ -748,7 +828,7 @@ tr:hover .open-btn, .open-btn:focus-visible { opacity: 1; }
   function selectBoard(id) {
     if (!S.boards.some(b => b.id === id)) return;
     if (S.boardId === id && S.itemsUnsub) { render(); return; }
-    S.boardId = id; S.openItem = null; S.modal = null; S.pop = null; S.search = '';
+    S.boardId = id; S.openItem = null; S.modal = null; S.pop = null; S.search = ''; S.person = ''; S.shown = {}; S.expanded = new Set();
     try { localStorage.setItem('ks-board', id); } catch (e) {}
     if (S.itemsUnsub) S.itemsUnsub();
     S.items = []; S.itemsLoaded = false;
@@ -758,6 +838,86 @@ tr:hover .open-btn, .open-btn:focus-visible { opacity: 1; }
       if (!snap.metadata.fromCache) S.itemsLoaded = true;
       scheduleRender();
     }, () => { S.itemsLoaded = true; toast('This board stopped updating. Reload the page to reconnect.'); });
+    render();
+  }
+
+  // ---------- one-time import of the Monday export (owner only) ----------
+  function renderImporter() {
+    const m = S.importManifest; if (!m || !S.isOwner) return '';
+    const st = S.importState || {}, run = S.importing;
+    if (st.finishedAt && !run) return '';
+    const pct = run ? Math.round((run.done / Math.max(1, m.total_items)) * 100) : 0;
+    return `<div class="importer" id="importer">
+      <h3>Copy your Monday workspace in</h3>
+      <p>${m.boards.length} boards and ${m.total_items.toLocaleString('en-CA')} items, exported from Monday on ${esc(fmtTime(m.exported_at))}, with their groups, columns, status labels, subitems and recent updates. Only you see this button. Keep this tab open until it finishes. If it stops, press the button again and it picks up where it left off.</p>
+      ${run ? `<div class="progress"><span style="width:${pct}%"></span></div><p id="import-msg">${esc(run.msg || '')} ${run.done.toLocaleString('en-CA')} of ${m.total_items.toLocaleString('en-CA')} items (${pct}%)</p>`
+            : `<div><button class="btn primary" data-act="run-import">${st.doneChunks && st.doneChunks.length ? 'Resume import' : 'Import from Monday'}</button></div>`}
+    </div>`;
+  }
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  async function retry(fn) {
+    for (let t = 0; t < 8; t++) {
+      try { return await fn(); }
+      catch (e) {
+        const c = e && e.code;
+        if (c === 'quota_exceeded' || c === 'invalid_argument' || c === 'revoked' || c === 'not_granted') throw e;
+        await sleep(Math.min(30000, 800 * 2 ** t) + Math.random() * 500);
+      }
+    }
+    throw { code: 'unavailable', message: 'gave up' };
+  }
+  function tickImport() {
+    const el = $('#importer'); if (!el || !S.importing) return;
+    const m = S.importManifest, pct = Math.round((S.importing.done / Math.max(1, m.total_items)) * 100);
+    const bar = el.querySelector('.progress span'); if (bar) bar.style.width = pct + '%';
+    const msg = $('#import-msg'); if (msg) msg.textContent = `${S.importing.msg || ''} ${S.importing.done.toLocaleString('en-CA')} of ${m.total_items.toLocaleString('en-CA')} items (${pct}%)`;
+  }
+  async function runImport() {
+    if (S.importing && !S.importing.finished) return;
+    const m = S.importManifest; if (!m) return;
+    const done = new Set((S.importState || {}).doneChunks || []);
+    S.importing = { done: 0, msg: 'Starting.' }; render();
+    try {
+      for (const part of m.parts) {
+        S.importing.msg = 'Downloading the export.'; tickImport();
+        const res = await fetch('import/' + part); if (!res.ok) throw { code: 'missing', message: 'The export file is no longer on this page.' };
+        const chunks = await res.json();
+        for (let ci = 0; ci < chunks.length; ci++) {
+          const key = part + ':' + ci, { board: bd, items } = chunks[ci];
+          if (done.has(key)) { S.importing.done += items.length; tickImport(); continue; }
+          S.importing.msg = `Copying ${bd.name}.`; tickImport();
+          const { id: bid, ...bdata } = bd;
+          await retry(() => S.db.doc('boards/' + bid).set(bdata));
+          let idx = 0;
+          await Promise.all(Array.from({ length: 6 }, async () => {
+            while (idx < items.length) {
+              const { id: iid, ...doc } = items[idx++];
+              await retry(() => S.db.doc('boards/' + bid + '/items/' + iid).set(doc));
+              S.importing.done++; if (S.importing.done % 10 === 0) tickImport();
+            }
+          }));
+          done.add(key);
+          S.importState = { doneChunks: [...done], exportedAt: m.exported_at };
+          await retry(() => S.db.doc('meta/import').set(S.importState));
+        }
+      }
+      S.importState = { doneChunks: [...done], exportedAt: m.exported_at, finishedAt: now() };
+      await retry(() => S.db.doc('meta/import').set(S.importState));
+      S.importing.finished = true; S.importing = null;
+      toast('Import finished. All Monday boards are in.'); render();
+    } catch (e) {
+      S.importing = null;
+      toast(e && e.code === 'quota_exceeded' ? 'The workspace storage is full. Tell Claude so it can trim the import.' : (e && e.message) || 'The import stopped. Press Resume to continue.');
+      render();
+    }
+  }
+  async function checkImport() {
+    try { S.isOwner = !!(S.user && await S.user.isOwner()); } catch (e) {}
+    try { if (S.user) S.me = await S.user.me(); } catch (e) {}
+    render();
+    if (!S.isOwner) return;
+    try { const r = await fetch('import/manifest.json'); if (!r.ok) return; S.importManifest = await r.json(); } catch (e) { return; }
+    try { const d = await S.db.doc('meta/import').get(); S.importState = d.exists ? d.data() : {}; } catch (e) { S.importState = {}; }
     render();
   }
 
@@ -771,6 +931,7 @@ tr:hover .open-btn, .open-btn:focus-visible { opacity: 1; }
       try { S.uid = (await user.id()) || ''; } catch (e) {}
       try { const c = await user.can('data.write'); if (c === false) S.canWrite = false; } catch (e) {}
     }
+    checkImport();
     const slow = setTimeout(() => { if (S.status === 'loading') { S.status = 'slow'; render(); } }, 10000);
     db.collection('boards').onSnapshot(snap => {
       S.boards = snap.docs.map(d => ({ id: d.id, ...structuredClone(d.data()) })).sort((a, b) => (a.order || 0) - (b.order || 0));
