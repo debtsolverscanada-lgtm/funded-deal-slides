@@ -532,7 +532,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     const c = b.columns.find(x => x.id === id); if (!c) return '';
     const v = (item.values || {})[id];
     switch (c.type) {
-      case 'formula': { const r = formulaResult(b, item, c, depth); return r.error ? '' : r.value; }
+      case 'formula': { const r = formulaResult(b, item, c, depth); return r.error || r.value === '' ? KSFormula.BLANK_REF : r.value; }
       case 'number': { if (v === '' || v == null) return ''; const n = Number(v); return c.format === 'percent' ? n / 100 : n; }
       case 'status': return (labelOf(c, v) || {}).label || '';
       case 'checkbox': return !!v;
@@ -547,6 +547,12 @@ td.currency::before, td.percent::after { color: var(--muted); }
     // Monday leaves an IF over number columns blank until any of those numbers is filled in.
     if (!r.error && /^\s*IF\s*\(/i.test(c.formula) && refs.length && refs.every(id => { const x = b.columns.find(k => k.id === id); return x && x.type === 'number'; }) && refs.every(id => { const v = (item.values || {})[id]; return v === '' || v == null; })) return { value: '' };
     return r;
+  }
+  // Monday shows a status column's default label (stored as label 5) on items where nothing is picked.
+  function withDefaults(b, item) {
+    if (!b) return item;
+    for (const c of b.columns) if (c.type === 'status') { const v = (item.values || {})[c.id]; if (v === undefined || v === null || v === '') { const d = (c.labels || []).find(l => l.id === '5' && l.label && l.label !== '(blank)'); if (d) item.values = { ...(item.values || {}), [c.id]: '5' }; } }
+    return item;
   }
   function linkParts(v) { const s2 = String(v || ''); const i = s2.lastIndexOf(' | '); const url = i >= 0 ? s2.slice(i + 3) : s2; return { text: i >= 0 ? s2.slice(0, i) : s2, url: /^https?:\/\//i.test(url) ? url : '' }; }
   const filterCount = () => Object.values(S.filters).filter(v => v && v.length).length;
@@ -1486,7 +1492,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     S.items = []; S.itemsLoaded = false;
     S.itemsUnsub = S.db.collection('boards/' + id + '/items').onSnapshot(snap => {
       if (S.boardId !== id) return;
-      S.items = snap.docs.map(d => ({ id: d.id, ...structuredClone(d.data()) }));
+      S.items = snap.docs.map(d => withDefaults(S.boards.find(x => x.id === id), { id: d.id, ...structuredClone(d.data()) }));
       if (!snap.metadata.fromCache) S.itemsLoaded = true;
       scheduleRender();
     }, () => { S.itemsLoaded = true; toast('This board stopped updating. Reload the page to reconnect.'); });

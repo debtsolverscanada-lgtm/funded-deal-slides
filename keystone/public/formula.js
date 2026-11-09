@@ -49,6 +49,9 @@
     const ast = cmp(); if (p < t.length) throw new Error('Unexpected ' + t[p].v); return ast;
   }
 
+  const BLANK = { blank: true };
+  const isBlank = v => v === BLANK;
+  const plain = v => (isBlank(v) ? '' : v);
   const isDate = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v);
   const toDate = v => { if (v instanceof Date) return v; if (isDate(v)) { const [y, m, d] = v.slice(0, 10).split('-').map(Number); return new Date(y, m - 1, d); } return null; };
   const num = v => { if (v === '' || v === null || v === undefined) return 0; if (typeof v === 'boolean') return v ? 1 : 0; const n = Number(v); return Number.isFinite(n) ? n : NaN; };
@@ -61,7 +64,7 @@
     return sign * n;
   }
   const FN = {
-    IF: (c, a = '', b = '') => (truthy(c) ? a : b),
+    IF: (c, a = '', b = false) => (truthy(c) ? a : b),
     AND: (...a) => a.every(truthy), OR: (...a) => a.some(truthy), NOT: a => !truthy(a),
     TODAY: () => ymd(new Date()), NOW: () => new Date().toISOString(),
     DAYS: (end, start) => { const a = toDate(start), b = toDate(end); return a && b ? Math.round((b - a) / 864e5) : ''; },
@@ -85,14 +88,16 @@
 
   function evalNode(n, getRef, depth) {
     if ('lit' in n) return n.lit;
-    if ('ref' in n) { const v = getRef(n.ref, depth + 1); return v === undefined || v === null ? '' : v; }
+    if ('ref' in n) { const v = getRef(n.ref, depth + 1); return v === undefined || v === null ? '' : (v && v.formulaBlank ? BLANK : v); }
     if (n.fn) {
       const f = FN[n.fn]; if (!f) throw new Error('Unsupported function ' + n.fn);
-      if (n.fn === 'IF') { const c = evalNode(n.args[0], getRef, depth); return evalNode(truthy(c) ? n.args[1] || { lit: '' } : n.args[2] || { lit: '' }, getRef, depth); }
-      return f(...n.args.map(a => evalNode(a, getRef, depth)));
+      if (n.fn === 'IF') { const c = plain(evalNode(n.args[0], getRef, depth)); return evalNode(truthy(c) ? n.args[1] || { lit: '' } : n.args[2] || { lit: false }, getRef, depth); }
+      return f(...n.args.map(a => plain(evalNode(a, getRef, depth))));
     }
-    if (n.op === 'neg') return -num(evalNode(n.l, getRef, depth));
-    const a = evalNode(n.l, getRef, depth), b = evalNode(n.r, getRef, depth);
+    if (n.op === 'neg') { const x = evalNode(n.l, getRef, depth); return isBlank(x) ? BLANK : -num(x); }
+    let a = evalNode(n.l, getRef, depth), b = evalNode(n.r, getRef, depth);
+    if ((isBlank(a) || isBlank(b)) && ['+', '-', '*', '/', '^'].includes(n.op)) return BLANK;
+    a = plain(a); b = plain(b);
     switch (n.op) {
       case '&': return String(a ?? '') + String(b ?? '');
       case '=': case '<>': {
@@ -109,7 +114,7 @@
       case '+': if (isDate(a) && !isDate(b)) return FN.ADD_DAYS(a, b); return num(a) + num(b);
       case '-': if (isDate(a) && isDate(b)) return FN.DAYS(a, b); if (isDate(a)) return FN.SUBTRACT_DAYS(a, b); return num(a) - num(b);
       case '*': return num(a) * num(b);
-      case '/': { const d = num(b); return d === 0 ? '' : num(a) / d; }
+      case '/': { const d = num(b); return d === 0 ? BLANK : num(a) / d; }
       case '^': return num(a) ** num(b);
     }
     throw new Error('Bad operator');
@@ -125,18 +130,18 @@
     if (depth > 12) return { error: 'Formula refers to itself' };
     const c = compile(String(src || ''));
     if (c.error) return { error: c.error };
-    try { const v = evalNode(c.ast, getRef, depth); return { value: typeof v === 'number' && !Number.isFinite(v) ? '' : v }; }
+    try { const v = plain(evalNode(c.ast, getRef, depth)); return { value: typeof v === 'number' && !Number.isFinite(v) ? '' : v }; }
     catch (e) { return { error: e.message }; }
   }
   function format(v) {
     if (v === '' || v === null || v === undefined) return '';
-    if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+    if (typeof v === 'boolean') return v ? 'true' : '';
     if (typeof v === 'number') {
       if (Number.isInteger(v)) return v.toLocaleString('en-CA');
       return Math.abs(v) < 10 ? String(Math.round(v * 1000) / 1000) : v.toLocaleString('en-CA', { maximumFractionDigits: 2 });
     }
     return String(v);
   }
-  root.KSFormula = { evaluate, format, parse };
+  root.KSFormula = { evaluate, format, parse, BLANK_REF: { formulaBlank: true } };
   if (typeof module !== 'undefined') module.exports = root.KSFormula;
 })(typeof window !== 'undefined' ? window : globalThis);
