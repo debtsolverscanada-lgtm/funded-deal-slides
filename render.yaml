@@ -4,9 +4,8 @@ services:
   - type: web
     name: keystone-crm
     runtime: docker
-    rootDir: keystone
-    dockerfilePath: ./Dockerfile
-    dockerContext: .
+    dockerfilePath: ./keystone/Dockerfile   # paths are from the repo root
+    dockerContext: ./keystone
     plan: starter            # persistent disks need a paid instance
     region: oregon
     branch: claude/dreamy-hamilton-i65yx7
