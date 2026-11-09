@@ -174,9 +174,12 @@ function throttled(ip) {
   return r.n >= 10;
 }
 
+const integ = require('./integrations.js')({ db, q, now, broadcast, HttpError, readBody, send, merge });
+
 async function api(req, res, url) {
   const p = url.pathname;
   const method = req.method;
+  if (p.startsWith('/api/v1/')) return integ.handleV1(req, res, url);
 
   if (p === '/api/login' && method === 'POST') {
     const ip = req.socket.remoteAddress;
@@ -241,6 +244,9 @@ async function api(req, res, url) {
     }
   }
 
+  // ---- integrations admin ----
+  if (p.startsWith('/api/admin/keys') || p.startsWith('/api/admin/hooks')) { const r = await integ.handleAdmin(req, res, url, user); if (r !== false) return; }
+
   // ---- copy from Monday (admin only; reads Monday, never writes to it) ----
   if (p === '/api/admin/monday-sync') {
     if (user.role !== 'admin') throw new HttpError(403, 'Only admins can copy from Monday.');
@@ -294,18 +300,22 @@ async function api(req, res, url) {
     if (method === 'PUT' || method === 'PATCH') {
       const body = await readBody(req);
       let data = body;
+      const prev = q.doc.get(dp), before = prev ? JSON.parse(prev.data) : null;
       if (method === 'PATCH') {
-        const r = q.doc.get(dp); if (!r) throw new HttpError(404, 'That record no longer exists.');
-        data = merge(JSON.parse(r.data), body);
+        if (!prev) throw new HttpError(404, 'That record no longer exists.');
+        data = merge(JSON.parse(prev.data), body);
       }
       const json = JSON.stringify(data);
       if (json.length > 1024 * 1024) throw new HttpError(413, 'That record is too large.');
       q.upsertDoc.run(dp, col, id, json, now(), user.id);
       broadcast({ op: 'set', col, id, data });
+      integ.itemChanged(dp, before, data, user.id);
       return send(res, 200, { ok: true });
     }
     if (method === 'DELETE') {
+      const prev = q.doc.get(dp);
       q.deleteDoc.run(dp);
+      if (prev) integ.itemChanged(dp, JSON.parse(prev.data), null, user.id);
       if (/^boards\/[^/]+$/.test(dp)) q.deleteCol.run(dp + '/items');
       broadcast({ op: 'delete', col, id });
       return send(res, 200, { ok: true });
@@ -385,6 +395,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/healthz') return send(res, 200, 'ok');
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Method not allowed');
     if (url.pathname === '/login') return serveStatic(req, res, 'login.html');
+    if (url.pathname === '/developers') return serveStatic(req, res, 'developers.html');
     if (url.pathname === '/' ) {
       if (!currentUser(req)) { res.writeHead(302, { Location: '/login' }); return res.end(); }
       return serveStatic(req, res, 'index.html');

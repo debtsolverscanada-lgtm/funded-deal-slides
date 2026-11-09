@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Keystone API</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#000000">
+<style>
+:root { --line: rgba(255,255,255,0.10); --muted: rgba(255,255,255,0.58); color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: radial-gradient(900px 500px at 80% -10%, rgba(255,255,255,0.07), transparent 60%), #000; color: #fff; font: 15px/1.6 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+main { max-width: 820px; margin: 0 auto; padding-block: 40px 80px; padding-left: max(18px, env(safe-area-inset-left, 0px)); padding-right: max(18px, env(safe-area-inset-right, 0px)); }
+h1 { font-size: 32px; letter-spacing: -.03em; margin: 0 0 6px; font-weight: 600; }
+h2 { font-size: 20px; letter-spacing: -.02em; margin: 40px 0 8px; font-weight: 600; }
+h3 { font-size: 15px; margin: 22px 0 6px; font-weight: 600; }
+p, li { color: rgba(255,255,255,0.82); max-width: 68ch; }
+.lead { color: var(--muted); font-size: 16px; }
+code { font: 13px/1.5 "SF Mono", ui-monospace, Menlo, monospace; background: rgba(255,255,255,0.07); padding: 1px 6px; border-radius: 6px; }
+pre { background: rgba(255,255,255,0.045); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; overflow-x: auto; font: 13px/1.55 "SF Mono", ui-monospace, Menlo, monospace; }
+pre code { background: none; padding: 0; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+.tw { overflow-x: auto; border: 1px solid var(--line); border-radius: 16px; }
+th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid rgba(255,255,255,0.06); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; }
+tr:last-child td { border-bottom: 0; }
+.note { border: 1px solid var(--line); background: rgba(255,255,255,0.04); border-radius: 16px; padding: 14px 18px; }
+a { color: #fff; }
+</style>
+</head>
+<body>
+<main>
+<h1>Keystone API</h1>
+<p class="lead">Connect Keystone to n8n, Zapier, Make, your website, form tools, RingCentral, Google Sheets, or your own scripts. Admins set up keys, webhooks and lead links under <b>Integrations</b> in the app.</p>
+<div class="note"><p style="margin:0">Keystone never texts, emails or calls anyone by itself. Webhooks only tell <i>your</i> tools what changed. If a tool you connect sends messages, it must follow the house rules: never message Junk/Unqualified, referred, opted-out or “(copy)” leads.</p></div>
+
+<h2>1. Incoming lead links (no code)</h2>
+<p>Create one under <b>Integrations → Incoming lead links</b>, pick the board (and group), and paste the link into your form tool's “webhook” or “HTTP POST” step. Send JSON or form fields. Any field whose name matches a column title (for example <code>Phone</code>, <code>Email</code>, <code>Province</code>) fills that column. Everything else is added to the item's first update.</p>
+<pre><code>curl -X POST https://YOUR-SITE/api/v1/in/LINK-TOKEN \
+  -H "Content-Type: application/json" \
+  -d '{"first_name":"Dana","last_name":"Smith","Phone":"4035550101","Email":"dana@example.com","Amount Requested":85000}'</code></pre>
+<p>If “skip duplicates” is on, a second lead with the same phone number isn't created; the reply says <code>"duplicate": true</code>.</p>
+
+<h2>2. The API</h2>
+<p>Create a key under <b>Integrations → API keys</b> and send it with every request:</p>
+<pre><code>Authorization: Bearer ks_…</code></pre>
+<div class="tw"><table>
+<tr><th>Request</th><th>What it does</th></tr>
+<tr><td><code>GET /api/v1/boards</code></td><td>Every board with its groups, columns and status labels.</td></tr>
+<tr><td><code>GET /api/v1/boards/{board}</code></td><td>One board. <code>{board}</code> can be the Keystone id, the Monday id, or the board name.</td></tr>
+<tr><td><code>GET /api/v1/boards/{board}/items</code></td><td>Items, newest change first. Filters: <code>?group=</code>, <code>?updated_since=2026-11-09T00:00:00Z</code>, <code>?limit=</code> (max 500), <code>?offset=</code>.</td></tr>
+<tr><td><code>GET /api/v1/boards/{board}/items/{id}</code></td><td>One item with its updates and subitems.</td></tr>
+<tr><td><code>POST /api/v1/boards/{board}/items</code></td><td>Create an item: <code>{"name", "group", "fields": {"Column title": value}, "update": "first note"}</code>. The board's automations run, as in the app.</td></tr>
+<tr><td><code>PATCH /api/v1/boards/{board}/items/{id}</code></td><td>Change <code>name</code>, <code>group</code> or <code>fields</code>. Status changes and group moves run the board's automations.</td></tr>
+<tr><td><code>POST /api/v1/boards/{board}/items/{id}/updates</code></td><td>Post an update: <code>{"text": "…", "author": "RingCentral"}</code>.</td></tr>
+<tr><td><code>DELETE /api/v1/boards/{board}/items/{id}</code></td><td>Delete an item (write keys only).</td></tr>
+<tr><td><code>GET /api/v1/search?phone=4035550101</code></td><td>Find leads on every board by phone (last 10 digits), <code>?email=</code>, or name <code>?q=</code>.</td></tr>
+</table></div>
+<p>Fields can use the column's title (<code>"Status"</code>) or its id (<code>"color_mkp75dsm"</code>). Status values use the label's name (<code>"NA 1"</code>). Dates are <code>YYYY-MM-DD</code>. Calculated columns (formulas, buttons) can't be set.</p>
+<pre><code># move a lead to "Appointment Booked" and set its status
+curl -X PATCH https://YOUR-SITE/api/v1/boards/Setter%20Desk%20(Jan)/items/ITEM_ID \
+  -H "Authorization: Bearer ks_…" -H "Content-Type: application/json" \
+  -d '{"group":"Appointment Booked","fields":{"Status":"Contacted"}}'</code></pre>
+
+<h2>3. Outgoing webhooks</h2>
+<p>Add one under <b>Integrations → Outgoing webhooks</b>. Keystone sends a <code>POST</code> with JSON within a second of the change, and retries up to 3 times if your tool doesn't answer.</p>
+<div class="tw"><table>
+<tr><th>Event</th><th>When</th><th>Extra data</th></tr>
+<tr><td><code>item.created</code></td><td>A new item, from the app, the API, an automation or a lead link</td><td></td></tr>
+<tr><td><code>item.updated</code></td><td>Any column or the name changed</td><td><code>changes: [{column, from, to}]</code></td></tr>
+<tr><td><code>item.status_changed</code></td><td>A status column changed</td><td><code>change: {column, from, to}</code></td></tr>
+<tr><td><code>item.moved</code></td><td>Moved to another group</td><td><code>change: {from, to}</code></td></tr>
+<tr><td><code>update.created</code></td><td>Someone posted an update</td><td><code>update: {text, at, byName}</code></td></tr>
+<tr><td><code>item.deleted</code></td><td>An item was deleted</td><td></td></tr>
+</table></div>
+<pre><code>{
+  "event": "item.status_changed",
+  "at": "2026-11-09T22:41:07Z",
+  "board": { "id": "m18432603444", "name": "Setter Desk (Jan)" },
+  "item": { "id": "…", "name": "Dana", "group": { "name": "New Uncontacted" },
+            "fields": { "Status": "NA 1", "Phone": "4035550101" } },
+  "change": { "column": "Status", "from": "Uncontacted", "to": "NA 1" }
+}</code></pre>
+<h3>Checking it's really Keystone</h3>
+<p>Each request has <code>X-Keystone-Signature: sha256=…</code>, an HMAC-SHA256 of the raw body using the secret shown when you created the webhook. Bulk copies from Monday don't send webhooks.</p>
+
+<h2>Recipes</h2>
+<ul>
+<li><b>n8n:</b> a Webhook node receives Keystone events; an HTTP Request node with your key creates or updates items.</li>
+<li><b>Zapier / Make:</b> “Webhooks by Zapier → Catch Hook” for events, “POST” to a lead link or the API to create leads.</li>
+<li><b>RingCentral or Twilio:</b> look up the caller with <code>/api/v1/search?phone=</code>, then post the call note with <code>…/updates</code>.</li>
+<li><b>Google Sheets:</b> an outgoing webhook on <code>item.created</code> into a Zap or n8n flow that appends a row.</li>
+</ul>
+</main>
+</body>
+</html>
