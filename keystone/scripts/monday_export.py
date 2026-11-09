@@ -2,7 +2,7 @@ import json, os, sys, time, urllib.request, ssl
 OUT = sys.argv[1]
 ctx = ssl.create_default_context(cafile=os.environ.get("SSL_CERT_FILE") or None)
 TOKEN = os.environ.get("MONDAY_API_TOKEN") or sys.exit("Set MONDAY_API_TOKEN to a Monday API token (Admin > Developers > API).")
-WS = int(os.environ.get("MONDAY_WORKSPACE_ID", "11508737"))
+WS_IDS = [int(x) for x in (os.environ.get("MONDAY_WORKSPACE_IDS") or "11508737").split(",") if x.strip()]
 def gql(q, variables=None, tries=6):
     body = json.dumps({"query": q, "variables": variables or {}}).encode()
     for t in range(tries):
@@ -21,15 +21,22 @@ def gql(q, variables=None, tries=6):
     raise SystemExit("gave up")
 
 
-boards = gql("""{ boards(workspace_ids:[%d], limit:200){ id name type board_kind board_folder_id items_count
+boards, folders, workspaces = [], [], []
+for WS in WS_IDS:
+    w = gql("""{ workspaces(ids:[%d]){ id name } }""" % WS)["workspaces"]
+    wname = w[0]["name"] if w else str(WS)
+    workspaces.append({"id": str(WS), "name": wname})
+    bs = gql("""{ boards(workspace_ids:[%d], limit:500){ id name type board_kind board_folder_id items_count
   groups{ id title color position } columns{ id title type settings_str } } }""" % WS)["boards"]
-folders = gql("""{ folders(workspace_ids:[%d]){ id name children{ id } } }""" % WS)["folders"]
-sub_by_name = {b["name"]: b for b in boards if b["type"] == "sub_items_board"}
+    for b in bs: b["workspace"] = {"id": str(WS), "name": wname}
+    boards += bs
+    folders += gql("""{ folders(workspace_ids:[%d]){ id name children{ id } } }""" % WS)["folders"]
+sub_by_name = {(b["workspace"]["id"], b["name"]): b for b in boards if b["type"] == "sub_items_board"}
 ITEM_FIELDS = """id name state group{ id } created_at
   column_values{ id type text value }
   updates(limit:25){ id text_body created_at creator{ name } }
   subitems{ id name column_values{ id type text value } }"""
-out = {"exported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "folders": folders, "boards": []}
+out = {"workspaces": workspaces, "exported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "folders": folders, "boards": []}
 for b in boards:
     if b["type"] != "board": continue
     items = []
@@ -39,10 +46,10 @@ for b in boards:
         while cur:
             d = gql("""query($c:String!){ next_items_page(limit:100, cursor:$c){ cursor items{ %s } } }""" % ITEM_FIELDS, {"c": cur})
             page = d["next_items_page"]; items += page["items"]; cur = page["cursor"]
-    sb = sub_by_name.get("Subitems of " + b["name"])
+    sb = sub_by_name.get((b["workspace"]["id"], "Subitems of " + b["name"]))
     b["sub_columns"] = sb["columns"] if sb else []
     b["items"] = items
     out["boards"].append(b)
-    print(f"{b['name']}: {len(items)} items", file=sys.stderr)
+    print(f"{b['workspace']['name']} / {b['name']}: {len(items)} items", file=sys.stderr, flush=True)
 json.dump(out, open(OUT, "w"))
 print("wrote", OUT, os.path.getsize(OUT), "bytes")

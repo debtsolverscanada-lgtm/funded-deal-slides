@@ -59,7 +59,7 @@ def conv_vals(cvs, cols):
             val = cv['text'] or None
         if val not in (None, ''): v[c['id']] = val
     return v
-manifest = {'exported_at': raw['exported_at'], 'parts': [], 'boards': []}
+manifest = {'workspaces': raw.get('workspaces', []), 'exported_at': raw['exported_at'], 'parts': [], 'boards': []}
 folder_of = {}
 for f in raw['folders']:
     for ch in f['children'] or []: folder_of[str(ch['id'])] = f['name']
@@ -74,7 +74,7 @@ for order, b in enumerate(raw['boards']):
     cols = conv_cols(b['columns']); subcols = conv_cols(b['sub_columns'])
     groups = sorted(b['groups'], key=lambda g: float(g.get('position') or 0))
     bid = 'm' + b['id']
-    board = {'id': bid, 'name': b['name'], 'order': order + 1, 'folder': folder_of.get(str(b['id'])) or '', 'source': 'monday', 'mondayId': b['id'],
+    board = {'id': bid, 'name': b['name'], 'order': order + 1, 'workspace': b.get('workspace') or {'id': 'main', 'name': 'Main workspace'}, 'folder': folder_of.get(str(b['id'])) or '', 'source': 'monday', 'mondayId': b['id'],
              'groups': [{'id': g['id'], 'name': g['title'], 'color': g['color'] or '#579bfc'} for g in groups],
              'columns': cols, 'subColumns': subcols, 'automations': []}
     manifest['boards'].append({'id': bid, 'name': b['name'], 'items': len(b['items'])})
