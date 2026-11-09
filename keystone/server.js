@@ -6,6 +6,13 @@
 // Data lives in DATA_DIR/keystone.db. Back that file up and you have everything.
 
 'use strict';
+{
+  const [maj, min] = process.versions.node.split('.').map(Number);
+  if (maj < 22 || (maj === 22 && min < 5)) {
+    console.error(`Keystone needs Node.js 22.5 or newer, and this computer has ${process.versions.node}. Install the LTS version from https://nodejs.org and run it again.`);
+    process.exit(1);
+  }
+}
 process.removeAllListeners('warning');
 const http = require('node:http');
 const fs = require('node:fs');
@@ -334,10 +341,19 @@ const server = http.createServer(async (req, res) => {
 });
 
 if (require.main === module) {
-  if (q.userCount.get().n === 0) {
-    const email = process.env.ADMIN_EMAIL, password = process.env.ADMIN_PASSWORD;
-    if (email && password) { createUser({ email, name: process.env.ADMIN_NAME || 'Admin', role: 'admin', password }); console.log('Created the first admin account for', email); }
-    else console.log('No accounts yet. Create the first admin with:  node scripts/create-user.js you@example.com "Your Name" admin "a-strong-password"');
+  // ADMIN_EMAIL + ADMIN_PASSWORD always give a working admin sign-in: created if missing, password reset if it exists.
+  const email = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase(), password = process.env.ADMIN_PASSWORD;
+  if (email && password) {
+    try {
+      const existing = q.userByEmail.get(email);
+      if (existing) {
+        if (String(password).length < 8) throw new Error('ADMIN_PASSWORD needs at least 8 characters.');
+        db.prepare("UPDATE users SET pw = ?, role = 'admin', disabled = 0 WHERE id = ?").run(hashPassword(password), existing.id);
+        console.log('Admin sign-in ready:', email);
+      } else { createUser({ email, name: process.env.ADMIN_NAME || 'Admin', role: 'admin', password }); console.log('Created admin sign-in:', email); }
+    } catch (e) { console.error('Could not set up the admin sign-in:', e.message); }
+  } else if (q.userCount.get().n === 0) {
+    console.log('No accounts yet. Set ADMIN_EMAIL and ADMIN_PASSWORD, or run:  node scripts/create-user.js you@example.com "Your Name" admin "a-strong-password"');
   }
   server.listen(PORT, () => console.log(`Keystone CRM running on http://localhost:${PORT}  (data: ${DATA_DIR})`));
 }
