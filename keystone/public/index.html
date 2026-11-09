@@ -441,7 +441,7 @@ body { margin: 0; } [hidden] { display: none !important; }
         <div class="board-list">${list || '<span class="rail-note">No boards yet.</span>'}</div></div>
       ${S.canWrite && S.db ? '<input class="rail-input" id="new-board" placeholder="+ New board" aria-label="New board name">' : ''}
       <p class="rail-note">Changes save for everyone on the team, live. Automations run the moment a status changes.</p>
-      <div class="form-row">${S.isOwner ? '<button class="btn" data-act="team">Team</button>' : ''}<button class="btn" data-act="logout">Sign out</button></div>`;
+      <div class="form-row">${S.isOwner ? '<button class="btn" data-act="team">Team & settings</button>' : ''}<button class="btn" data-act="logout">Sign out</button></div>`;
     if (filterEl) { const f = $('#board-filter'); if (f) { f.focus(); f.setSelectionRange(f.value.length, f.value.length); } }
   }
 
@@ -804,10 +804,12 @@ body { margin: 0; } [hidden] { display: none !important; }
           <input class="field-input" id="pw-${esc(u.id)}" type="password" placeholder="New password" aria-label="New password for ${esc(u.name)}" style="width:150px" autocomplete="new-password">
           <button class="icon-btn" data-act="reset-pw" data-id="${esc(u.id)}">Set password</button>
           ${u.id === S.uid ? '' : `<button class="icon-btn" data-act="toggle-person" data-id="${esc(u.id)}" data-off="${u.disabled ? 1 : 0}">${u.disabled ? 'Turn on' : 'Turn off'}</button>`}</div>`).join('');
-      return `<h3>Team</h3>
+      return `<h3>Team and settings</h3>
         <p>Admins manage people and workspace settings. Members change boards. Viewers only look.</p>
         ${m.msg ? `<p style="color:var(--fg)"><b>${esc(m.msg)}</b></p>` : ''}
         ${m.list ? rows : '<p>Loading the team.</p>'}
+        <h3 style="font-size:16px">Copy from Monday</h3>
+        ${renderSync(m.sync)}
         <h3 style="font-size:16px">Add a person</h3>
         <div class="form-row"><input class="field-input" id="np-name" placeholder="Full name" aria-label="Full name" style="flex:1 1 160px"><input class="field-input" id="np-email" type="email" placeholder="Email" aria-label="Email" style="flex:1 1 200px"></div>
         <div class="form-row"><select class="field-input" id="np-role" aria-label="Role"><option value="member">Member</option><option value="viewer">Viewer</option><option value="admin">Admin</option></select><input class="field-input" id="np-pw" type="password" placeholder="Starting password (8+ characters)" aria-label="Starting password" style="flex:1 1 200px" autocomplete="new-password"><button class="btn primary" data-act="add-person">Add person</button></div>
@@ -861,7 +863,8 @@ body { margin: 0; } [hidden] { display: none !important; }
       case 'more': { const g = t.dataset.group; S.shown[g] = (S.shown[g] || PAGE) + PAGE; renderContent(); break; }
       case 'run-import': runImport(); break;
       case 'logout': window.KS && KS.logout(); break;
-      case 'team': S.modal = { type: 'team', list: null, msg: '' }; renderLayer(); loadTeam(); break;
+      case 'team': S.modal = { type: 'team', list: null, msg: '', sync: null }; renderLayer(); loadTeam(); loadSync(); break;
+      case 'monday-sync': KS.mondaySync().then(() => { toast('Copying from Monday. This takes several minutes.'); loadSync(); }).catch(e => { S.modal.msg = e.message; renderLayer(); }); break;
       case 'add-person': addPerson(); break;
       case 'reset-pw': { const id = t.dataset.id, pw = $('#pw-' + id).value; if (pw.length < 8) { S.modal.msg = 'Passwords need at least 8 characters.'; renderLayer(); return; } KS.updateUser(id, { password: pw }).then(() => { S.modal.msg = 'Password changed. They’ll need to sign in again.'; loadTeam(); }).catch(e => { S.modal.msg = e.message; renderLayer(); }); break; }
       case 'toggle-person': { const id = t.dataset.id; KS.updateUser(id, { disabled: t.dataset.off !== '1' }).then(loadTeam).catch(e => { S.modal.msg = e.message; renderLayer(); }); break; }
@@ -1204,9 +1207,22 @@ body { margin: 0; } [hidden] { display: none !important; }
     try { if (S.user) S.me = await S.user.me(); } catch (e) {}
     render();
     if (!S.isOwner) return;
-    try { const r = await fetch('import/manifest.json'); if (!r.ok) return; S.importManifest = await r.json(); } catch (e) { return; }
     try { const d = await S.db.doc('meta/import').get(); S.importState = d.exists ? d.data() : {}; } catch (e) { S.importState = {}; }
     render();
+  }
+
+  function renderSync(st) {
+    if (!st) return '<p>Checking the Monday connection.</p>';
+    if (!st.configured) return '<p>Not set up yet. Add a Monday API token as MONDAY_API_TOKEN in the server settings (on Render: Environment), then reload this page.</p>';
+    const last = st.finishedAt ? (st.error ? `Last copy failed: ${esc(st.error)}` : `Last copied ${esc(fmtTime(st.finishedAt))}: ${st.boards} boards, ${Number(st.items).toLocaleString('en-CA')} items.`) : 'Not copied yet.';
+    if (st.running) return `<p><b>Copying now.</b> ${esc(st.msg)}. ${st.boards} boards and ${Number(st.items).toLocaleString('en-CA')} items so far. You can close this window. It keeps going on the server.</p>`;
+    return `<p>Reads ${st.workspaces.length} Monday workspace${st.workspaces.length === 1 ? '' : 's'} and refreshes their boards here. Monday itself is never changed. Items added in Keystone stay; items copied from Monday are replaced with Monday’s current version, so edits made here to those items are overwritten.</p>
+      <p>${last}</p><div><button class="btn primary" data-act="monday-sync">Copy from Monday now</button></div>`;
+  }
+  let syncTimer = null;
+  async function loadSync() {
+    try { const st = await KS.mondayStatus(); if (S.modal && S.modal.type === 'team') { S.modal.sync = st; renderLayer(); } clearTimeout(syncTimer); if (st.running && S.modal && S.modal.type === 'team') syncTimer = setTimeout(loadSync, 3000); }
+    catch (e) {}
   }
 
   async function loadTeam() {

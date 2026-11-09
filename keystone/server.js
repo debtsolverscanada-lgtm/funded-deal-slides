@@ -12,6 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
+const { syncFromMonday } = require('./monday.js');
 
 const PORT = Number(process.env.PORT || 3000);
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
@@ -231,6 +232,18 @@ async function api(req, res, url) {
     }
   }
 
+  // ---- copy from Monday (admin only; reads Monday, never writes to it) ----
+  if (p === '/api/admin/monday-sync') {
+    if (user.role !== 'admin') throw new HttpError(403, 'Only admins can copy from Monday.');
+    if (method === 'GET') return send(res, 200, { ...syncState, configured: !!process.env.MONDAY_API_TOKEN, workspaces: mondayWorkspaces() });
+    if (method === 'POST') {
+      if (syncState.running) throw new HttpError(409, 'A copy from Monday is already running.');
+      if (!process.env.MONDAY_API_TOKEN) throw new HttpError(400, 'Add MONDAY_API_TOKEN to the server settings first.');
+      startMondaySync(user);
+      return send(res, 202, syncState);
+    }
+  }
+
   // ---- documents ----
   if (p === '/api/col' && method === 'GET') {
     const col = url.searchParams.get('path') || '';
@@ -266,6 +279,39 @@ async function api(req, res, url) {
     }
   }
   throw new HttpError(404, 'Not found.');
+}
+
+// ---------- Monday sync job ----------
+const mondayWorkspaces = () => String(process.env.MONDAY_WORKSPACE_IDS || '').split(',').map(x => x.trim()).filter(Boolean);
+let syncState = { running: false, msg: '', boards: 0, items: 0, startedAt: null, finishedAt: null, error: null };
+const lastSync = q.doc.get('meta/monday-sync');
+if (lastSync) { try { Object.assign(syncState, JSON.parse(lastSync.data), { running: false }); } catch (e) {} }
+function startMondaySync(user) {
+  syncState = { running: true, msg: 'Starting', boards: 0, items: 0, startedAt: now(), finishedAt: null, error: null, by: user.name };
+  const save = (dp, col, id, data, opts = {}) => {
+    if (opts.keep) { const r = q.doc.get(dp); if (r) { const old = JSON.parse(r.data); opts.keep.forEach(k => { if (old[k] !== undefined) data[k] = old[k]; }); } }
+    q.upsertDoc.run(dp, col, id, JSON.stringify(data), now(), 'monday-sync');
+  };
+  const removeStale = (bid, seen) => {
+    for (const r of q.docsInCol.all(`boards/${bid}/items`)) {
+      if (seen.has(r.id)) continue;
+      let d = {}; try { d = JSON.parse(r.data); } catch (e) {}
+      if (d.mondayId) q.deleteDoc.run(`boards/${bid}/items/${r.id}`);
+    }
+  };
+  syncFromMonday({
+    token: process.env.MONDAY_API_TOKEN, workspaceIds: mondayWorkspaces(), save, removeStale,
+    onProgress: ({ msg, boards, items }) => Object.assign(syncState, { msg, boards, items }),
+  }).then(r => {
+    Object.assign(syncState, { running: false, msg: 'Done', boards: r.boards, items: r.items, finishedAt: now() });
+  }).catch(e => {
+    console.error('Monday sync failed:', e);
+    Object.assign(syncState, { running: false, error: e.message, finishedAt: now() });
+  }).finally(() => {
+    const { running, ...keep } = syncState;
+    q.upsertDoc.run('meta/monday-sync', 'meta', 'monday-sync', JSON.stringify(keep), now(), 'monday-sync');
+    broadcast({ op: 'reload' });
+  });
 }
 
 const server = http.createServer(async (req, res) => {

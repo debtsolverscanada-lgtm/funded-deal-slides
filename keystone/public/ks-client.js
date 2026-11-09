@@ -42,6 +42,7 @@
     es = new EventSource('/api/events');
     es.onmessage = e => {
       let ev; try { ev = JSON.parse(e.data); } catch (x) { return; }
+      if (ev.op === 'reload') { cols.forEach((entry, path) => load(path, entry).catch(() => {})); return; }
       const entry = cols.get(ev.col); if (!entry) return;
       if (ev.op === 'set') entry.docs.set(ev.id, ev.data); else entry.docs.delete(ev.id);
       notify(entry);
@@ -106,6 +107,8 @@
     logout: async () => { try { await call('POST', '/api/logout', {}); } catch (e) {} location.href = '/login'; },
     users: () => call('GET', '/api/users'),
     addUser: body => call('POST', '/api/users', body).then(r => { team = null; return r; }),
+    mondayStatus: () => call('GET', '/api/admin/monday-sync'),
+    mondaySync: () => call('POST', '/api/admin/monday-sync', {}),
     updateUser: (id, body) => call('PATCH', '/api/users/' + encodeURIComponent(id), body).then(r => { team = null; return r; }),
   };
   window.claude = { use: async name => (name === 'db' ? db : name === 'user' ? user : null) };

@@ -1,0 +1,31 @@
+# Render Blueprint for Keystone CRM (the app lives in keystone/).
+# Render dashboard > New > Blueprint > pick this repo. Fill in the four values marked sync: false.
+services:
+  - type: web
+    name: keystone-crm
+    runtime: docker
+    rootDir: keystone
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter            # persistent disks need a paid instance
+    region: oregon
+    branch: claude/dreamy-hamilton-i65yx7
+    healthCheckPath: /healthz
+    disk:
+      name: keystone-data
+      mountPath: /data       # keystone.db lives here; Render snapshots disks daily
+      sizeGB: 2
+    envVars:
+      - key: COOKIE_SECURE
+        value: "1"
+      - key: MONDAY_WORKSPACE_IDS
+        # MortgageSolver CRM, Admin (trustee boards), Carl, Mariel, Cath, Jerico, Adrian, K&D, Michael, Krissia
+        value: "11508737,7066043,7749105,7500872,6052089,9005040,12791794,6163139,13069785,9342139"
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_NAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: MONDAY_API_TOKEN
+        sync: false

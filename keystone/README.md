@@ -17,7 +17,13 @@ node scripts/create-user.js you@yourcompany.ca "Your Name" admin "a-strong-passw
 npm start            # http://localhost:3000
 ```
 
-## Copy your Monday workspace in (read-only on Monday's side)
+## Copy your Monday workspaces in (read-only on Monday's side)
+
+Easiest: set `MONDAY_API_TOKEN` and `MONDAY_WORKSPACE_IDS` on the server, then press
+**Copy from Monday now** under **Team & settings**. Pressing it again refreshes the copy.
+Items created in Keystone are kept; items that came from Monday are replaced by Monday's current version.
+
+Or offline, with files:
 
 ```bash
 export MONDAY_API_TOKEN=...            # Monday: avatar > Developers > My access tokens
@@ -28,7 +34,20 @@ node scripts/import-monday.js import   # add --replace to wipe boards first
 
 `import/` and `data/` hold real client data and are git-ignored. Never commit them.
 
-## Put it online
+## Put it on Render
+
+The repo has a `render.yaml` Blueprint at its root.
+
+1. In Render: **New > Blueprint**, connect GitHub, pick this repo, and apply.
+2. Fill in `ADMIN_EMAIL`, `ADMIN_NAME`, `ADMIN_PASSWORD` (your first login) and `MONDAY_API_TOKEN`
+   (Monday: avatar > Developers > My access tokens; use an admin's token so every workspace is readable).
+3. When it's live, sign in, open **Team & settings**, and press **Copy from Monday now**.
+   It runs on the server. The first full copy takes roughly 20 to 40 minutes.
+
+Cost: Starter instance plus a 2 GB disk, about US$7.50 a month. The disk keeps `keystone.db`
+and Render snapshots it daily.
+
+## Put it online somewhere else
 
 Any host that runs a Docker container **with a persistent disk** works (Render, Railway, Fly.io,
 DigitalOcean, or your own server). Mount the disk at `/data`. That's where `keystone.db` lives.
