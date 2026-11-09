@@ -127,10 +127,10 @@ function send(res, status, body, headers = {}) {
   res.writeHead(status, { 'Content-Type': typeof body === 'string' ? 'text/plain; charset=utf-8' : 'application/json', 'Cache-Control': 'no-store', ...headers });
   res.end(data);
 }
-function readBody(req) {
+function readBody(req, limit = MAX_BODY) {
   return new Promise((resolve, reject) => {
     let size = 0; const chunks = [];
-    req.on('data', c => { size += c.length; if (size > MAX_BODY) { reject(new HttpError(413, 'That change is too large.')); req.destroy(); } else chunks.push(c); });
+    req.on('data', c => { size += c.length; if (size > limit) { reject(new HttpError(413, 'That change is too large.')); req.destroy(); } else chunks.push(c); });
     req.on('end', () => {
       if (!chunks.length) return resolve({});
       try { const v = JSON.parse(Buffer.concat(chunks).toString('utf8')); if (!v || typeof v !== 'object' || Array.isArray(v)) throw 0; resolve(v); }
@@ -249,6 +249,21 @@ async function api(req, res, url) {
       startMondaySync(user);
       return send(res, 202, syncState);
     }
+  }
+
+  // ---- bulk upload of a Monday copy made elsewhere (admin only) ----
+  if (p === '/api/admin/import-batch' && method === 'POST') {
+    if (user.role !== 'admin') throw new HttpError(403, 'Only admins can upload data.');
+    const body = await readBody(req, 30 * 1024 * 1024);
+    const docs = Array.isArray(body.docs) ? body.docs : [];
+    for (const d of docs) if (!d || !DOC_RE.test(String(d.path || '')) || !d.data || typeof d.data !== 'object') throw new HttpError(400, 'Bad record in upload.');
+    db.exec('BEGIN');
+    try {
+      for (const d of docs) { const { col, id } = splitDoc(d.path); q.upsertDoc.run(d.path, col, id, JSON.stringify(d.data), now(), user.id); }
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+    if (body.done) broadcast({ op: 'reload' });
+    return send(res, 200, { ok: true, saved: docs.length });
   }
 
   // ---- documents ----
