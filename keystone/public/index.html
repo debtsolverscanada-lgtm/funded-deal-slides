@@ -536,7 +536,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
       case 'number': { if (v === '' || v == null) return ''; const n = Number(v); return c.format === 'percent' ? n / 100 : n; }
       case 'status': return (labelOf(c, v) || {}).label || '';
       case 'checkbox': return !!v;
-      case 'date': { const t = (item.values || {})[id + '__t']; return v ? (t ? `${v}T${t}Z` : v) : ''; }
+      case 'date': { const dt = (item.values || {})[id + '__dt']; return v ? (dt || v) : ''; }
       case 'item_id': return String(item.mondayId || item.id);
       case 'created': return String(item.createdAt || '').slice(0, 10);
       default: return v == null ? '' : v;
@@ -615,9 +615,10 @@ td.currency::before, td.percent::after { color: var(--muted); }
     const v = vals[c.col], empty = v === '' || v == null || v === false;
     switch (c.op) {
       case 'empty': return empty; case 'not_empty': return !empty;
-      case 'is_not': return String(v ?? '') !== String(c.value ?? '');
+      case 'is_not': return Array.isArray(c.value) ? !c.value.map(String).includes(String(v ?? '')) : String(v ?? '') !== String(c.value ?? '');
       case 'contains': return String(v ?? '').toLowerCase().includes(String(c.value ?? '').toLowerCase());
       default: return Array.isArray(c.value) ? c.value.map(String).includes(String(v ?? '')) : String(v ?? '') === String(c.value ?? '');
+      case 'is_not_any': return !(Array.isArray(c.value) ? c.value.map(String) : [String(c.value)]).includes(String(v ?? ''));
     }
   }
   function ymdPlus(days) { const d = new Date(); d.setDate(d.getDate() + Number(days || 0)); return ymd(d); }
@@ -635,7 +636,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
         case 'create_update': lines.push({ auto: true, text: `${name} posted an update` }); after.push({ kind: 'update', text: a.value || a.message || '' }); break;
         case 'move_board': after.push({ kind: 'move_board', board: a.board, group: a.group, name }); break;
         case 'copy_to_board': after.push({ kind: 'copy_board', board: a.board, group: a.group, name }); break;
-        case 'duplicate': after.push({ kind: 'duplicate', name }); break;
+        case 'duplicate': after.push({ kind: 'duplicate', name, withUpdates: !!a.withUpdates }); break;
         case 'external': lines.push({ auto: true, text: `${name} would ${a.label} in Monday. Not run in Keystone, so nothing was sent.` }); break;
         case 'notify': lines.push({ auto: true, text: `${name} would notify ${a.to || 'someone'} in Monday: ${a.message || ''}`.trim() }); break;
         default: lines.push({ auto: true, text: `${name} would ${a.label || a.type.replace(/_/g, ' ')} in Monday. Not run in Keystone, so nothing was sent.` });
@@ -654,7 +655,12 @@ td.currency::before, td.percent::after { color: var(--muted); }
       if (ev.type === 'button' && r.trigger === 'button') return r.col === ev.col;
       return false;
     }).filter(r => (r.conditions || []).every(c => condOk(b, { ...item, group: patch.group || item.group }, vals, c)));
+    const beforeVals = { ...vals }, beforeGroup = patch.group || item.group;
     hit.forEach(r => applyActions(b, item, r, patch, lines, after));
+    if ((ev.depth || 0) < 4 && hit.length) {
+      for (const [cid, v] of Object.entries(patch.values || {})) if (String(beforeVals[cid] ?? '') !== String(v ?? '')) fireRules(b, item, { type: 'value', col: cid, value: v, depth: (ev.depth || 0) + 1 }, patch, lines, after);
+      if (patch.group && patch.group !== beforeGroup) fireRules(b, item, { type: 'moved_group', group: patch.group, depth: (ev.depth || 0) + 1 }, patch, lines, after);
+    }
     return hit;
   }
   function finishAfter(b, item, after) {
@@ -662,14 +668,18 @@ td.currency::before, td.percent::after { color: var(--muted); }
       if (x.kind === 'update' && x.text) { item.updates = [...(item.updates || []), { at: now(), by: 'automation', byName: 'Automation', text: x.text }]; patchItem(item.id, { updates: item.updates }); }
       if (x.kind === 'move_board') moveItemToBoard(b, item, x.board, x.group, x.name, true);
       if (x.kind === 'copy_board') moveItemToBoard(b, item, x.board, x.group, x.name, false);
-      if (x.kind === 'duplicate') duplicateItem(item, false);
+      if (x.kind === 'duplicate') duplicateItem(item, false, x.withUpdates);
     }
   }
   function moveItemToBoard(b, item, targetBoardId, groupId, why, removeHere = true) {
     const tb = S.boards.find(x => x.id === targetBoardId); if (!tb) { toast('The board this automation moves items to isn’t in Keystone.'); return; }
     const g = (groupId === '__top__' ? tb.groups[0] : tb.groups.find(x => x.id === groupId)) || tb.groups[0];
     const values = {};
-    Object.entries(item.values || {}).forEach(([k, v]) => { const sc = b.columns.find(c => c.id === k), tc = tb.columns.find(c => c.id === k) || (sc && tb.columns.find(c => c.title === sc.title && c.type === sc.type)); if (tc) values[tc.id] = v; });
+    Object.entries(item.values || {}).forEach(([k, v]) => {
+      if (k.endsWith('__t') || k.endsWith('__dt')) { const base = k.replace(/__d?t$/, ''); if (tb.columns.some(c => c.id === base)) values[k] = v; return; }
+      const sc = b.columns.find(c => c.id === k); const tc = tb.columns.find(c => c.id === k && (!sc || c.type === sc.type)) || (sc && tb.columns.find(c => c.title.toLowerCase() === sc.title.toLowerCase() && c.type === sc.type)); if (!tc) return;
+      if (sc && sc.type === 'status') { const name = (labelOf(sc, v) || {}).label; const tl = name && (tc.labels || []).find(l => l.label.toLowerCase() === name.toLowerCase()); if (!tl) return; v = tl.id; }
+      values[tc.id] = v; });
     const newId = removeHere ? item.id : rid('i');
     const data = { ...item, values, group: g ? g.id : '', pos: Date.now(), activity: [{ at: now(), by: 'automation', text: `${why || 'Automation'} ${removeHere ? 'moved' : 'copied'} this here from “${b.name}”` }, ...(removeHere ? (item.activity || []) : [])].slice(0, 40) };
     delete data.id; if (!removeHere) { delete data.mondayId; data.updates = []; data.createdAt = now(); }
@@ -1006,7 +1016,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
       else {
         const fields = b.columns.map(c => `<div class="f-label">${esc(c.title)}</div><div class="f-value ${c.format === 'currency' ? 'currency' : ''}" ${c.format === 'currency' ? 'style="position:relative"' : ''}>${c.format === 'currency' ? '<span style="position:absolute;left:10px;color:var(--muted);font-family:var(--f-data)">$</span>' : ''}${cellEditor(c, i, true)}</div>`).join('');
         const groupSel = `<div class="f-label">Group</div><div class="f-value"><select class="kbd-select" data-edit="group" data-item="${esc(i.id)}" ${S.canWrite ? '' : 'disabled'} aria-label="Group">${b.groups.map(g => `<option value="${esc(g.id)}" ${g.id === i.group ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}${b.groups.some(g => g.id === i.group) ? '' : '<option selected>Pick a group</option>'}</select></div>`;
-        const updates = (i.updates || []).slice().reverse().map(u => `<div class="update"><div class="u-meta"><b data-uid="${esc(u.by)}">${esc(u.byName || 'Someone')}</b><span>${esc(fmtTime(u.at))}</span></div><div class="u-text">${esc(u.text)}</div></div>`).join('');
+        const updates = (i.updates || []).slice().reverse().map(u => `<div class="update"><div class="u-meta"><b data-uid="${esc(u.by)}">${esc(u.byName || 'Someone')}</b><span>${esc(fmtTime(u.at))}</span></div><div class="u-text">${esc(u.text)}</div>${(u.files || []).length ? `<div class="card-meta">${u.files.map(f => f.url ? `<a href="${esc(f.url)}" target="_blank" rel="noopener" style="color:#fff">📎 ${esc(f.name)}</a>` : `<span>📎 ${esc(f.name)}</span>`).join('')}</div>` : ''}${(u.replies || []).map(rp => `<div class="update" style="margin:6px 0 0 18px"><div class="u-meta"><b>${esc(rp.byName || 'Someone')}</b><span>${esc(fmtTime(rp.at))}</span></div><div class="u-text">${esc(rp.text)}</div></div>`).join('')}</div>`).join('');
         const sys = a => a.by === 'automation' || a.by === 'import' || a.by === 'seed';
         const log = (i.activity || []).map(a => `<li><time>${esc(fmtTime(a.at))}</time><span class="${sys(a) ? 'auto' : ''}">${sys(a) ? '' : `<span data-uid="${esc(a.by)}">Someone</span>: `}${esc(a.text)}</span></li>`).join('');
         const sc = b.subColumns || [];
@@ -1143,8 +1153,8 @@ td.currency::before, td.percent::after { color: var(--muted); }
         <div><button class="btn" data-act="close-modal-btn">Done</button></div>`;
     }
     if (m.type === 'integrations') {
-      const I = m.data; const EV = ['item.created', 'item.updated', 'item.moved', 'item.status_changed', 'item.deleted', 'update.created'];
-      const evName = { 'item.created': 'New item', 'item.updated': 'Item changed', 'item.moved': 'Moved to a group', 'item.status_changed': 'Status changed', 'item.deleted': 'Item deleted', 'update.created': 'Update posted' };
+      const I = m.data; const EV = ['item.created', 'item.updated', 'item.moved', 'item.status_changed', 'item.deleted', 'update.created', 'reminder.due'];
+      const evName = { 'item.created': 'New item', 'item.updated': 'Item changed', 'item.moved': 'Moved to a group', 'item.status_changed': 'Status changed', 'item.deleted': 'Item deleted', 'update.created': 'Update posted', 'reminder.due': 'Date reminder (Monday “when date arrives”)' };
       const bname = id => (S.boards.find(x => x.id === id) || {}).name || 'All boards';
       const boardSel = (id, all) => `<select class="field-input" id="${id}" aria-label="Board">${all ? '<option value="">All boards</option>' : ''}${workspaces().map(w => `<optgroup label="${esc(w.name)}">${S.boards.filter(x => wsOf(x).id === w.id).map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')}</optgroup>`).join('')}</select>`;
       if (!I) return '<h3>Integrations</h3><p>Loading.</p>';
@@ -1492,9 +1502,9 @@ td.currency::before, td.percent::after { color: var(--muted); }
     render();
   });
 
-  function duplicateItem(i, open) {
+  function duplicateItem(i, open, withUpdates) {
     const ref = itemsCol().doc(rid('i'));
-    const data = { name: i.name + ' (copy)', group: i.group, pos: (i.pos || 0) + 0.01, values: JSON.parse(JSON.stringify(i.values || {})), updates: [], subitems: JSON.parse(JSON.stringify(i.subitems || [])), activity: [{ at: now(), by: S.uid, text: `Duplicated from “${i.name}”` }], createdAt: now() };
+    const data = { name: i.name + ' (copy)', group: i.group, pos: (i.pos || 0) + 0.01, values: JSON.parse(JSON.stringify(i.values || {})), updates: withUpdates ? JSON.parse(JSON.stringify(i.updates || [])) : [], subitems: JSON.parse(JSON.stringify(i.subitems || [])), activity: [{ at: now(), by: S.uid, text: `Duplicated from “${i.name}”` }], createdAt: now() };
     write(ref.path, () => ref.set(data));
     S.items.push({ id: ref.id, ...data });
     if (open) { S.openItem = ref.id; S.drawerTab = 'info'; toast('Duplicated'); }

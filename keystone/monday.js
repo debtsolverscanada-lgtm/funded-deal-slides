@@ -24,8 +24,12 @@ async function gql(token, query, variables = {}) {
   throw new Error('Monday kept timing out. Try again later.');
 }
 
-const SKIP = new Set(['name', 'subtasks', 'direct_doc', 'doc']);
-const READONLY = new Set(['mirror', 'last_updated', 'board_relation', 'time_tracking', 'file']);
+const SKIP = new Set(['name', 'subtasks']);
+// Monday stores date+time in UTC; people see it in the company's time zone.
+const TZ = process.env.KS_TIMEZONE || 'America/Toronto';
+const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
+const localDay = iso => dayFmt.format(new Date(iso));
+const READONLY = new Set(['mirror', 'last_updated', 'board_relation', 'time_tracking', 'file', 'doc', 'direct_doc']);
 
 function convColumns(cols) {
   const out = [];
@@ -80,7 +84,7 @@ function convValues(cvs, cols) {
     let val = null;
     try {
       if (c.type === 'status') val = cv.value ? String(JSON.parse(cv.value).index) : null;
-      else if (c.type === 'date') { const dv = cv.value ? JSON.parse(cv.value) : null; val = dv ? dv.date : null; if (dv && dv.time) v[c.id + '__t'] = dv.time; }
+      else if (c.type === 'date') { const dv = cv.value ? JSON.parse(cv.value) : null; val = dv ? dv.date : null; if (dv && dv.date && dv.time) { const iso = `${dv.date}T${dv.time}Z`; v[c.id + '__dt'] = iso; val = localDay(iso); } }
       else if (c.type === 'number') { const t = String(cv.text || '').replace(/,/g, ''); val = t ? Number(t) : null; if (Number.isNaN(val)) val = null; }
       else if (c.type === 'checkbox') val = cv.value ? (JSON.parse(cv.value).checked === true || JSON.parse(cv.value).checked === 'true') : null;
       else if (c.type === 'link') { const l = cv.value ? JSON.parse(cv.value) : null; val = l && l.url ? (l.text && l.text !== l.url ? l.text + ' | ' + l.url : l.url) : null; }
@@ -94,7 +98,7 @@ function convValues(cvs, cols) {
 
 const ITEM_FIELDS = `id name group { id } created_at
   column_values { id type text value }
-  updates(limit: 25) { id text_body created_at creator { name } }
+  updates(limit: 100) { id text_body created_at creator { name } assets { name public_url } replies { text_body created_at creator { name } } }
   subitems { id name column_values { id type text value } }`;
 
 // Copies every board in the given workspaces. `save(path, col, id, data)` writes one record.
@@ -128,12 +132,14 @@ async function syncFromMonday({ token, workspaceIds, save, removeStale, onProgre
       const seen = new Set();
       let pos = 0, cursor = null;
       if (b.items_count) {
-        let page = (await gql(token, `query($id: [ID!]) { boards(ids: $id) { items_page(limit: 100) { cursor items { ${ITEM_FIELDS} } } } }`, { id: [b.id] })).boards[0].items_page;
+        let page = (await gql(token, `query($id: [ID!]) { boards(ids: $id) { items_page(limit: 40) { cursor items { ${ITEM_FIELDS} } } } }`, { id: [b.id] })).boards[0].items_page;
         for (;;) {
           for (const i of page.items) {
             const doc = {
               name: i.name, group: (i.group || {}).id, pos: pos++, values: convValues(i.column_values, cols),
-              updates: [...(i.updates || [])].reverse().map(u => ({ at: u.created_at, by: '', byName: (u.creator || {}).name || 'Monday user', text: String(u.text_body || '').slice(0, 4000) })),
+              updates: [...(i.updates || [])].reverse().map(u => ({ at: u.created_at, by: '', byName: (u.creator || {}).name || 'Monday user', text: String(u.text_body || '').slice(0, 6000),
+                ...((u.assets || []).length ? { files: u.assets.map(a => ({ name: a.name, url: a.public_url })) } : {}),
+                ...((u.replies || []).length ? { replies: u.replies.map(rp => ({ at: rp.created_at, byName: (rp.creator || {}).name || 'Monday user', text: String(rp.text_body || '').slice(0, 3000) })) } : {}) })),
               subitems: (i.subitems || []).map(x => ({ id: x.id, name: x.name, values: convValues(x.column_values, subCols) })),
               mondayId: i.id, createdAt: i.created_at, activity: [{ at, by: 'import', text: 'Copied from Monday' }],
             };
@@ -144,7 +150,7 @@ async function syncFromMonday({ token, workspaceIds, save, removeStale, onProgre
           }
           onProgress({ msg: `Copying ${workspace.name} / ${b.name}`, boards: boardsDone, items: itemsDone });
           cursor = page.cursor; if (!cursor) break;
-          page = (await gql(token, `query($c: String!) { next_items_page(limit: 100, cursor: $c) { cursor items { ${ITEM_FIELDS} } } }`, { c: cursor })).next_items_page;
+          page = (await gql(token, `query($c: String!) { next_items_page(limit: 40, cursor: $c) { cursor items { ${ITEM_FIELDS} } } }`, { c: cursor })).next_items_page;
         }
       }
       removeStale(bid, seen);

@@ -69,7 +69,7 @@
     TODAY: () => ymd(new Date()), NOW: () => new Date().toISOString(),
     DAYS: (end, start) => { const a = toDate(start), b = toDate(end); return a && b ? Math.round((b - a) / 864e5) : ''; },
     WORKDAYS: workdays,
-    HOURS_DIFF: (a, b) => { const x = Date.parse(a), y = Date.parse(b); if (!x || !y) return ''; const m = Math.round(Math.abs(x - y) / 60000); return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; },
+    HOURS_DIFF: (a, b) => { const mins = v => { const t = Date.parse(v); return t ? Math.floor(t / 60000) : NaN; }; const x = mins(a), y = mins(b); if (!Number.isFinite(x) || !Number.isFinite(y)) return ''; const d = x - y, m = Math.abs(d); return `${d < 0 ? '-' : ''}${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; },
     MIN: (...a) => { const n = a.filter(v => v !== '').map(num).filter(Number.isFinite); return n.length ? Math.min(...n) : ''; },
     MAX: (...a) => { const n = a.filter(v => v !== '').map(num).filter(Number.isFinite); return n.length ? Math.max(...n) : ''; },
     SUM: (...a) => a.reduce((s, v) => s + num(v), 0),

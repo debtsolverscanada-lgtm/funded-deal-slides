@@ -18,7 +18,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
   `);
   const sha = s => crypto.createHash('sha256').update(s).digest('hex');
   const rid = p => p + crypto.randomBytes(9).toString('base64url');
-  const EVENTS = ['item.created', 'item.updated', 'item.moved', 'item.status_changed', 'item.deleted', 'update.created'];
+  const EVENTS = ['item.created', 'item.updated', 'item.moved', 'item.status_changed', 'item.deleted', 'update.created', 'reminder.due'];
 
   // ---------- helpers: boards and readable fields ----------
   const boardDoc = id => { const r = q.doc.get('boards/' + id); return r ? JSON.parse(r.data) : null; };
@@ -57,7 +57,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
       if (v === null || v === '') { out[c.id] = ''; continue; }
       if (c.type === 'status') { const l = (c.labels || []).find(x => x.id === String(v) || x.label.toLowerCase() === String(v).toLowerCase()); if (!l) { errors.push(`“${v}” isn’t a label in ${c.title}.`); continue; } v = l.id; }
       else if (c.type === 'number') { v = Number(String(v).replace(/[^0-9.\-]/g, '')); if (!Number.isFinite(v)) { errors.push(`${c.title} needs a number.`); continue; } }
-      else if (c.type === 'date') { const d = new Date(v); if (isNaN(d)) { errors.push(`${c.title} needs a date like 2026-11-20.`); continue; } v = d.toISOString().slice(0, 10); }
+      else if (c.type === 'date') { if (/^\d{4}-\d{2}-\d{2}$/.test(String(v))) v = String(v); else { const d = new Date(v); if (isNaN(d)) { errors.push(`${c.title} needs a date like 2026-11-20.`); continue; } v = new Intl.DateTimeFormat('en-CA', { timeZone: process.env.KS_TIMEZONE || 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d); } }
       else if (c.type === 'checkbox') v = v === true || v === 'true' || v === 1 || v === '1';
       else if (Array.isArray(v)) v = v.join(', ');
       else v = String(v);
@@ -74,7 +74,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
       (ev.type === 'created' && r.trigger === 'created' && (!r.group || r.group === ev.group)) ||
       (ev.type === 'moved_group' && r.trigger === 'moved_group' && (r.group === ev.group || (r.group === '__top__' && (b.groups[0] || {}).id === ev.group))) ||
       (ev.type === 'value' && (r.trigger === 'status' || r.trigger === 'column') && r.col === ev.col && (r.value == null || r.value === '' || String(r.value) === String(ev.value)))));
-    const today = new Date().toISOString().slice(0, 10), log = [];
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: process.env.KS_TIMEZONE || 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()), log = [];
     for (const r of rules) {
       const ok = (r.conditions || []).every(c => c.col === '__group' ? item.group === (c.value === '__top__' ? (b.groups[0] || {}).id : c.value)
         : c.op === 'empty' ? !(item.values || {})[c.col] : c.op === 'not_empty' ? !!(item.values || {})[c.col] : String((item.values || {})[c.col] ?? '') === String(c.value ?? ''));
@@ -308,5 +308,35 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     return false;
   }
 
-  return { handleV1, handleAdmin, itemChanged, EVENTS };
+  // ---------- "when a date arrives" reminders (Monday's date triggers) ----------
+  // Checks every 10 minutes. A due reminder is written to the item's activity and sent as a reminder.due webhook.
+  const TZ = process.env.KS_TIMEZONE || 'America/Toronto';
+  const partsIn = d => Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(d).map(p => [p.type, p.value]));
+  const addDays = (ymd, n) => { const [y, m, d] = ymd.split('-').map(Number); const t = new Date(Date.UTC(y, m - 1, d + n)); return t.toISOString().slice(0, 10); };
+  function checkReminders() {
+    const nowP = partsIn(new Date()), today = `${nowP.year}-${nowP.month}-${nowP.day}`, hhmm = `${nowP.hour === '24' ? '00' : nowP.hour}:${nowP.minute}`;
+    for (const br of q.docsInCol.all('boards')) {
+      const b = { id: br.id, ...JSON.parse(br.data) };
+      const rules = (b.automations || []).filter(r => r.trigger === 'date_arrives' && r.col && r.mondayActive !== false);
+      if (!rules.length) continue;
+      for (const r of rules) {
+        const w = String(r.when || ''); const at = (/at (\d{1,2}:\d{2})/.exec(w) || [])[1] || '09:00';
+        if (hhmm < at.padStart(5, '0')) continue;
+        const off = /(\d+)\s*day/.exec(w); const n = off ? Number(off[1]) * (/before/.test(w) ? 1 : /after/.test(w) ? -1 : 0) : 0;
+        const target = addDays(today, n); // item date that is due today
+        for (const ir of q.docsInCol.all(`boards/${b.id}/items`)) {
+          const d = JSON.parse(ir.data); if ((d.values || {})[r.col] !== target) continue;
+          d.reminded = d.reminded || {}; if (d.reminded[r.id] === today) continue;
+          d.reminded[r.id] = today;
+          d.activity = [{ at: now(), by: 'automation', text: `Reminder: ${r.title || 'date arrived'}` }, ...(d.activity || [])].slice(0, 40);
+          q.upsertDoc.run(`boards/${b.id}/items/${ir.id}`, `boards/${b.id}/items`, ir.id, JSON.stringify(d), now(), 'reminder');
+          broadcast({ op: 'set', col: `boards/${b.id}/items`, id: ir.id, data: d });
+          emit('reminder.due', b.id, ir.id, b, d, { reminder: { rule: r.title, column: ((b.columns || []).find(c => c.id === r.col) || {}).title, date: target, notify: (r.actions || []).filter(a => a.type === 'notify').map(a => ({ to: a.to, message: a.message })) } });
+        }
+      }
+    }
+  }
+  if (process.env.KS_REMINDERS !== 'off') { setInterval(() => { try { checkReminders(); } catch (e) { console.error('reminders:', e.message); } }, 10 * 60 * 1000).unref(); setTimeout(() => { try { checkReminders(); } catch (e) {} }, 30000).unref(); }
+
+  return { handleV1, handleAdmin, itemChanged, EVENTS, checkReminders };
 };

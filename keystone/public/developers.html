@@ -72,6 +72,7 @@ curl -X PATCH https://YOUR-SITE/api/v1/boards/Setter%20Desk%20(Jan)/items/ITEM_I
 <tr><td><code>item.moved</code></td><td>Moved to another group</td><td><code>change: {from, to}</code></td></tr>
 <tr><td><code>update.created</code></td><td>Someone posted an update</td><td><code>update: {text, at, byName}</code></td></tr>
 <tr><td><code>item.deleted</code></td><td>An item was deleted</td><td></td></tr>
+<tr><td><code>reminder.due</code></td><td>A “when date arrives” rule is due (follow-up day, appraisal day, renewal reminders…), at the time Monday used</td><td><code>reminder: {rule, column, date, notify}</code></td></tr>
 </table></div>
 <pre><code>{
   "event": "item.status_changed",
