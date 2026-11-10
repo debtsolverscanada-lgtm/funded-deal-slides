@@ -2,6 +2,11 @@ import json, sys, os, re
 raw = json.load(open(sys.argv[1])); outdir = sys.argv[2]; os.makedirs(outdir, exist_ok=True)
 SKIP = {'name', 'subtasks', 'button', 'direct_doc', 'doc'}
 RO = {'formula', 'mirror', 'last_updated', 'item_id', 'board_relation', 'time_tracking', 'file', 'location', 'country', 'dropdown', 'link'}
+from datetime import datetime
+from zoneinfo import ZoneInfo
+TZ = ZoneInfo(os.environ.get('KS_TIMEZONE') or 'America/Toronto')
+def local_day(iso):
+    return datetime.fromisoformat(iso.replace('Z', '+00:00')).astimezone(TZ).strftime('%Y-%m-%d')
 def conv_cols(cols):
     out = []
     for c in cols:
@@ -48,7 +53,13 @@ def conv_vals(cvs, cols):
             try: val = str(json.loads(cv['value'])['index']) if cv['value'] else None
             except Exception: val = None
         elif c['type'] == 'date':
-            try: val = json.loads(cv['value']).get('date') if cv['value'] else None
+            try:
+                dv = json.loads(cv['value']) if cv['value'] else None
+                val = dv.get('date') if dv else None
+                # with a time: Monday keeps it in UTC; keep the instant in "<col>__dt" and show the local day (as monday.js does)
+                if dv and dv.get('date') and dv.get('time'):
+                    iso = f"{dv['date']}T{dv['time']}Z"; v[c['id'] + '__dt'] = iso
+                    val = local_day(iso)
             except Exception: val = None
         elif c['type'] == 'number':
             t = (cv['text'] or '').replace(',', '')

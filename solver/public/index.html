@@ -615,14 +615,16 @@ td.currency::before, td.percent::after { color: var(--muted); }
   // ---- formulas: same rules as Monday (empty numbers count as 0, % columns as fractions) ----
   function refValue(b, item, id, depth) {
     if (id === 'name') return item.name || '';
-    const c = b.columns.find(x => x.id === id); if (!c) return '';
+    const c = KSFormula.findCol(b.columns, id); if (!c) return ''; // by column id, or by title
+    id = c.id;
     const v = (item.values || {})[id];
     switch (c.type) {
       case 'formula': { const r = formulaResult(b, item, c, depth); return r.error || r.value === '' ? KSFormula.BLANK_REF : r.value; }
       case 'number': { if (v === '' || v == null) return KSFormula.EMPTY_NUMBER; const n = Number(v); return c.format === 'percent' ? n / 100 : n; }
       case 'status': return (labelOf(c, v) || {}).label || '';
       case 'checkbox': return !!v;
-      case 'date': { const dt = (item.values || {})[id + '__dt']; return v ? (dt || v) : ''; }
+      // with a time: the local day people see (for DAYS etc.), and the exact instant for HOURS_DIFF
+      case 'date': { const dt = (item.values || {})[id + '__dt']; return v ? KSFormula.dateRef(String(v).slice(0, 10), dt) : ''; }
       case 'item_id': return String(item.mondayId || item.id);
       case 'created': return String(item.createdAt || '').slice(0, 10);
       default: return v == null ? '' : Array.isArray(v) ? describe(c, v) : v;
@@ -632,7 +634,8 @@ td.currency::before, td.percent::after { color: var(--muted); }
     const refs = [...String(c.formula || '').matchAll(/\{([^}]+)\}/g)].map(m => m[1]);
     const r = KSFormula.evaluate(c.formula, (id, d) => refValue(b, item, id, d), depth);
     // Monday leaves an IF over number columns blank until any of those numbers is filled in.
-    if (!r.error && /^\s*IF\s*\(/i.test(c.formula) && refs.length && refs.every(id => { const x = b.columns.find(k => k.id === id); return x && x.type === 'number'; }) && refs.every(id => { const v = (item.values || {})[id]; return v === '' || v == null; })) return { value: '' };
+    const rc = refs.map(id => KSFormula.findCol(b.columns, id));
+    if (!r.error && /^\s*IF\s*\(/i.test(c.formula) && refs.length && rc.every(x => x && x.type === 'number') && rc.every(x => { const v = (item.values || {})[x.id]; return v === '' || v == null; })) return { value: '' };
     return r;
   }
   // Monday shows a status column's default label (stored as label 5) on items where nothing is picked.
@@ -1545,7 +1548,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
       case 'open': S.draftFiles = []; S.openItem = t.dataset.item; S.drawerTab = (board() && board().form) ? 'fact' : 'updates'; renderLayer(); fillNames(); break;
       case 'close-item': S.openItem = null; S.draftFiles = []; renderLayer(); break;
       case 'sub-status': { if (!S.canWrite) return; const r = t.getBoundingClientRect(); S.pop = { type: 'status', item: t.dataset.item, sub: t.dataset.sub, col: t.dataset.col, x: r.left, y: r.bottom + 4 }; renderLayer(); break; }
-      case 'sub-del': { const item = itemById(t.dataset.item); if (!item) return; const subs = (item.subitems || []).filter(x => String(x.id) !== String(t.dataset.sub)); item.subitems = subs; patchItem(item.id, { subitems: subs }); scheduleRender(); break; }
+      case 'sub-del': { const item = itemById(t.dataset.item); if (!item) return; const subs = (item.subitems || []).filter(x => String(x.id) !== String(t.dataset.sub)); item.subitems = subs; patchItem(item.id, { $remove: { subitems: [String(t.dataset.sub)] } }); scheduleRender(); break; }
       case 'subs': { const id = t.dataset.item; S.expanded.has(id) ? S.expanded.delete(id) : S.expanded.add(id); renderContent(); break; }
       case 'more': { const g = t.dataset.group; S.shown[g] = (S.shown[g] || PAGE) + PAGE; renderContent(); break; }
       case 'run-import': runImport(); break;
@@ -1594,10 +1597,11 @@ td.currency::before, td.percent::after { color: var(--muted); }
         const ta = $('#update-text'), text = ta ? ta.value.trim() : ''; if (!text && !S.draftFiles.length) return;
         const i = itemById(t.dataset.item); if (!i) return;
         const u = { at: now(), by: S.uid, byName: (S.me && S.me.name) || '', text }; if (S.draftFiles.length) u.files = S.draftFiles.map(f => ({ name: f.name, url: f.url }));
-        const updates = [...(i.updates || []), u].slice(-100);
+        const updates = [...(i.updates || []), u];
         const activity = act(i, u.files ? `Posted an update with ${u.files.length} file${u.files.length === 1 ? '' : 's'}` : 'Posted an update');
         ta.value = ''; S.draftFiles = []; i.updates = updates; i.activity = activity;
-        patchItem(i.id, { updates, activity }, { guest: true }); renderLayer(); renderContent(); fillNames(); break;
+        // appended on the server, so a comment someone else posts at the same moment isn't lost
+        patchItem(i.id, { $append: { updates: [u], activity: [activity[0]] } }, { guest: true }); renderLayer(); renderContent(); fillNames(); break;
       }
       case 'automations': S.modal = { type: 'automations', draft: {} }; renderLayer(); break;
       case 'add-column': S.modal = { type: 'add-column' }; renderLayer(); setTimeout(() => $('#c-title') && $('#c-title').focus(), 0); break;
@@ -1806,7 +1810,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     if (e.key !== 'Enter') return;
     if (t.classList && t.classList.contains('card')) { S.openItem = t.dataset.item; renderLayer(); fillNames(); return; }
     if (t.dataset && t.dataset.actKey === 'add-item') { const v = t.value; const g = t.dataset.group; t.value = ''; t.blur(); addItem(g, v, false); return; }
-    if (t.dataset && t.dataset.actKey === 'add-sub') { const v = t.value.trim(); const item = itemById(t.dataset.item); if (!v || !item) return; t.value = ''; const subs = [...(item.subitems || []), { id: rid('s'), name: v, values: {} }]; item.subitems = subs; S.expanded.add(item.id); patchItem(item.id, { subitems: subs, activity: act(item, `Added subitem “${v}”`) }); const inDrawer = !!t.closest('.drawer'); render(); const again = document.querySelector(`${inDrawer ? '.drawer ' : ''}[data-act-key="add-sub"][data-item="${item.id}"]`); if (again) again.focus(); return; }
+    if (t.dataset && t.dataset.actKey === 'add-sub') { const v = t.value.trim(); const item = itemById(t.dataset.item); if (!v || !item) return; t.value = ''; const sub = { id: rid('s'), name: v, values: {} }; const subs = [...(item.subitems || []), sub]; item.subitems = subs; S.expanded.add(item.id); const a1 = act(item, `Added subitem “${v}”`); item.activity = a1; patchItem(item.id, { $append: { subitems: [sub], activity: [a1[0]] } }); const inDrawer = !!t.closest('.drawer'); render(); const again = document.querySelector(`${inDrawer ? '.drawer ' : ''}[data-act-key="add-sub"][data-item="${item.id}"]`); if (again) again.focus(); return; }
     if (t.id === 'new-board') { createBoard(t.value); t.value = ''; return; }
     if (t.id === 'person-q' && S.pop && S.pop.type === 'person') {
       const n = t.value.trim(); if (!n) return; const p = S.pop, i = itemById(p.item); if (!i) return;
@@ -2005,8 +2009,8 @@ td.currency::before, td.percent::after { color: var(--muted); }
     const pl = st.pull || {}, hhmm = iso => new Date(iso).toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit' });
     const live = !pl.enabled ? '<span class="pill">Live pull is off</span>'
       : `<span class="pill" title="Every 5 minutes, items changed in Monday are copied here">Live from Monday · ${pl.lastPullAt ? 'last pulled ' + esc(hhmm(pl.lastPullAt)) : 'not pulled yet'}</span>${pl.running ? ' <span class="rail-note">Pulling now…</span>' : ''}`;
-    return `<p>Reads ${st.workspaces.length} Monday workspace${st.workspaces.length === 1 ? '' : 's'} and refreshes their boards here. Monday itself is never changed. Items added in Solver.ca stay; items copied from Monday are replaced with Monday’s current version, so edits made here to those items are overwritten. Every 5 minutes, items changed in Monday since the last pull are copied in on their own.</p>
-      <p>${last}${pl.error ? ` Last live pull failed: ${esc(pl.error)}` : pl.lastRunAt && pl.enabled ? ` Last live pull: ${Number(pl.saved || 0)} items updated, ${Number(pl.removed || 0)} removed.` : ''}</p>
+    return `<p>Reads ${st.workspaces.length} Monday workspace${st.workspaces.length === 1 ? '' : 's'} and refreshes their boards here. Monday itself is never changed. Monday’s columns, labels, groups, comments and subitems are refreshed to Monday’s current version. Everything added in Solver.ca stays: items, columns and their values, comments, subitems, files, time, docs, permissions, access and views. Every 5 minutes, items changed in Monday since the last pull are copied in on their own.</p>
+      <p>${last}${pl.needsFullCopy ? ` <b>${esc(pl.error || 'Run a full copy from Monday to catch up.')}</b>` : pl.error ? ` Last live pull failed: ${esc(pl.error)}` : pl.lastRunAt && pl.enabled ? ` Last live pull: ${Number(pl.saved || 0)} items updated, ${Number(pl.removed || 0)} removed.` : ''}</p>
       <div class="form-row"><button class="btn primary" data-act="monday-sync">Copy from Monday now</button>${live}${pl.enabled ? '<button class="btn" data-act="monday-pull">Pull changes now</button>' : ''}</div>`;
   }
   let syncTimer = null;

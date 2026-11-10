@@ -20,6 +20,8 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 const { syncFromMonday, pullFromMonday } = require('./monday.js');
+const mondayMerge = require('./monday.js');
+const uploadCols = new Map(); // board id -> its Monday columns, from the board record of an uploaded Monday copy
 const sec = require('./security.js');
 const sheets = require('./sheets.js');
 
@@ -751,7 +753,23 @@ async function api(req, res, url) {
     for (const d of docs) if (!d || !DOC_RE.test(String(d.path || '')) || !d.data || typeof d.data !== 'object') throw new HttpError(400, 'Bad record in upload.');
     db.exec('BEGIN');
     try {
-      for (const d of docs) { const { col, id } = splitDoc(d.path); q.upsertDoc.run(d.path, col, id, JSON.stringify(d.data), now(), user.id); }
+      // merged like a copy from Monday: what was added in Solver.ca stays, and Solver.ca's own boards are never touched
+      for (const d of docs) {
+        const { col, id } = splitDoc(d.path), prev = q.doc.get(d.path), old = prev ? JSON.parse(prev.data) : null;
+        let data = d.data;
+        // (a record that isn't a Monday copy, onto a board that isn't one, is written as sent)
+        if (old && col === 'boards' && old.source !== 'monday') { if (data.source === 'monday') continue; }
+        else if (old && col === 'boards') { data = mondayMerge.mergeBoardDoc(old, data); uploadCols.set(id, { columns: d.data.columns || [], subColumns: d.data.subColumns || [] }); }
+        else if (old && /^boards\/[^/]+\/items$/.test(col)) {
+          const bid = boardOfPath(col), b = q.doc.get('boards/' + bid), bd = b ? JSON.parse(b.data) : null;
+          const solverBoard = bd && bd.source !== 'monday';
+          if (solverBoard && data.mondayId) continue; // a Monday copy never lands on a Solver.ca board
+          const known = uploadCols.get(bid);
+          // the board's Monday columns; without them only the columns this record carries are replaced
+          if (!solverBoard) data = { ...mondayMerge.mergeItemDoc(old, data, known ? known.columns : null, known ? known.subColumns : null), pos: old.pos != null ? old.pos : data.pos, activity: old.activity || data.activity };
+        } else if (!old && col === 'boards') uploadCols.set(id, { columns: d.data.columns || [], subColumns: d.data.subColumns || [] });
+        q.upsertDoc.run(d.path, col, id, JSON.stringify(data), now(), user.id);
+      }
       db.exec('COMMIT');
     } catch (e) { db.exec('ROLLBACK'); throw e; }
     if (body.done) broadcast({ op: 'reload' });
@@ -848,7 +866,11 @@ async function api(req, res, url) {
         else if (m === 'group') { const g = (b.groups || []).find(x => x.name.toLowerCase() === v.toLowerCase() || x.id === v); if (g) item.group = g.id; }
         else { const c = (b.columns || []).find(x => x.id === m); if (!c) return; item.values[m] = c.type === 'date' && /^\d{4,5}(\.\d+)?$/.test(v) && Number(v) > 20000 && Number(v) < 80000 ? sheets.excelSerialToYmd(v) : v; }
       });
-      try { integ.createItem(b, item, actor, { quiet: true }); created++; }
+      try {
+        const made = integ.createItem(b, item, actor, { quiet: true, lenient: true }); created++;
+        // unknown status labels: the row is kept, that cell left empty and flagged on the item
+        for (const w of made.warnings || []) if (errors.length < 25) errors.push(`Row ${ri + 2}: ${w.msg} Left empty.`);
+      }
       catch (e) { if (errors.length < 25) errors.push(`Row ${ri + 2}: ${e.message}`); }
     });
     summaryCache.clear();
@@ -898,7 +920,12 @@ async function api(req, res, url) {
       const newPerms = isBoard && user.role === 'admin' && body.perms && typeof body.perms === 'object' ? body.perms : null;
       if (method === 'PATCH') {
         if (!prev) throw new HttpError(404, 'That record no longer exists.');
+        // { $append: { updates: [...], subitems: [...], activity: [...] } } adds to what's stored right now, so two
+        // people posting at the same moment both keep their comment (the page never sends the whole list back)
+        const add = isItem && body.$append && typeof body.$append === 'object' ? body.$append : null; delete body.$append;
+        const rem = isItem && body.$remove && typeof body.$remove === 'object' ? body.$remove : null; delete body.$remove;
         data = merge(JSON.parse(prev.data), body);
+        if (add || rem) appendToItem(data, add || {}, rem || {});
       }
       if (newPerms) data.perms = cleanPerms(newPerms, data); // replaced as a whole, so a lock can be removed
       if (isBoard && (method === 'PUT' || 'automations' in body)) ext.checkBoard(data, before); // rules are checked on save
@@ -1015,14 +1042,16 @@ const KSFormula = require('./public/formula.js');
 function fileNames(v) { if (Array.isArray(v)) return v.filter(f => f && f.url).map(f => f.name || f.url).join(', '); return String(v || ''); }
 function refValue(b, item, id, depth) {
   if (id === 'name') return item.name || '';
-  const c = (b.columns || []).find(x => x.id === id); if (!c) return '';
+  const c = KSFormula.findCol(b.columns, id); if (!c) return ''; // by column id, or by title
+  id = c.id;
   const v = (item.values || {})[id];
   switch (c.type) {
     case 'formula': { const r = formulaResult(b, item, c, depth); return r.error || r.value === '' ? KSFormula.BLANK_REF : r.value; }
     case 'number': { if (v === '' || v == null) return KSFormula.EMPTY_NUMBER; const n = Number(v); return c.format === 'percent' ? n / 100 : n; }
     case 'status': return (((c.labels || []).find(l => l.id === String(v))) || {}).label || '';
     case 'checkbox': return !!v;
-    case 'date': { const dt = (item.values || {})[id + '__dt']; return v ? (dt || v) : ''; }
+    // with a time: the local day people see (for DAYS etc.), and the exact instant for HOURS_DIFF
+    case 'date': { const dt = (item.values || {})[id + '__dt']; return v ? KSFormula.dateRef(String(v).slice(0, 10), dt, process.env.KS_TIMEZONE || 'America/Toronto') : ''; }
     case 'item_id': return String(item.mondayId || item.id);
     case 'created': return String(item.createdAt || '').slice(0, 10);
     default: return v == null ? '' : Array.isArray(v) ? fileNames(v) : v;
@@ -1032,7 +1061,8 @@ function formulaResult(b, item, c, depth = 0) {
   try {
     const refs = [...String(c.formula || '').matchAll(/\{([^}]+)\}/g)].map(m => m[1]);
     const r = KSFormula.evaluate(c.formula, (id, d) => refValue(b, item, id, d), depth);
-    if (!r.error && /^\s*IF\s*\(/i.test(c.formula) && refs.length && refs.every(id => { const x = (b.columns || []).find(k => k.id === id); return x && x.type === 'number'; }) && refs.every(id => { const v = (item.values || {})[id]; return v === '' || v == null; })) return { value: '' };
+    const rc = refs.map(id => KSFormula.findCol(b.columns, id));
+    if (!r.error && /^\s*IF\s*\(/i.test(c.formula) && refs.length && rc.every(x => x && x.type === 'number') && rc.every(x => { const v = (item.values || {})[x.id]; return v === '' || v == null; })) return { value: '' };
     return r;
   } catch (e) { return { error: e.message }; }
 }
@@ -1049,6 +1079,18 @@ function exportCell(b, c, item) {
     case 'created': return String(item.createdAt || '').slice(0, 10);
     default: return v == null ? '' : Array.isArray(v) || c.type === 'file' || c.source === 'file' ? fileNames(v) : String(v);
   }
+}
+// Item lists changed one entry at a time on the server (PATCH { $append, $remove }), never replaced from a stale page.
+// updates/subitems: added at the end; activity: added at the top (newest first, 40 kept); $remove.subitems: ids.
+function appendToItem(data, add, rem) {
+  const objs = a => (Array.isArray(a) ? a.filter(x => x && typeof x === 'object' && !Array.isArray(x)) : []);
+  if (add.updates !== undefined) data.updates = [...(Array.isArray(data.updates) ? data.updates : []), ...objs(add.updates)];
+  if (add.subitems !== undefined) {
+    const have = new Set((Array.isArray(data.subitems) ? data.subitems : []).map(s => String(s && s.id)));
+    data.subitems = [...(Array.isArray(data.subitems) ? data.subitems : []), ...objs(add.subitems).filter(s => s.id != null && !have.has(String(s.id)))];
+  }
+  if (rem.subitems !== undefined) { const gone = new Set((Array.isArray(rem.subitems) ? rem.subitems : []).map(String)); data.subitems = (Array.isArray(data.subitems) ? data.subitems : []).filter(s => !gone.has(String(s && s.id))); }
+  if (add.activity !== undefined) data.activity = [...objs(add.activity), ...(Array.isArray(data.activity) ? data.activity : [])].slice(0, 40);
 }
 const importUploads = new Map(); // token -> { uid, bid, rows, headers, exp }
 function readRaw(req, limit) {
@@ -1079,13 +1121,12 @@ const lastSync = q.doc.get('meta/monday-sync');
 if (lastSync) { try { Object.assign(syncState, JSON.parse(lastSync.data), { running: false }); } catch (e) {} }
 function startMondaySync(user) {
   syncState = { running: true, msg: 'Starting', boards: 0, items: 0, startedAt: now(), finishedAt: null, error: null, by: user.name };
-  const save = (dp, col, id, data, opts = {}) => {
-    if (opts.keep) { const r = q.doc.get(dp); if (r) { const old = JSON.parse(r.data); opts.keep.forEach(k => { if (old[k] !== undefined) data[k] = old[k]; }); } }
-    // views made in Solver.ca survive a new copy; Monday's own views are replaced by their current version
-    if (opts.mergeViews) { const r = q.doc.get(dp); const old = r ? JSON.parse(r.data) : {}; data.views = [...(data.views || []), ...(old.views || []).filter(v => v.source !== 'monday')]; }
-    q.upsertDoc.run(dp, col, id, JSON.stringify(data), now(), 'monday-sync');
-  };
+  // monday.js merges what's stored with Monday's copy (Solver.ca columns, comments, subitems, perms, access edits,
+  // automations and views stay) and skips boards that weren't copied from Monday.
+  const load = dp => { const r = q.doc.get(dp); if (!r) return null; try { return JSON.parse(r.data); } catch (e) { return null; } };
+  const save = (dp, col, id, data) => { q.upsertDoc.run(dp, col, id, JSON.stringify(data), now(), 'monday-sync'); };
   const removeStale = (bid, seen) => {
+    const b = load('boards/' + bid); if (!b || b.source !== 'monday') return;
     for (const r of q.docsInCol.all(`boards/${bid}/items`)) {
       if (seen.has(r.id)) continue;
       let d = {}; try { d = JSON.parse(r.data); } catch (e) {}
@@ -1093,12 +1134,12 @@ function startMondaySync(user) {
     }
   };
   syncFromMonday({
-    token: process.env.MONDAY_API_TOKEN, workspaceIds: mondayWorkspaces(), save, removeStale,
+    token: process.env.MONDAY_API_TOKEN, workspaceIds: mondayWorkspaces(), save, load, removeStale,
     onProgress: ({ msg, boards, items }) => Object.assign(syncState, { msg, boards, items }),
   }).then(r => {
     Object.assign(syncState, { running: false, msg: 'Done', boards: r.boards, items: r.items, finishedAt: now() });
     // the live pull carries on from the moment this copy started
-    savePull({ lastPullAt: syncState.startedAt });
+    savePull({ lastPullAt: syncState.startedAt, needsFullCopy: false, error: null });
   }).catch(e => {
     console.error('Monday sync failed:', e);
     Object.assign(syncState, { running: false, error: e.message, finishedAt: now() });
@@ -1143,15 +1184,21 @@ async function runMondayPull() {
         if (!d.mondayId) return false; // made in Solver.ca: never removed by a pull
         q.deleteDoc.run(itemPath(bid, iid)); broadcast({ op: 'delete', col: `boards/${bid}/items`, id: String(iid) }); return true;
       },
-      saveGroups: (bid, groups) => {
+      // Monday's groups, columns and labels (already merged with the ones added here); the rest of the board stays
+      saveBoardParts: (bid, parts) => {
         const r = q.doc.get('boards/' + bid); if (!r) return;
-        const d = JSON.parse(r.data); d.groups = groups;
-        q.upsertDoc.run('boards/' + bid, 'boards', bid, JSON.stringify(d), now(), 'monday-sync'); broadcast({ op: 'set', col: 'boards', id: bid, data: d });
+        const d = JSON.parse(r.data); if (d.source !== 'monday') return;
+        Object.assign(d, parts);
+        q.upsertDoc.run('boards/' + bid, 'boards', bid, JSON.stringify(d), now(), 'monday-sync'); boardCache.delete(bid); broadcast({ op: 'set', col: 'boards', id: bid, data: d });
       },
       newPos: bid => { const r = db.prepare("SELECT MIN(json_extract(data, '$.pos')) AS p FROM docs WHERE col = ?").get(`boards/${bid}/items`); return (Number(r && r.p) || 0) - 1; },
     };
     const r = await pullFromMonday({ token: process.env.MONDAY_API_TOKEN, boards, since, store });
-    savePull({ lastPullAt: r.at, lastRunAt: now(), error: null, saved: r.saved, removed: r.removed, checked: r.checked, boards: r.boards });
+    // more than 7 days since the last pull: Monday's log doesn't reach back that far, so say a full copy is needed
+    // (it stays flagged until a full copy finishes)
+    const needsFullCopy = !!r.gap || !!pullState.needsFullCopy;
+    savePull({ lastPullAt: r.at, lastRunAt: now(), error: needsFullCopy ? 'The last pull from Monday was more than 7 days ago, so some changes may be missing. Run a full copy from Monday to catch up.' : null,
+      needsFullCopy, saved: r.saved, removed: r.removed, checked: r.checked, boards: r.boards });
     if (r.saved || r.removed) summaryCache.clear();
   } catch (e) {
     console.error('Monday live pull failed:', e.message);

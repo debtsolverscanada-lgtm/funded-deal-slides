@@ -97,12 +97,14 @@ module.exports = function docs({ db, q, now, broadcast, HttpError, readBody, sen
     );
     CREATE INDEX IF NOT EXISTS item_doc_versions_doc ON item_doc_versions(board, item, col, id);
   `);
+  // when each version was started (its 2-minute window counts from here; `at` moves with every save into it)
+  try { db.exec('ALTER TABLE item_doc_versions ADD COLUMN started TEXT'); } catch (e) { /* already there */ }
   const ID = /^[A-Za-z0-9_\-.~:@+]{1,200}$/;
   const get = db.prepare('SELECT * FROM item_docs WHERE board = ? AND item = ? AND col = ?');
   const put = db.prepare(`INSERT INTO item_docs (board, item, col, html, rev, updated_at, updated_by, by_name) VALUES (?, ?, ?, ?, 1, ?, ?, ?)
     ON CONFLICT(board, item, col) DO UPDATE SET html = excluded.html, rev = item_docs.rev + 1, updated_at = excluded.updated_at, updated_by = excluded.updated_by, by_name = excluded.by_name`);
   const lastVersion = db.prepare('SELECT * FROM item_doc_versions WHERE board = ? AND item = ? AND col = ? ORDER BY id DESC LIMIT 1');
-  const addVersion = db.prepare('INSERT INTO item_doc_versions (board, item, col, html, at, by_id, by_name) VALUES (?, ?, ?, ?, ?, ?, ?)');
+  const addVersion = db.prepare('INSERT INTO item_doc_versions (board, item, col, html, at, by_id, by_name, started) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
   const updVersion = db.prepare('UPDATE item_doc_versions SET html = ?, at = ? WHERE id = ?');
   const trimVersions = db.prepare('DELETE FROM item_doc_versions WHERE board = ? AND item = ? AND col = ? AND id NOT IN (SELECT id FROM item_doc_versions WHERE board = ? AND item = ? AND col = ? ORDER BY id DESC LIMIT 20)');
 
@@ -147,10 +149,17 @@ module.exports = function docs({ db, q, now, broadcast, HttpError, readBody, sen
       if (cur && cur.html === html) return send(res, 200, { ok: true, rev: cur.rev, html, same: true });
       const at = now();
       put.run(t.bid, t.iid, t.col, html, at, user.id, user.name || '');
-      // version history: one version per person per 2 minutes of editing, the last 20 kept
+      // version history: one version per person per 2 minutes from when that version was started (not from the
+      // last keystroke, so a long session still leaves versions behind), the last 20 kept. A save that deletes
+      // much of the doc always starts a new version, so the version from before the deletion stays as it was.
       const last = lastVersion.get(t.bid, t.iid, t.col);
-      if (last && last.by_id === user.id && Date.now() - Date.parse(last.at) < 2 * 60 * 1000 && !body.restore) updVersion.run(html, at, last.id);
-      else addVersion.run(t.bid, t.iid, t.col, html, at, user.id, user.name || '');
+      const before = cur ? plainText(cur.html).replace(/\s+/g, ' ').trim().length : 0, after = plainText(html).replace(/\s+/g, ' ').trim().length;
+      const bigDeletion = before >= 40 && before - after >= Math.max(40, before * 0.3);
+      const within = last && last.by_id === user.id && Date.now() - Date.parse(last.started || last.at) < 2 * 60 * 1000;
+      // the pre-deletion text must be in a version of its own (the last version may be older than the current doc)
+      if (bigDeletion && cur && (!last || last.html !== cur.html)) addVersion.run(t.bid, t.iid, t.col, cur.html, cur.updated_at, cur.updated_by, cur.by_name || '', cur.updated_at);
+      if (within && !bigDeletion && !body.restore) updVersion.run(html, at, last.id);
+      else addVersion.run(t.bid, t.iid, t.col, html, at, user.id, user.name || '', at);
       trimVersions.run(t.bid, t.iid, t.col, t.bid, t.iid, t.col);
       const row = get.get(t.bid, t.iid, t.col);
       broadcast({ op: 'doc', col: `boards/${t.bid}/items`, id: t.iid, docCol: t.col, rev: row.rev, html, by: user.id, byName: user.name || '', at });
