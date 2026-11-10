@@ -288,7 +288,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     if (!row) throw new HttpError(404, 'No such item on this board.');
     const item = JSON.parse(row.data);
     if (upd && method === 'POST') { needWrite(); const body = await readBody(req); if (!body.text) throw new HttpError(400, 'Send {"text": "…"}');
-      item.updates = [...(item.updates || []), { at: now(), by: '', byName: body.author || user.name, text: String(body.text).slice(0, 4000) }];
+      item.updates = [...(item.updates || []), { at: now(), by: '', byName: body.author || user.name, text: String(body.text).slice(0, 20000) }];
       saveItem(b.id, iid, item, user); return send(res, 201, { ok: true }); }
     if (method === 'GET') return send(res, 200, { ...itemOut(b, iid, item), updates_list: item.updates || [], subitems: item.subitems || [] });
     if (method === 'PATCH') {
