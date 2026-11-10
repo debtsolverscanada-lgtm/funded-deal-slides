@@ -19,16 +19,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
-const { syncFromMonday } = require('./monday.js');
+const { syncFromMonday, pullFromMonday } = require('./monday.js');
 
 const PORT = Number(process.env.PORT || 3000);
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const SESSION_DAYS = 30;
 const MAX_BODY = 2 * 1024 * 1024;
+const MAX_FILE = 25 * 1024 * 1024;
 const SECURE_COOKIE = process.env.COOKIE_SECURE === '1';
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
+const FILES_DIR = path.join(DATA_DIR, 'files');
+fs.mkdirSync(FILES_DIR, { recursive: true });
 // Earlier versions called the file keystone.db: carry it over once.
 { const oldDb = path.join(DATA_DIR, 'keystone.db'), newDb = path.join(DATA_DIR, 'solver.db');
   if (!fs.existsSync(newDb) && fs.existsSync(oldDb)) for (const ext of ['', '-wal', '-shm']) if (fs.existsSync(oldDb + ext)) fs.renameSync(oldDb + ext, newDb + ext); }
@@ -49,6 +52,15 @@ db.exec(`
     data TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT
   );
   CREATE INDEX IF NOT EXISTS docs_col ON docs(col);
+  CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, at TEXT NOT NULL,
+    kind TEXT NOT NULL, text TEXT NOT NULL, board TEXT, item TEXT, read INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS notifications_user ON notifications(user_id, at);
+  CREATE TABLE IF NOT EXISTS files (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT, size INTEGER NOT NULL, board TEXT NOT NULL, item TEXT,
+    created_at TEXT NOT NULL, created_by TEXT
+  );
 `);
 try { db.exec('ALTER TABLE users ADD COLUMN home_board TEXT'); } catch (e) { /* already there */ }
 
@@ -115,15 +127,125 @@ function createUser({ email, name, role, password }) {
 }
 module.exports = { createUser, db, q, merge, now };
 
+// ---------- who can see which board ----------
+// A board doc may carry access: { private: true|false, members: [emails] }. Admins see every board;
+// everyone else sees open boards and the private boards that list their email.
+function canSee(u, access) {
+  if (!access || !access.private) return true;
+  if (!u) return false;
+  if (u.role === 'admin') return true;
+  const me = String(u.email || '').toLowerCase();
+  return !!me && (access.members || []).some(e => String(e).toLowerCase() === me);
+}
+const boardCache = new Map(); // board id -> { t, v: { name, access, columns } | null }
+function boardInfo(bid) {
+  const hit = boardCache.get(bid); if (hit && Date.now() - hit.t < 10000) return hit.v;
+  const r = q.doc.get('boards/' + bid); let v = null;
+  if (r) { try { const d = JSON.parse(r.data); v = { name: d.name, access: d.access || null, columns: d.columns || [] }; } catch (e) {} }
+  boardCache.set(bid, { t: Date.now(), v }); return v;
+}
+const boardOfPath = p => { const m = /^boards\/([^/]+)(\/items(\/[^/]+)?)?$/.exec(p || ''); return m ? m[1] : null; };
+function mustSee(user, bid) { const b = boardInfo(bid); if (b && !canSee(user, b.access)) throw new HttpError(404, 'That board doesn’t exist or isn’t shared with you.'); return b; }
+
 class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
 
 // ---------- live updates (server-sent events) ----------
-const clients = new Set();
+// Each open page is tracked with its signed-in person, so private boards' changes only reach people who can see them.
+const clients = new Map(); // res -> { id, email, role, name }
 function broadcast(evt) {
   const line = `data: ${JSON.stringify(evt)}\n\n`;
-  for (const res of clients) res.write(line);
+  if (evt.op === 'notify') { for (const [res, u] of clients) if (u.id === evt.user) res.write(line); return; }
+  const bid = evt.col === 'boards' ? evt.id : boardOfPath(evt.col);
+  if (evt.col === 'boards') boardCache.delete(evt.id);
+  const access = !bid ? null : evt.col === 'boards' && evt.op === 'set' ? (evt.data || {}).access : (boardInfo(bid) || {}).access;
+  if (!access || !access.private) { for (const res of clients.keys()) res.write(line); return; }
+  const gone = evt.col === 'boards' && evt.op === 'set' ? `data: ${JSON.stringify({ op: 'delete', col: 'boards', id: evt.id })}\n\n` : null;
+  for (const [res, u] of clients) { if (canSee(u, access)) res.write(line); else if (gone) res.write(gone); }
 }
-setInterval(() => { for (const res of clients) res.write(': ping\n\n'); }, 25000).unref();
+function refreshClients(userId) {
+  const row = q.userById.get(userId);
+  for (const [res, u] of clients) if (u.id === userId) { if (!row || row.disabled) { clients.delete(res); res.end(); } else Object.assign(u, { email: row.email, role: row.role, name: row.name }); }
+}
+setInterval(() => { for (const res of clients.keys()) res.write(': ping\n\n'); }, 25000).unref();
+
+// ---------- in-app notifications (inside Solver.ca only; nothing is emailed or texted) ----------
+const nq = {
+  insert: db.prepare('INSERT INTO notifications (id, user_id, at, kind, text, board, item) VALUES (?, ?, ?, ?, ?, ?, ?)'),
+  list: db.prepare('SELECT id, at, kind, text, board, item, read FROM notifications WHERE user_id = ? ORDER BY at DESC LIMIT 60'),
+  unread: db.prepare('SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND read = 0'),
+  readOne: db.prepare('UPDATE notifications SET read = 1 WHERE user_id = ? AND id = ?'),
+  readAll: db.prepare('UPDATE notifications SET read = 1 WHERE user_id = ?'),
+  activeUsers: db.prepare('SELECT id, email, name, role FROM users WHERE disabled = 0'),
+};
+const norm = s => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+// "Jan", "Jan Smith" or "jan@x.ca" -> that Solver.ca person. A first name alone only counts when it's unique.
+function usersByNames(names) {
+  const users = nq.activeUsers.all(), out = new Map();
+  for (const raw of names) {
+    const n = norm(raw).replace(/^@/, ''); if (!n) continue;
+    let hit = users.filter(u => norm(u.name) === n || norm(u.email) === n);
+    if (!hit.length) { const first = n.split(' ')[0]; const f = users.filter(u => norm(u.name).split(' ')[0] === first); if (f.length === 1 && (!n.includes(' ') || !norm(f[0].name).includes(' '))) hit = f; }
+    hit.forEach(u => out.set(u.id, u));
+  }
+  return [...out.values()];
+}
+// Creates notifications for these people (only those who can see the board) and pushes them live.
+function notifyUsers(users, { kind, text, board, item }, exceptId) {
+  const b = board ? boardInfo(board) : null; let n = 0;
+  for (const u of users) {
+    if (u.id === exceptId || (b && !canSee(u, b.access))) continue;
+    const row = { id: newId('n_'), at: now(), kind, text: String(text).slice(0, 400), board: board || null, item: item || null, read: 0 };
+    nq.insert.run(row.id, u.id, row.at, row.kind, row.text, row.board, row.item);
+    broadcast({ op: 'notify', user: u.id, n: row }); n++;
+  }
+  return n;
+}
+const notifyNames = (names, n, exceptId) => notifyUsers(usersByNames(names), n, exceptId);
+// "{item.Name} needs {item.text42__1}" -> filled in from the item, like Monday's notify messages.
+function fillTemplate(text, b, item) {
+  return String(text || '').replace(/\{(?:item|pulse)\.([^}]+)\}/g, (m, key) => {
+    if (/^name$/i.test(key)) return item.name || '';
+    const c = ((b && b.columns) || []).find(x => x.id === key || x.title === key); if (!c) return '';
+    const v = (item.values || {})[c.id]; if (v == null) return '';
+    if (c.type === 'status') return ((c.labels || []).find(l => l.id === String(v)) || {}).label || '';
+    if (Array.isArray(v)) return v.map(x => x && x.name ? x.name : String(x)).join(', ');
+    return String(v);
+  });
+}
+const snippet = t => { const s = String(t || '').replace(/\s+/g, ' ').trim(); return s.length > 90 ? s.slice(0, 88) + '…' : s; };
+// Mentions: "@Jan" or "@Jan Smith" anywhere in an update.
+function mentionedUsers(text) {
+  const users = nq.activeUsers.all(), out = new Map();
+  for (const m of String(text || '').matchAll(/@([\p{L}][\p{L}'’.-]*)(?:\s+([\p{L}][\p{L}'’.-]*))?/gu)) {
+    const two = m[2] ? norm(m[1] + ' ' + m[2]) : null, one = norm(m[1]);
+    let hit = two ? users.filter(u => norm(u.name) === two) : [];
+    if (!hit.length) hit = users.filter(u => norm(u.name) === one);
+    if (!hit.length) { const f = users.filter(u => norm(u.name).split(' ')[0] === one); if (f.length === 1) hit = f; }
+    hit.forEach(u => out.set(u.id, u));
+  }
+  return [...out.values()];
+}
+const people = v => String(v || '').split(',').map(x => x.trim()).filter(Boolean);
+// Called after any item write by a person, API key or lead link (not bulk copies from Monday).
+function itemNotifications(dp, before, after, actor) {
+  const m = /^boards\/([^/]+)\/items\/([^/]+)$/.exec(dp); if (!m || !after) return;
+  const [, bid, iid] = m; const b = boardInfo(bid); if (!b) return;
+  const who = (actor && actor.name) || 'Someone', where = `${after.name || 'an item'} · ${b.name}`;
+  // newly assigned in a person column (new items only when they were made here, not moved or duplicated)
+  const created = !before && (after.activity || []).some(a => /^Created/.test(String(a.text || '')));
+  if (before || created) for (const c of b.columns.filter(c => c.type === 'person')) {
+    const had = new Set(people(before && (before.values || {})[c.id]).map(norm));
+    const added = people((after.values || {})[c.id]).filter(n => !had.has(norm(n)));
+    if (added.length) notifyNames(added, { kind: 'assign', text: `${who} assigned you to ${where} (${c.title})`, board: bid, item: iid }, actor && actor.id);
+  }
+  // @mentions in new updates
+  const seen = new Set(((before && before.updates) || []).map(u => u.at + '|' + u.text));
+  for (const u of after.updates || []) {
+    if (seen.has(u.at + '|' + u.text)) continue;
+    const users = mentionedUsers(u.text); if (!users.length) continue;
+    notifyUsers(users, { kind: 'mention', text: `${u.byName || who} mentioned you on ${where}: “${snippet(u.text)}”`, board: bid, item: iid }, actor && actor.id);
+  }
+}
 
 // ---------- request handling ----------
 function send(res, status, body, headers = {}) {
@@ -177,7 +299,8 @@ function throttled(ip) {
   return r.n >= 10;
 }
 
-const integ = require('./integrations.js')({ db, q, now, broadcast, HttpError, readBody, send, merge });
+const integ = require('./integrations.js')({ db, q, now, broadcast, HttpError, readBody, send, merge, notifyNames, itemNotifications, fillTemplate });
+module.exports.integ = integ;
 
 async function api(req, res, url) {
   const p = url.pathname;
@@ -211,7 +334,7 @@ async function api(req, res, url) {
   if (p === '/api/events' && method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
     res.write(': connected\n\n');
-    clients.add(res);
+    clients.set(res, { id: user.id, email: user.email, role: user.role, name: user.name });
     req.on('close', () => clients.delete(res));
     return;
   }
@@ -243,6 +366,7 @@ async function api(req, res, url) {
         db.prepare('UPDATE users SET disabled = ? WHERE id = ?').run(b.disabled ? 1 : 0, target.id);
         if (b.disabled) q.deleteUserSessions.run(target.id);
       }
+      refreshClients(target.id);
       return send(res, 200, { ok: true });
     }
   }
@@ -253,13 +377,69 @@ async function api(req, res, url) {
   // ---- copy from Monday (admin only; reads Monday, never writes to it) ----
   if (p === '/api/admin/monday-sync') {
     if (user.role !== 'admin') throw new HttpError(403, 'Only admins can copy from Monday.');
-    if (method === 'GET') return send(res, 200, { ...syncState, configured: !!process.env.MONDAY_API_TOKEN, workspaces: mondayWorkspaces() });
+    if (method === 'GET') return send(res, 200, { ...syncState, configured: !!process.env.MONDAY_API_TOKEN, workspaces: mondayWorkspaces(), pull: { ...pullState, enabled: livePullOn() } });
     if (method === 'POST') {
       if (syncState.running) throw new HttpError(409, 'A copy from Monday is already running.');
       if (!process.env.MONDAY_API_TOKEN) throw new HttpError(400, 'Add MONDAY_API_TOKEN to the server settings first.');
       startMondaySync(user);
       return send(res, 202, syncState);
     }
+  }
+
+  // ---- live pull from Monday: run one now (admin only; reads Monday only) ----
+  if (p === '/api/admin/monday-pull' && method === 'POST') {
+    if (user.role !== 'admin') throw new HttpError(403, 'Only admins can pull from Monday.');
+    if (!process.env.MONDAY_API_TOKEN) throw new HttpError(400, 'Add MONDAY_API_TOKEN to the server settings first.');
+    if (pullState.running || syncState.running) throw new HttpError(409, 'Monday is already being read. Try again in a minute.');
+    await runMondayPull();
+    return send(res, 200, pullState);
+  }
+
+  // ---- notifications ----
+  if (p === '/api/notifications' && method === 'GET') return send(res, 200, { unread: nq.unread.get(user.id).n, items: nq.list.all(user.id).map(n => ({ ...n, read: !!n.read })) });
+  if (p === '/api/notifications/read' && method === 'POST') {
+    const b = await readBody(req);
+    if (b.all) nq.readAll.run(user.id); else for (const id of (Array.isArray(b.ids) ? b.ids : []).slice(0, 200)) nq.readOne.run(user.id, String(id));
+    return send(res, 200, { ok: true, unread: nq.unread.get(user.id).n });
+  }
+  // The page's automations ("notify someone") ask for in-app notifications for named people. Unknown names are skipped.
+  if (p === '/api/notify' && method === 'POST') {
+    if (!canWrite(user)) throw new HttpError(403, 'Your account can view boards but not change them.');
+    const b = await readBody(req);
+    const bid = String(b.board || ''), iid = String(b.item || '');
+    if (!bid || !boardInfo(bid)) throw new HttpError(404, 'No such board.');
+    mustSee(user, bid);
+    const names = (Array.isArray(b.to) ? b.to : String(b.to || '').split(',')).map(x => String(x).trim()).filter(Boolean).slice(0, 50);
+    const text = String(b.text || '').trim(); if (!text) throw new HttpError(400, 'Say what the notification is about.');
+    return send(res, 200, { ok: true, sent: notifyNames(names, { kind: b.kind === 'reminder' ? 'reminder' : 'automation', text, board: bid, item: iid || null }) });
+  }
+
+  // ---- files ----
+  if (p === '/api/files' && method === 'POST') {
+    if (!canWrite(user)) throw new HttpError(403, 'Your account can view boards but not change them.');
+    const bid = url.searchParams.get('board') || '', iid = url.searchParams.get('item') || '';
+    if (!/^[A-Za-z0-9_\-.~:@+]{1,200}$/.test(bid) || !boardInfo(bid)) throw new HttpError(404, 'No such board.');
+    mustSee(user, bid);
+    let name = 'file'; try { name = decodeURIComponent(String(req.headers['x-filename'] || 'file')); } catch (e) {}
+    name = name.replace(/[\\/\r\n\0]/g, '_').trim().slice(0, 200) || 'file';
+    const type = String(req.headers['content-type'] || 'application/octet-stream').split(';')[0].trim().slice(0, 100);
+    if (Number(req.headers['content-length'] || 0) > MAX_FILE) throw new HttpError(413, 'Files can be up to 25 MB.');
+    const id = 'f_' + crypto.randomBytes(12).toString('base64url');
+    const size = await saveUpload(req, path.join(FILES_DIR, id));
+    db.prepare('INSERT INTO files (id, name, type, size, board, item, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(id, name, type, size, bid, iid || null, now(), user.id);
+    return send(res, 201, { id, name, size, type, url: '/api/files/' + id });
+  }
+  const fm = /^\/api\/files\/(f_[A-Za-z0-9_-]{8,40})$/.exec(p);
+  if (fm && method === 'GET') {
+    const f = db.prepare('SELECT * FROM files WHERE id = ?').get(fm[1]);
+    if (!f || !boardInfo(f.board) || !canSee(user, boardInfo(f.board).access)) throw new HttpError(404, 'That file doesn’t exist or isn’t shared with you.');
+    const full = path.join(FILES_DIR, f.id); if (!fs.existsSync(full)) throw new HttpError(404, 'That file is missing on the server.');
+    const SAFE = /^(image\/(png|jpe?g|gif|webp)|application\/pdf|text\/plain)$/;
+    const inline = url.searchParams.get('inline') === '1' && SAFE.test(f.type || '');
+    res.writeHead(200, { 'Content-Type': SAFE.test(f.type || '') ? f.type : 'application/octet-stream', 'Content-Length': f.size, 'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; sandbox", 'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(f.name)}` });
+    fs.createReadStream(full).pipe(res);
+    return;
   }
 
   // ---- bulk upload of a Monday copy made elsewhere (admin only) ----
@@ -280,23 +460,25 @@ async function api(req, res, url) {
   // ---- home summary for one workspace ----
   if (p === '/api/summary' && method === 'GET') {
     const ws = url.searchParams.get('ws') || 'main';
-    const hit = summaryCache.get(ws);
-    if (hit && Date.now() - hit.at < 60000) return send(res, 200, hit.data);
-    const data = buildSummary(ws); summaryCache.set(ws, { at: Date.now(), data });
-    return send(res, 200, data);
+    let hit = summaryCache.get(ws);
+    if (!hit || Date.now() - hit.at > 60000) { hit = { at: Date.now(), boards: buildSummary(ws) }; summaryCache.set(ws, hit); }
+    return send(res, 200, summaryFor(ws, hit.boards.filter(x => canSee(user, x.access))));
   }
 
   // ---- documents ----
   if (p === '/api/col' && method === 'GET') {
     const col = url.searchParams.get('path') || '';
     if (!COLLECTION_RE.test(col)) throw new HttpError(400, 'Unknown collection.');
-    const rows = q.docsInCol.all(col).map(r => ({ id: r.id, data: JSON.parse(r.data) }));
+    const bid = boardOfPath(col); if (bid) mustSee(user, bid);
+    let rows = q.docsInCol.all(col).map(r => ({ id: r.id, data: JSON.parse(r.data) }));
+    if (col === 'boards') rows = rows.filter(r => canSee(user, r.data.access));
     return send(res, 200, rows);
   }
   if (p === '/api/doc') {
     const dp = url.searchParams.get('path') || '';
     if (!DOC_RE.test(dp)) throw new HttpError(400, 'Unknown document.');
     const { col, id } = splitDoc(dp);
+    const bid = boardOfPath(dp); if (bid) mustSee(user, bid);
     if (method === 'GET') { const r = q.doc.get(dp); return send(res, 200, r ? { id, exists: true, data: JSON.parse(r.data) } : { id, exists: false }); }
     if (!canWrite(user)) throw new HttpError(403, 'Your account can view boards but not change them.');
     if (dp.startsWith('meta/') && user.role !== 'admin') throw new HttpError(403, 'Only admins can change workspace settings.');
@@ -304,6 +486,14 @@ async function api(req, res, url) {
       const body = await readBody(req);
       let data = body;
       const prev = q.doc.get(dp), before = prev ? JSON.parse(prev.data) : null;
+      // Only admins decide who can see a board.
+      if (/^boards\/[^/]+$/.test(dp) && user.role !== 'admin') {
+        const was = before ? before.access : undefined;
+        if (method === 'PATCH' && 'access' in body && JSON.stringify(body.access) !== JSON.stringify(was)) throw new HttpError(403, 'Only admins can change who sees a board.');
+        delete body.access;
+        if (method === 'PUT' && was !== undefined) data.access = was;
+      }
+      if (/^boards\/[^/]+$/.test(dp) && user.role === 'admin' && data.access) data.access = cleanAccess(data.access, method === 'PATCH' && before ? before.access : null);
       if (method === 'PATCH') {
         if (!prev) throw new HttpError(404, 'That record no longer exists.');
         data = merge(JSON.parse(prev.data), body);
@@ -311,15 +501,17 @@ async function api(req, res, url) {
       const json = JSON.stringify(data);
       if (json.length > 1024 * 1024) throw new HttpError(413, 'That record is too large.');
       q.upsertDoc.run(dp, col, id, json, now(), user.id);
+      if (col === 'boards') boardCache.delete(id);
       broadcast({ op: 'set', col, id, data });
       integ.itemChanged(dp, before, data, user.id);
+      try { itemNotifications(dp, before, data, user); } catch (e) { console.error('notifications:', e.message); }
       return send(res, 200, { ok: true });
     }
     if (method === 'DELETE') {
       const prev = q.doc.get(dp);
       q.deleteDoc.run(dp);
       if (prev) integ.itemChanged(dp, JSON.parse(prev.data), null, user.id);
-      if (/^boards\/[^/]+$/.test(dp)) q.deleteCol.run(dp + '/items');
+      if (/^boards\/[^/]+$/.test(dp)) { q.deleteCol.run(dp + '/items'); boardCache.delete(id); }
       broadcast({ op: 'delete', col, id });
       return send(res, 200, { ok: true });
     }
@@ -328,34 +520,55 @@ async function api(req, res, url) {
 }
 
 // ---------- home summary ----------
+// Per-board numbers are cached per workspace; each person's summary adds up only the boards they can see.
 const summaryCache = new Map();
 function buildSummary(ws) {
   const day = d => d.toISOString().slice(0, 10);
   const today = day(new Date()), weekAgo = Date.now() - 7 * 864e5, inWeek = day(new Date(Date.now() + 7 * 864e5));
-  const spark = Array(14).fill(0), sparkStart = new Date(Date.now() - 13 * 864e5); sparkStart.setUTCHours(0, 0, 0, 0);
-  const boards = []; let total = 0, newWeek = 0, overdue = 0, dueToday = 0, upcoming = 0;
+  const sparkStart = new Date(Date.now() - 13 * 864e5); sparkStart.setUTCHours(0, 0, 0, 0);
+  const boards = [];
   for (const r of q.docsInCol.all('boards')) {
     let b; try { b = JSON.parse(r.data); } catch (e) { continue; }
     const w = (b.workspace && b.workspace.id) || 'main'; if (w !== ws) continue;
     const followCols = (b.columns || []).filter(c => c.type === 'date' && /follow|next|callback|due/i.test(c.title)).map(c => c.id);
-    let count = 0, bNew = 0;
+    const x = { id: r.id, name: b.name, folder: b.folder || '', access: b.access || null, count: 0, newWeek: 0, spark: Array(14).fill(0), overdue: 0, dueToday: 0, upcoming: 0 };
     for (const it of q.docsInCol.all(`boards/${r.id}/items`)) {
       let d; try { d = JSON.parse(it.data); } catch (e) { continue; }
-      count++;
+      x.count++;
       const c = d.createdAt ? Date.parse(d.createdAt) : NaN;
-      if (c >= weekAgo) bNew++;
-      if (c >= sparkStart.getTime()) { const k = Math.floor((c - sparkStart.getTime()) / 864e5); if (k >= 0 && k < 14) spark[k]++; }
+      if (c >= weekAgo) x.newWeek++;
+      if (c >= sparkStart.getTime()) { const k = Math.floor((c - sparkStart.getTime()) / 864e5); if (k >= 0 && k < 14) x.spark[k]++; }
       for (const fc of followCols) {
         const v = (d.values || {})[fc]; if (!v) continue;
-        if (v < today) overdue++; else if (v === today) dueToday++; else if (v <= inWeek) upcoming++;
+        if (v < today) x.overdue++; else if (v === today) x.dueToday++; else if (v <= inWeek) x.upcoming++;
         break;
       }
     }
-    total += count; newWeek += bNew;
-    boards.push({ id: r.id, name: b.name, count, newWeek: bNew, folder: b.folder || '' });
+    boards.push(x);
   }
-  boards.sort((x, y) => y.count - x.count);
-  return { ws, total, newWeek, spark, boards, followups: { overdue, dueToday, upcoming } };
+  return boards;
+}
+function summaryFor(ws, list) {
+  const spark = Array(14).fill(0), followups = { overdue: 0, dueToday: 0, upcoming: 0 }; let total = 0, newWeek = 0;
+  for (const x of list) { total += x.count; newWeek += x.newWeek; x.spark.forEach((v, k) => { spark[k] += v; }); followups.overdue += x.overdue; followups.dueToday += x.dueToday; followups.upcoming += x.upcoming; }
+  const boards = list.map(x => ({ id: x.id, name: x.name, count: x.count, newWeek: x.newWeek, folder: x.folder })).sort((a, b) => b.count - a.count);
+  return { ws, total, newWeek, spark, boards, followups };
+}
+function cleanAccess(a) {
+  const members = [...new Set((Array.isArray(a.members) ? a.members : []).map(e => String(e || '').trim().toLowerCase()).filter(e => /^[^@\s]+@[^@\s]+$/.test(e)))].sort();
+  return { private: !!a.private, members, ...(a.kind ? { kind: String(a.kind) } : {}) };
+}
+// Raw-body upload to disk, up to 25 MB.
+function saveUpload(req, file) {
+  return new Promise((resolve, reject) => {
+    const tmp = file + '.part', out = fs.createWriteStream(tmp); let size = 0, failed = false;
+    const fail = e => { if (failed) return; failed = true; out.destroy(); fs.rm(tmp, { force: true }, () => {}); reject(e); };
+    req.on('data', c => { size += c.length; if (size > MAX_FILE) { fail(new HttpError(413, 'Files can be up to 25 MB.')); req.destroy(); } });
+    req.on('error', fail);
+    out.on('error', fail);
+    out.on('finish', () => { if (failed) return; if (!size) { fs.rm(tmp, { force: true }, () => {}); return reject(new HttpError(400, 'That file is empty.')); } fs.rename(tmp, file, e => e ? reject(e) : resolve(size)); });
+    req.pipe(out);
+  });
 }
 
 // ---------- Monday sync job ----------
@@ -381,14 +594,66 @@ function startMondaySync(user) {
     onProgress: ({ msg, boards, items }) => Object.assign(syncState, { msg, boards, items }),
   }).then(r => {
     Object.assign(syncState, { running: false, msg: 'Done', boards: r.boards, items: r.items, finishedAt: now() });
+    // the live pull carries on from the moment this copy started
+    savePull({ lastPullAt: syncState.startedAt });
   }).catch(e => {
     console.error('Monday sync failed:', e);
     Object.assign(syncState, { running: false, error: e.message, finishedAt: now() });
   }).finally(() => {
     const { running, ...keep } = syncState;
     q.upsertDoc.run('meta/monday-sync', 'meta', 'monday-sync', JSON.stringify(keep), now(), 'monday-sync');
+    boardCache.clear(); summaryCache.clear();
     broadcast({ op: 'reload' });
   });
+}
+
+// ---------- live pull from Monday (every 5 minutes; reads Monday only) ----------
+// MONDAY_LIVE_PULL=on|off. Defaults to on when MONDAY_API_TOKEN is set.
+const livePullOn = () => !!process.env.MONDAY_API_TOKEN && String(process.env.MONDAY_LIVE_PULL || 'on').toLowerCase() !== 'off';
+let pullState = { running: false, lastPullAt: null, lastRunAt: null, error: null, saved: 0, removed: 0, checked: 0 };
+{ const r = q.doc.get('meta/monday-pull'); if (r) { try { Object.assign(pullState, JSON.parse(r.data), { running: false }); } catch (e) {} } }
+function savePull(patch) {
+  Object.assign(pullState, patch);
+  const { running, ...keep } = pullState;
+  q.upsertDoc.run('meta/monday-pull', 'meta', 'monday-pull', JSON.stringify(keep), now(), 'monday-sync');
+}
+async function runMondayPull() {
+  if (pullState.running || syncState.running) return;
+  pullState.running = true;
+  try {
+    const wss = new Set(mondayWorkspaces());
+    const boards = [];
+    for (const r of q.docsInCol.all('boards')) {
+      let d; try { d = JSON.parse(r.data); } catch (e) { continue; }
+      if (!d.mondayId || d.source !== 'monday') continue;
+      if (wss.size && !wss.has(String((d.workspace || {}).id))) continue;
+      boards.push({ bid: r.id, mondayId: d.mondayId, columns: d.columns || [], subColumns: d.subColumns || [], groups: d.groups || [] });
+    }
+    const since = pullState.lastPullAt || syncState.startedAt || new Date(Date.now() - 864e5).toISOString();
+    const itemPath = (bid, iid) => `boards/${bid}/items/${iid}`;
+    const store = {
+      getItem: (bid, iid) => { const r = q.doc.get(itemPath(bid, iid)); return r ? JSON.parse(r.data) : null; },
+      saveItem: (bid, iid, doc) => { q.upsertDoc.run(itemPath(bid, iid), `boards/${bid}/items`, String(iid), JSON.stringify(doc), now(), 'monday-sync'); broadcast({ op: 'set', col: `boards/${bid}/items`, id: String(iid), data: doc }); },
+      removeItem: (bid, iid) => {
+        const r = q.doc.get(itemPath(bid, iid)); if (!r) return false;
+        let d = {}; try { d = JSON.parse(r.data); } catch (e) {}
+        if (!d.mondayId) return false; // made in Solver.ca: never removed by a pull
+        q.deleteDoc.run(itemPath(bid, iid)); broadcast({ op: 'delete', col: `boards/${bid}/items`, id: String(iid) }); return true;
+      },
+      saveGroups: (bid, groups) => {
+        const r = q.doc.get('boards/' + bid); if (!r) return;
+        const d = JSON.parse(r.data); d.groups = groups;
+        q.upsertDoc.run('boards/' + bid, 'boards', bid, JSON.stringify(d), now(), 'monday-sync'); broadcast({ op: 'set', col: 'boards', id: bid, data: d });
+      },
+      newPos: bid => { const r = db.prepare("SELECT MIN(json_extract(data, '$.pos')) AS p FROM docs WHERE col = ?").get(`boards/${bid}/items`); return (Number(r && r.p) || 0) - 1; },
+    };
+    const r = await pullFromMonday({ token: process.env.MONDAY_API_TOKEN, boards, since, store });
+    savePull({ lastPullAt: r.at, lastRunAt: now(), error: null, saved: r.saved, removed: r.removed, checked: r.checked, boards: r.boards });
+    if (r.saved || r.removed) summaryCache.clear();
+  } catch (e) {
+    console.error('Monday live pull failed:', e.message);
+    savePull({ lastRunAt: now(), error: e.message });
+  } finally { pullState.running = false; }
 }
 
 const server = http.createServer(async (req, res) => {
@@ -427,4 +692,10 @@ if (require.main === module) {
     console.log('No accounts yet. Set ADMIN_EMAIL and ADMIN_PASSWORD, or run:  node scripts/create-user.js you@example.com "Your Name" admin "a-strong-password"');
   }
   server.listen(PORT, () => console.log(`Solver.ca running on http://localhost:${PORT}  (data: ${DATA_DIR})`));
+  if (livePullOn()) {
+    const every = 5 * 60 * 1000;
+    setInterval(() => { runMondayPull(); }, every).unref();
+    setTimeout(() => { runMondayPull(); }, 20000).unref();
+    console.log('Live pull from Monday: on, every 5 minutes.');
+  }
 }

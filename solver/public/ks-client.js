@@ -37,18 +37,21 @@
   }
 
   let es = null, hadError = false;
+  const listeners = {}; // live events that aren't documents, e.g. 'notify'
+  const emit = (name, ev) => (listeners[name] || []).forEach(f => { try { f(ev); } catch (e) { console.error(e); } });
   function connect() {
     if (es) return;
     es = new EventSource('/api/events');
     es.onmessage = e => {
       let ev; try { ev = JSON.parse(e.data); } catch (x) { return; }
+      if (ev.op === 'notify') { emit('notify', ev.n); return; }
       if (ev.op === 'reload') { cols.forEach((entry, path) => load(path, entry).catch(() => {})); return; }
       const entry = cols.get(ev.col); if (!entry) return;
       if (ev.op === 'set') entry.docs.set(ev.id, ev.data); else entry.docs.delete(ev.id);
       notify(entry);
     };
     es.onerror = () => { hadError = true; };
-    es.onopen = () => { if (hadError) { hadError = false; cols.forEach((entry, path) => load(path, entry).catch(() => {})); } };
+    es.onopen = () => { if (hadError) { hadError = false; cols.forEach((entry, path) => load(path, entry).catch(() => {})); emit('reconnect'); } };
   }
 
   function docRef(path) {
@@ -111,6 +114,22 @@
     summary: ws => call('GET', '/api/summary?ws=' + encodeURIComponent(ws || 'main')),
     mondayStatus: () => call('GET', '/api/admin/monday-sync'),
     mondaySync: () => call('POST', '/api/admin/monday-sync', {}),
+    on: (name, fn) => { (listeners[name] = listeners[name] || []).push(fn); connect(); },
+    notifications: () => call('GET', '/api/notifications'),
+    markRead: body => call('POST', '/api/notifications/read', body),
+    notify: body => call('POST', '/api/notify', body),
+    mondayPull: () => call('POST', '/api/admin/monday-pull', {}),
+    // Uploads one file (raw body, up to 25 MB) for an item on a board. Resolves to { id, name, size, type, url }.
+    async upload(file, board, item) {
+      if (file.size > 25 * 1024 * 1024) throw { code: 'quota_exceeded', message: 'Files can be up to 25 MB.' };
+      let r;
+      try { r = await fetch('/api/files?board=' + encodeURIComponent(board) + '&item=' + encodeURIComponent(item || ''), { method: 'POST', credentials: 'same-origin', body: file,
+        headers: { 'X-Solver': '1', 'X-Filename': encodeURIComponent(file.name || 'file'), 'Content-Type': file.type || 'application/octet-stream' } }); }
+      catch (e) { throw { code: 'unavailable', message: 'Can’t reach the server.' }; }
+      let data = null; try { data = await r.json(); } catch (e) {}
+      if (!r.ok) throw { code: 'unavailable', message: (data && data.error) || 'The upload failed.' };
+      return data;
+    },
     updateUser: (id, body) => call('PATCH', '/api/users/' + encodeURIComponent(id), body).then(r => { team = null; return r; }),
   };
   window.claude = { use: async name => (name === 'db' ? db : name === 'user' ? user : null) };

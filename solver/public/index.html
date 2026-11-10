@@ -452,6 +452,26 @@ td.currency::before, td.percent::after { color: var(--muted); }
 .name-open:active { background: rgba(255,255,255,0.06); }
 .upd-count { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; font-family: var(--f-data); }
 @media (max-width: 780px) { .board .name-cell { min-width: 190px; max-width: 220px; } .grip { display: none; } .scrim { z-index: 26; } .drawer { z-index: 27; border-radius: 0; } }
+.file-cell { display: flex; align-items: center; gap: 4px; padding: 0 6px; min-height: 37px; overflow: hidden; flex-wrap: nowrap; }
+.f-value .file-cell, .ff-box .file-cell { flex-wrap: wrap; padding: 6px 8px; overflow: visible; }
+.file-chip { display: inline-flex; align-items: center; gap: 2px; max-width: 170px; border: 1px solid var(--line); background: rgba(255,255,255,0.06); border-radius: 999px; padding: 2px 3px 2px 10px; font-size: 12px; flex: none; }
+.file-chip a { color: #fff; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-chip a:hover { text-decoration: underline; }
+.file-chip .icon-btn { padding: 0 6px; font-size: 13px; }
+.f-value .file-chip { max-width: 100%; }
+.file-cell .file-add { flex: none; }
+.w-file { width: 220px; }
+.board-link .bell { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; opacity: .8; }
+.nbadge { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: #fff; color: #000; font-size: 11px; font-weight: 700; display: inline-grid; place-items: center; font-family: var(--f-data); }
+.bnav .nwrap { position: relative; display: inline-flex; }
+.bnav .nwrap .nbadge { position: absolute; top: -6px; right: -12px; height: 16px; min-width: 16px; font-size: 10px; padding: 0 4px; }
+.notif { padding: 0; gap: 0; align-items: stretch; }
+.notif-open { flex: 1 1 260px; text-align: left; border: 0; background: none; color: #fff; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; line-height: 1.45; border-radius: var(--r-md); }
+.notif-open:hover { background: rgba(255,255,255,0.04); }
+.notif.unread .notif-open b::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #fff; box-shadow: 0 0 8px rgba(255,255,255,.7); margin-right: 8px; vertical-align: 1px; }
+.notif b { font-weight: 500; }
+.notif.read { opacity: .55; }
+.notif .icon-btn { align-self: center; margin-right: 8px; }
 .ff-box.currency::before { content: "$"; position: absolute; left: 10px; color: var(--muted); font-family: var(--f-data); }
 
 /* ---------- Bottom nav (phones) ---------- */
@@ -500,11 +520,12 @@ td.currency::before, td.percent::after { color: var(--muted); }
     confirmDelete: null, pendingRender: false, names: {},
     person: '', boardFilter: '', shown: {}, expanded: new Set(), me: null, isOwner: false,
     importManifest: null, importState: null, importing: null,
-    ws: null, sort: null, filters: {}, hidden: new Set(), selected: new Set(), drawerTab: 'updates', calCol: null, calMonth: null, dragKind: null, teamNames: [], page: 'home', summary: null
+    ws: null, sort: null, filters: {}, hidden: new Set(), selected: new Set(), drawerTab: 'updates', calCol: null, calMonth: null, dragKind: null, teamNames: [], page: 'home', summary: null,
+    team: [], notifs: { unread: 0, items: [] }, draftFiles: [], uploading: false, pendingOpen: null
   };
   const PAGE = 50;
   try { S.view = localStorage.getItem('ks-view') || 'table'; S.boardId = localStorage.getItem('ks-board'); S.ws = localStorage.getItem('ks-ws'); S.page = localStorage.getItem('ks-page') || 'home'; } catch (e) {}
-  const IC = {"home": "<svg viewBox=\"0 0 24 24\"><path d=\"M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z\"/></svg>", "boards": "<svg viewBox=\"0 0 24 24\"><rect x=\"3\" y=\"4\" width=\"18\" height=\"16\" rx=\"3\"/><path d=\"M3 9h18M9 9v11\"/></svg>", "plus": "<svg viewBox=\"0 0 24 24\"><path d=\"M12 5v14M5 12h14\"/></svg>", "cal": "<svg viewBox=\"0 0 24 24\"><rect x=\"3\" y=\"5\" width=\"18\" height=\"16\" rx=\"3\"/><path d=\"M3 10h18M8 3v4M16 3v4\"/></svg>", "user": "<svg viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"8\" r=\"4\"/><path d=\"M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6\"/></svg>", "menu": "<svg viewBox=\"0 0 24 24\"><path d=\"M4 7h16M4 12h16M4 17h10\"/></svg>", "more": "<svg viewBox=\"0 0 24 24\"><circle cx=\"5\" cy=\"12\" r=\"1.3\"/><circle cx=\"12\" cy=\"12\" r=\"1.3\"/><circle cx=\"19\" cy=\"12\" r=\"1.3\"/></svg>"};
+  const IC = {"home": "<svg viewBox=\"0 0 24 24\"><path d=\"M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z\"/></svg>", "boards": "<svg viewBox=\"0 0 24 24\"><rect x=\"3\" y=\"4\" width=\"18\" height=\"16\" rx=\"3\"/><path d=\"M3 9h18M9 9v11\"/></svg>", "plus": "<svg viewBox=\"0 0 24 24\"><path d=\"M12 5v14M5 12h14\"/></svg>", "cal": "<svg viewBox=\"0 0 24 24\"><rect x=\"3\" y=\"5\" width=\"18\" height=\"16\" rx=\"3\"/><path d=\"M3 10h18M8 3v4M16 3v4\"/></svg>", "user": "<svg viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"8\" r=\"4\"/><path d=\"M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6\"/></svg>", "menu": "<svg viewBox=\"0 0 24 24\"><path d=\"M4 7h16M4 12h16M4 17h10\"/></svg>", "bell": "<svg viewBox=\"0 0 24 24\"><path d=\"M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9\"/><path d=\"M10 20a2 2 0 0 0 4 0\"/></svg>", "more": "<svg viewBox=\"0 0 24 24\"><circle cx=\"5\" cy=\"12\" r=\"1.3\"/><circle cx=\"12\" cy=\"12\" r=\"1.3\"/><circle cx=\"19\" cy=\"12\" r=\"1.3\"/></svg>"};
 
 
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -518,6 +539,13 @@ td.currency::before, td.percent::after { color: var(--muted); }
   const wsOf = b => (b && b.workspace && b.workspace.id) ? b.workspace : { id: 'main', name: 'Main workspace' };
   function workspaces() { const m = new Map(); S.boards.forEach(b => { const w = wsOf(b); if (!m.has(w.id)) m.set(w.id, w); }); return [...m.values()]; }
   const wsBoards = () => S.boards.filter(b => wsOf(b).id === S.ws);
+  // File columns hold [{ name, url }]. Older copies stored Monday's text: a comma-separated list of links.
+  const isFileCol = c => !!c && (c.type === 'file' || c.source === 'file');
+  function fileList(v) {
+    if (Array.isArray(v)) return v.filter(f => f && f.url);
+    const s2 = String(v || '').trim(); if (!s2) return [];
+    return s2.split(/,\s*(?=https?:\/\/)/).map(u => u.trim()).filter(Boolean).map(url => { let name = url; try { name = decodeURIComponent(new URL(url).pathname.split('/').pop() || url); } catch (e) {} return { name, url }; });
+  }
   const splitPeople = v => String(v || '').split(',').map(x => x.trim()).filter(Boolean);
   const initials = n => String(n).replace(/@.*/, '').split(/[\s._-]+/).filter(Boolean).slice(0, 2).map(x => x[0].toUpperCase()).join('') || '?';
   const hue = n => PALETTE[[...String(n)].reduce((a, c) => a + c.charCodeAt(0), 0) % PALETTE.length];
@@ -549,7 +577,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
       case 'date': { const dt = (item.values || {})[id + '__dt']; return v ? (dt || v) : ''; }
       case 'item_id': return String(item.mondayId || item.id);
       case 'created': return String(item.createdAt || '').slice(0, 10);
-      default: return v == null ? '' : v;
+      default: return v == null ? '' : Array.isArray(v) ? describe(c, v) : v;
     }
   }
   function formulaResult(b, item, c, depth = 0) {
@@ -590,6 +618,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
 
   function describe(col, v) {
     if (v === '' || v == null) return 'empty';
+    if (isFileCol(col) || Array.isArray(v)) { const fl = fileList(v); return fl.length ? fl.map(f => f.name).join(', ') : 'empty'; }
     if (col.type === 'status') return (labelOf(col, v) || {}).label || 'empty';
     if (col.type === 'number' && col.format === 'currency') return '$' + fmtMoney(v);
     if (col.type === 'number' && col.format === 'percent') return v + '%';
@@ -598,11 +627,11 @@ td.currency::before, td.percent::after { color: var(--muted); }
 
   function setValue(itemId, colId, value) {
     const b = board(), item = itemById(itemId), col = b && b.columns.find(c => c.id === colId);
-    if (!item || !col || col.readonly) return;
+    if (!item || !col || (col.readonly && !isFileCol(col))) return;
     if (col.type === 'number') value = value === '' ? '' : Number(String(value).replace(/[^0-9.\-]/g, ''));
     if (col.type === 'number' && value !== '' && isNaN(value)) { toast('Enter a number, like 245000.'); scheduleRender(); return; }
     const old = (item.values || {})[colId] ?? '';
-    if (old === value) return;
+    if (old === value || (typeof value === 'object' && JSON.stringify(old) === JSON.stringify(value))) return;
     const patch = { values: { [colId]: value } };
     const lines = [{ text: `${col.title}: ${describe(col, old)} → ${describe(col, value)}` }], after = [];
     const groupBefore = item.group;
@@ -648,7 +677,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
         case 'copy_to_board': after.push({ kind: 'copy_board', board: a.board, group: a.group, name, map: a.map }); break;
         case 'duplicate': after.push({ kind: 'duplicate', name, withUpdates: !!a.withUpdates }); break;
         case 'external': lines.push({ auto: true, text: `${name} would ${a.label} in Monday. Not run in Solver.ca, so nothing was sent.` }); break;
-        case 'notify': lines.push({ auto: true, text: `${name} would notify ${a.to || 'someone'} in Monday: ${a.message || ''}`.trim() }); break;
+        case 'notify': lines.push({ auto: true, text: `${name} notified ${fillTpl(b, { ...item, values: { ...(item.values || {}), ...patch.values } }, a.to || '') || 'someone'} in Solver.ca` }); after.push({ kind: 'notify', to: a.to, message: a.message, title: rule.title }); break;
         default: lines.push({ auto: true, text: `${name} would ${a.label || a.type.replace(/_/g, ' ')} in Monday. Not run in Solver.ca, so nothing was sent.` });
       }
     }
@@ -673,8 +702,18 @@ td.currency::before, td.percent::after { color: var(--muted); }
     }
     return hit;
   }
+  // "{item.Name} {item.text42__1}" -> filled in from the item, like Monday's notify messages.
+  function fillTpl(b, item, text) {
+    return String(text || '').replace(/\{(?:item|pulse)\.([^}]+)\}/g, (m, key) => {
+      if (/^name$/i.test(key)) return item.name || '';
+      const c = b.columns.find(x => x.id === key || x.title === key); if (!c) return '';
+      const v = (item.values || {})[c.id]; return v == null || v === '' ? '' : describe(c, v);
+    });
+  }
   function finishAfter(b, item, after) {
     for (const x of after) {
+      // in-app notifications for the Solver.ca people the rule names (unknown names are skipped by the server)
+      if (x.kind === 'notify' && window.KS) { const msg = fillTpl(b, item, x.message || '').replace(/\s+/g, ' ').trim(); KS.notify({ board: b.id, item: item.id, to: fillTpl(b, item, x.to || ''), text: `${item.name}: ${msg || String(x.title || 'Automation').replace(/\s*→.*$/, '')}`.slice(0, 400) }).catch(() => {}); }
       if (x.kind === 'update' && x.text) { item.updates = [...(item.updates || []), { at: now(), by: 'automation', byName: 'Automation', text: x.text }]; patchItem(item.id, { updates: item.updates }); }
       if (x.kind === 'move_board') moveItemToBoard(b, item, x.board, x.group, x.name, true, x.map);
       if (x.kind === 'copy_board') moveItemToBoard(b, item, x.board, x.group, x.name, false, x.map);
@@ -785,6 +824,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
         <div><div class="brand-name">Solver.ca</div><div class="brand-tag">CRM · test build</div></div></div>
       ${S.me ? `<div class="whoami"><span class="role">${S.isOwner ? 'Admin' : S.canWrite ? 'Member' : 'Viewer'}</span><b>${esc(S.me.name || 'Signed in')}</b></div>` : ''}
       <button class="board-link" data-act="go-home" aria-current="${S.page === 'home'}"><span class="dot"></span>Home</button>
+      <button class="board-link" data-act="notifs" aria-label="Notifications${S.notifs.unread ? ', ' + S.notifs.unread + ' unread' : ''}" style="margin-top:-14px">${IC.bell.replace('<svg', '<svg class="bell"')}Notifications${S.notifs.unread ? `<span class="nbadge">${S.notifs.unread > 99 ? '99+' : S.notifs.unread}</span>` : ''}</button>
       <div><h2>Workspace</h2><select class="kbd-select ws-select" id="ws-select" aria-label="Workspace">${workspaces().map(w => `<option value="${esc(w.id)}" ${w.id === S.ws ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select></div>
       <div><h2>Boards · ${wsBoards().length}</h2>
         ${wsBoards().length > 6 ? `<input class="rail-input" id="board-filter" placeholder="Find a board" value="${esc(S.boardFilter)}" aria-label="Find a board" style="margin-bottom:6px;border-style:solid">` : ''}
@@ -825,6 +865,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
         ${curView() && curView().source !== 'monday' && S.canWrite ? `<button class="btn" data-act="delete-view">${S.confirmDelete === 'v:' + S.viewId ? 'Click again to delete view' : 'Delete view'}</button>` : ''}
         <span class="group-count">${visibleItems().length} of ${S.items.length} items</span>
         <span class="spacer"></span>
+        ${S.isOwner ? `<button class="btn" data-act="access" title="Who can see this board">${b.access && b.access.private ? `Private · ${(b.access.members || []).length}` : 'Open to everyone'} · Access</button>` : b.access && b.access.private ? '<span class="pill" title="Only the people this board is shared with can see it">Private board</span>' : ''}
         <button class="btn" data-act="automations">Automations · ${(b.automations || []).filter(r => r.on !== false).length}</button>
         <button class="btn" data-act="add-column">+ Column</button>
       </div>`;
@@ -874,6 +915,11 @@ td.currency::before, td.percent::after { color: var(--muted); }
     if (col.type === 'checkbox') return `<label class="cb"><input type="checkbox" data-edit="check" data-item="${esc(item.id)}" data-col="${esc(col.id)}" ${v ? 'checked' : ''} ${S.canWrite ? '' : 'disabled'} aria-label="${esc(col.title)}"></label>`;
     if (col.type === 'dropdown') { const vals = splitPeople(v); return `<button class="people-cell dd-cell" data-act="dropdown" data-item="${esc(item.id)}" data-col="${esc(col.id)}" ${S.canWrite ? '' : 'disabled'}>${vals.length ? vals.map(x => `<span class="pill">${esc(x)}</span>`).join('') : `<span class="pempty">${inDrawer ? 'Choose' : ''}</span>`}</button>`; }
     if (col.type === 'link') { const lp = linkParts(v); return `<div class="link-cell"><input type="text" ${base} value="${esc(v)}" placeholder="${inDrawer ? 'https://' : ''}">${lp.url ? `<a href="${esc(lp.url)}" target="_blank" rel="noopener" aria-label="Open link">↗</a>` : ''}</div>`; }
+    if (isFileCol(col)) {
+      const at = `data-item="${esc(item.id)}" data-col="${esc(col.id)}"`;
+      const chips = fileList(v).map((f, k) => `<span class="file-chip"><a href="${esc(f.url)}" target="_blank" rel="noopener" title="${esc(f.name)}" ${String(f.url).startsWith('/api/files/') ? 'download' : ''}>${esc(f.name)}</a>${S.canWrite && inDrawer ? `<button class="icon-btn" data-act="file-remove" ${at} data-k="${k}" aria-label="Remove ${esc(f.name)}" title="Remove">×</button>` : ''}</span>`).join('');
+      return `<div class="file-cell">${chips}${S.canWrite ? `<button class="icon-btn file-add" data-act="file-add" ${at} title="Add file" aria-label="Add file to ${esc(col.title)}">${inDrawer || !chips ? '+ Add file' : '+'}</button>` : ''}</div>`;
+    }
     if (col.readonly) return `<div class="ro" title="${esc(v)}">${esc(v)}</div>`;
     if (col.long && inDrawer) return `<textarea ${base} rows="3" style="height:auto;padding:8px 10px;resize:vertical">${esc(v)}</textarea>`;
     switch (col.type) {
@@ -1042,7 +1088,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
       else {
         const fields = b.columns.map(c => `<div class="f-label">${esc(c.title)}</div><div class="f-value ${c.format === 'currency' ? 'currency' : ''}" ${c.format === 'currency' ? 'style="position:relative"' : ''}>${c.format === 'currency' ? '<span style="position:absolute;left:10px;color:var(--muted);font-family:var(--f-data)">$</span>' : ''}${cellEditor(c, i, true)}</div>`).join('');
         const groupSel = `<div class="f-label">Group</div><div class="f-value"><select class="kbd-select" data-edit="group" data-item="${esc(i.id)}" ${S.canWrite ? '' : 'disabled'} aria-label="Group">${b.groups.map(g => `<option value="${esc(g.id)}" ${g.id === i.group ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}${b.groups.some(g => g.id === i.group) ? '' : '<option selected>Pick a group</option>'}</select></div>`;
-        const updates = (i.updates || []).slice().reverse().map(u => `<div class="update"><div class="u-meta"><b data-uid="${esc(u.by)}">${esc(u.byName || 'Someone')}</b><span>${esc(fmtTime(u.at))}</span></div><div class="u-text">${esc(u.text)}</div>${(u.files || []).length ? `<div class="card-meta">${u.files.map(f => f.url ? `<a href="${esc(f.url)}" target="_blank" rel="noopener" style="color:#fff">📎 ${esc(f.name)}</a>` : `<span>📎 ${esc(f.name)}</span>`).join('')}</div>` : ''}${(u.replies || []).map(rp => `<div class="update" style="margin:6px 0 0 18px"><div class="u-meta"><b>${esc(rp.byName || 'Someone')}</b><span>${esc(fmtTime(rp.at))}</span></div><div class="u-text">${esc(rp.text)}</div></div>`).join('')}</div>`).join('');
+        const updates = (i.updates || []).slice().reverse().map(u => `<div class="update"><div class="u-meta"><b data-uid="${esc(u.by)}">${esc(u.byName || 'Someone')}</b><span>${esc(fmtTime(u.at))}</span></div>${u.text ? `<div class="u-text">${esc(u.text)}</div>` : ''}${(u.files || []).length ? `<div class="file-cell" style="flex-wrap:wrap;padding:0;min-height:0">${u.files.map(f => f.url ? `<span class="file-chip" style="padding-right:10px"><a href="${esc(f.url)}" target="_blank" rel="noopener" title="${esc(f.name)}" ${String(f.url).startsWith('/api/files/') ? 'download' : ''}>📎 ${esc(f.name)}</a></span>` : `<span class="file-chip" style="padding-right:10px">📎 ${esc(f.name)}</span>`).join('')}</div>` : ''}${(u.replies || []).map(rp => `<div class="update" style="margin:6px 0 0 18px"><div class="u-meta"><b>${esc(rp.byName || 'Someone')}</b><span>${esc(fmtTime(rp.at))}</span></div><div class="u-text">${esc(rp.text)}</div></div>`).join('')}</div>`).join('');
         const sys = a => a.by === 'automation' || a.by === 'import' || a.by === 'seed';
         const log = (i.activity || []).map(a => `<li><time>${esc(fmtTime(a.at))}</time><span class="${sys(a) ? 'auto' : ''}">${sys(a) ? '' : `<span data-uid="${esc(a.by)}">Someone</span>: `}${esc(a.text)}</span></li>`).join('');
         const sc = b.subColumns || [];
@@ -1059,7 +1105,9 @@ td.currency::before, td.percent::after { color: var(--muted); }
             ${(b.subColumns || []).length || (i.subitems || []).length ? `<div><h4 class="sec-title">Subitems · ${(i.subitems || []).length}</h4>${subTable(b, i)}</div>` : ''}
             ${S.canWrite ? `<div><button class="btn danger" data-act="delete-item" data-item="${esc(i.id)}">${S.confirmDelete === 'i:' + i.id ? 'Click again to delete this item' : 'Delete item'}</button></div>` : ''}` : ''}
             ${S.drawerTab === 'updates' ? `<div>
-              ${S.canWrite ? `<div class="composer"><textarea id="update-text" placeholder="Write an update. Call notes, next steps, what the client said."></textarea><div><button class="btn primary" data-act="post-update" data-item="${esc(i.id)}">Post update</button></div></div>` : ''}
+              ${S.canWrite ? `<div class="composer"><textarea id="update-text" placeholder="Write an update. Call notes, next steps, what the client said. Type @ and a name to notify a teammate."></textarea>
+                ${S.draftFiles.length ? `<div class="file-cell" style="flex-wrap:wrap;padding:0">${S.draftFiles.map((f, k) => `<span class="file-chip"><a href="${esc(f.url)}" target="_blank" rel="noopener" download>${esc(f.name)}</a><button class="icon-btn" data-act="draft-file-remove" data-k="${k}" aria-label="Remove ${esc(f.name)}">×</button></span>`).join('')}</div>` : ''}
+                <div class="form-row"><button class="btn primary" data-act="post-update" data-item="${esc(i.id)}">Post update</button><button class="btn" data-act="attach-update" data-item="${esc(i.id)}">${S.uploading ? 'Uploading…' : 'Attach file'}</button></div></div>` : ''}
               <div style="margin-top:12px">${updates || '<p class="rail-note">No updates yet. Post the first one above.</p>'}</div></div>` : ''}
             ${S.drawerTab === 'fact' && b.form ? renderFactFind(b, i) : ''}
             ${S.drawerTab === 'activity' ? `<ul class="log">${log || '<li>No activity yet.</li>'}</ul>` : ''}
@@ -1076,7 +1124,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
         <button class="btn danger" data-act="bulk-del">${S.confirmDelete === 'bulk' ? `Click again to delete ${S.selected.size}` : 'Delete'}</button>` : ''}
         <button class="btn" data-act="bulk-clear">Clear selection</button></div>`;
     }
-    if (S.modal && (b || ['team', 'boards', 'profile', 'integrations'].includes(S.modal.type))) html += `<div class="modal-wrap" data-act="close-modal"><div class="modal" role="dialog" aria-modal="true">${renderModal(b)}</div></div>`;
+    if (S.modal && (b || ['team', 'boards', 'profile', 'integrations', 'notifs'].includes(S.modal.type))) html += `<div class="modal-wrap" data-act="close-modal"><div class="modal" role="dialog" aria-modal="true">${renderModal(b)}</div></div>`;
     if (S.pop && b) html += renderPop(b);
     const layer = $('#layer');
     const draft = $('#update-text') ? $('#update-text').value : '';
@@ -1143,7 +1191,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     const m = S.modal;
     const statusCols = b ? b.columns.filter(c => c.type === 'status') : [];
     if (m.type === 'automations') {
-      const RUNS = ['move_group', 'set_status', 'set_value', 'set_date', 'clear', 'assign', 'create_update', 'move_board', 'copy_to_board', 'duplicate'];
+      const RUNS = ['move_group', 'set_status', 'set_value', 'set_date', 'clear', 'assign', 'create_update', 'move_board', 'copy_to_board', 'duplicate', 'notify'];
       const describeRule = r => {
         r = normRule(r);
         if (r.source === 'monday' && r.title) return esc(r.title);
@@ -1173,7 +1221,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
           <button class="btn primary" data-act="save-rule">Add automation</button>
         </div>` : '<p>Add a Status column first. Automations start from a status change.</p>';
       return `<h3>Automations on ${esc(b.name)}</h3>
-        <p>Copied from Monday. The ones marked “Runs in Solver.ca” move items, change statuses and dates, assign people and copy or move items between boards here. Emails, texts, notifications and your outside tools (webhooks) stay with Monday and are only logged here, so nobody gets messaged twice.</p>
+        <p>Copied from Monday. The ones marked “Runs in Solver.ca” move items, change statuses and dates, assign people and copy or move items between boards here. “Notify someone” sends an in-app notification to the Solver.ca people it names. Emails, texts and your outside tools (webhooks) stay with Monday and are only logged here, so nobody gets messaged twice.</p>
         ${rules || '<p>No automations yet.</p>'}
         ${S.canWrite ? form : ''}
         <div><button class="btn" data-act="close-modal-btn">Done</button></div>`;
@@ -1220,7 +1268,27 @@ td.currency::before, td.percent::after { color: var(--muted); }
     }
     if (m.type === 'profile') {
       return `<h3>${esc((S.me && S.me.name) || 'Signed in')}</h3><p>${esc((S.me && S.me.email) || '')} · ${S.isOwner ? 'Admin' : S.canWrite ? 'Member' : 'Viewer'}</p>
-        <div class="form-row">${S.isOwner ? '<button class="btn" data-act="team">Team &amp; settings</button><button class="btn" data-act="integrations">Integrations</button>' : ''}<button class="btn" data-act="logout">Sign out</button><button class="btn" data-act="close-modal-btn">Close</button></div>`;
+        <div class="form-row"><button class="btn primary" data-act="notifs">Notifications${S.notifs.unread ? ' · ' + S.notifs.unread + ' new' : ''}</button>${S.isOwner ? '<button class="btn" data-act="team">Team &amp; settings</button><button class="btn" data-act="integrations">Integrations</button>' : ''}<button class="btn" data-act="logout">Sign out</button><button class="btn" data-act="close-modal-btn">Close</button></div>`;
+    }
+    if (m.type === 'notifs') {
+      const bname = id => (S.boards.find(x => x.id === id) || {}).name || '';
+      const rows = S.notifs.items.map(n => `<div class="rule notif ${n.read ? 'read' : 'unread'}"><button class="notif-open" data-act="notif-open" data-id="${esc(n.id)}"><b>${esc(n.text)}</b><span class="card-meta"><span>${esc(fmtTime(n.at))}</span>${bname(n.board) ? `<span>${esc(bname(n.board))}</span>` : ''}</span></button>${n.read ? '' : `<button class="icon-btn" data-act="notif-read" data-id="${esc(n.id)}">Mark read</button>`}</div>`).join('');
+      return `<h3>Notifications</h3><p>Mentions, assignments, automation alerts and date reminders for you. They stay inside Solver.ca.</p>
+        ${rows || '<p class="rail-note">Nothing yet. You’ll see it here when someone @mentions or assigns you.</p>'}
+        <div class="form-row">${S.notifs.unread ? '<button class="btn" data-act="notif-all">Mark all read</button>' : ''}<button class="btn" data-act="close-modal-btn">Close</button></div>`;
+    }
+    if (m.type === 'access') {
+      const ac = b.access || { private: false, members: [] }, priv = !!ac.private;
+      const who = e => (S.team.find(u => String(u.email || '').toLowerCase() === e) || {}).name;
+      const rows = (ac.members || []).map(e => `<div class="rule"><div class="rule-text"><b>${esc(who(e) || e)}</b>${who(e) ? ` · ${esc(e)}` : ' · <span class="rail-note">no Solver.ca account with this email yet</span>'}</div><button class="icon-btn" data-act="access-remove" data-email="${esc(e)}">Remove</button></div>`).join('');
+      const opts = S.team.filter(u => u.email && !(ac.members || []).includes(String(u.email).toLowerCase())).map(u => `<option value="${esc(u.email)}">${esc(u.name)}</option>`).join('');
+      return `<h3>Who can see ${esc(b.name)}</h3>
+        <p>Admins see every board. A private board is only visible to the people listed here, like a private board in Monday.${ac.source === 'monday' || ac.kind ? ' This list came from the board’s Monday subscribers.' : ''}</p>
+        <div class="form-row"><button class="toggle" data-act="access-set" data-private="1" aria-pressed="${priv}">Private</button><button class="toggle" data-act="access-set" data-private="0" aria-pressed="${!priv}">Open to everyone</button></div>
+        ${priv ? '' : '<p>Everyone on the team can see this board now. The list below only matters once it’s private.</p>'}
+        ${rows || '<p class="rail-note">No one is listed yet.</p>'}
+        <div class="form-row"><input class="field-input" id="acc-email" list="acc-people" type="email" placeholder="Add by email" aria-label="Email to add" style="flex:1 1 220px"><datalist id="acc-people">${opts}</datalist><button class="btn primary" data-act="access-add">Add</button></div>
+        <div><button class="btn" data-act="close-modal-btn">Done</button></div>`;
     }
     if (m.type === 'team') {
       const rows = (m.list || []).map(u => `<div class="rule ${u.disabled ? 'off' : ''}"><div class="rule-text"><b>${esc(u.name)}</b> · ${esc(u.email || '')}${u.id === S.uid ? ' (you)' : ''}</div>
@@ -1292,8 +1360,35 @@ td.currency::before, td.percent::after { color: var(--muted); }
         const v = { id: rid('v'), name, rules, sort: S.sort, columns: b.columns.filter(c => !S.hidden.has(c.id)).map(c => c.id), source: 'keystone' }; const views = [...(b.views || []), v]; patchBoard({ views }); localBoard({ views }); S.filters = {}; S.sort = null; S.person = ''; S.viewId = v.id; S.modal = null; toast(`Saved view “${name}”`); render(); break; }
       case 'delete-view': { if (S.confirmDelete !== 'v:' + S.viewId) { S.confirmDelete = 'v:' + S.viewId; renderHead(); return; } S.confirmDelete = null; const views = (b.views || []).filter(v => v.id !== S.viewId); S.viewId = null; patchBoard({ views }); localBoard({ views }); break; }
       case 'view': S.viewId = null; S.view = t.dataset.v; try { localStorage.setItem('ks-view', S.view); } catch (x) {} render(); break;
-      case 'open': S.openItem = t.dataset.item; S.drawerTab = (board() && board().form) ? 'fact' : 'updates'; renderLayer(); fillNames(); break;
-      case 'close-item': S.openItem = null; renderLayer(); break;
+      case 'notifs': S.pop = null; S.modal = { type: 'notifs' }; renderLayer(); loadNotifs(); break;
+      case 'notif-read': markRead([t.dataset.id]); break;
+      case 'notif-all': markRead(null); break;
+      case 'notif-open': {
+        const n = S.notifs.items.find(x => x.id === t.dataset.id); if (!n) return;
+        if (!n.read) markRead([n.id]);
+        if (!n.board) return;
+        if (!S.boards.some(x => x.id === n.board)) { toast('That board isn’t available to you any more.'); return; }
+        S.modal = null; S.page = 'board'; S.view = 'table'; savePage();
+        selectBoard(n.board);
+        if (n.item) { if (S.itemsLoaded && itemById(n.item)) { S.openItem = n.item; S.drawerTab = 'updates'; S.draftFiles = []; } else S.pendingOpen = n.item; }
+        render(); break;
+      }
+      case 'access': S.pop = null; S.modal = { type: 'access' }; renderLayer(); if (!S.team.length && window.KS) KS.users().then(l => { S.team = l; renderLayer(); }).catch(() => {}); break;
+      case 'access-set': { const ac = { ...(b.access || { members: [] }), private: t.dataset.private === '1' }; ac.members = ac.members || []; saveAccess(ac); break; }
+      case 'access-add': {
+        const e2 = ($('#acc-email').value || '').trim().toLowerCase();
+        if (!/^[^@\s]+@[^@\s]+$/.test(e2)) { toast('Enter an email address.'); return; }
+        const ac = { private: true, ...(b.access || {}) }; ac.members = [...new Set([...(ac.members || []), e2])].sort();
+        saveAccess(ac); toast(ac.private ? `${e2} can now see this board` : `Added ${e2}`); break;
+      }
+      case 'access-remove': { const ac = { ...(b.access || {}) }; ac.members = (ac.members || []).filter(x => x !== t.dataset.email); saveAccess(ac); break; }
+      case 'monday-pull': KS.mondayPull().then(() => { toast('Pulled the latest changes from Monday.'); loadSync(); }).catch(e => { toast(e.message || 'The pull didn’t finish.'); loadSync(); }); if (S.modal && S.modal.sync && S.modal.sync.pull) { S.modal.sync.pull.running = true; renderLayer(); } break;
+      case 'file-add': { const itemId = t.dataset.item, colId = t.dataset.col; pickFiles().then(files => uploadFiles(files, itemId)).then(up => { if (!up.length) return; const i = itemById(itemId); if (!i) return; setValue(itemId, colId, [...fileList((i.values || {})[colId]), ...up]); scheduleRender(); }); break; }
+      case 'file-remove': { const i = itemById(t.dataset.item); if (!i) return; const k = Number(t.dataset.k); const rest = fileList((i.values || {})[t.dataset.col]).filter((_, x) => x !== k); setValue(i.id, t.dataset.col, rest.length ? rest : ''); renderLayer(); break; }
+      case 'attach-update': { const itemId = t.dataset.item; pickFiles().then(files => uploadFiles(files, itemId)).then(up => { if (up.length && S.openItem === itemId) { S.draftFiles = [...S.draftFiles, ...up]; renderLayer(); } }); break; }
+      case 'draft-file-remove': S.draftFiles = S.draftFiles.filter((_, x) => x !== Number(t.dataset.k)); renderLayer(); break;
+      case 'open': S.draftFiles = []; S.openItem = t.dataset.item; S.drawerTab = (board() && board().form) ? 'fact' : 'updates'; renderLayer(); fillNames(); break;
+      case 'close-item': S.openItem = null; S.draftFiles = []; renderLayer(); break;
       case 'sub-status': { if (!S.canWrite) return; const r = t.getBoundingClientRect(); S.pop = { type: 'status', item: t.dataset.item, sub: t.dataset.sub, col: t.dataset.col, x: r.left, y: r.bottom + 4 }; renderLayer(); break; }
       case 'sub-del': { const item = itemById(t.dataset.item); if (!item) return; const subs = (item.subitems || []).filter(x => String(x.id) !== String(t.dataset.sub)); item.subitems = subs; patchItem(item.id, { subitems: subs }); scheduleRender(); break; }
       case 'subs': { const id = t.dataset.item; S.expanded.has(id) ? S.expanded.delete(id) : S.expanded.add(id); renderContent(); break; }
@@ -1340,11 +1435,12 @@ td.currency::before, td.percent::after { color: var(--muted); }
         write(p, () => S.db.doc(p).delete()); S.items = S.items.filter(i => i.id !== id); S.openItem = null; toast('Lead deleted'); render(); break;
       }
       case 'post-update': {
-        const ta = $('#update-text'), text = ta && ta.value.trim(); if (!text) return;
+        const ta = $('#update-text'), text = ta ? ta.value.trim() : ''; if (!text && !S.draftFiles.length) return;
         const i = itemById(t.dataset.item); if (!i) return;
-        const updates = [...(i.updates || []), { at: now(), by: S.uid, text }].slice(-100);
-        const activity = act(i, 'Posted an update');
-        ta.value = ''; i.updates = updates; i.activity = activity;
+        const u = { at: now(), by: S.uid, byName: (S.me && S.me.name) || '', text }; if (S.draftFiles.length) u.files = S.draftFiles.map(f => ({ name: f.name, url: f.url }));
+        const updates = [...(i.updates || []), u].slice(-100);
+        const activity = act(i, u.files ? `Posted an update with ${u.files.length} file${u.files.length === 1 ? '' : 's'}` : 'Posted an update');
+        ta.value = ''; S.draftFiles = []; i.updates = updates; i.activity = activity;
         patchItem(i.id, { updates, activity }); renderLayer(); renderContent(); fillNames(); break;
       }
       case 'automations': S.modal = { type: 'automations', draft: {} }; renderLayer(); break;
@@ -1413,6 +1509,37 @@ td.currency::before, td.percent::after { color: var(--muted); }
     return { col: $('#r-col') && $('#r-col').value, label: $('#r-label') && $('#r-label').value, action: $('#r-action') && $('#r-action').value };
   }
   function localBoard(patch) { const b = board(); if (b) Object.assign(b, patch); render(); }
+  function saveAccess(ac) { patchBoard({ access: ac }); localBoard({ access: ac }); }
+
+  // ---------- files ----------
+  function pickFiles() {
+    return new Promise(resolve => { const inp = document.createElement('input'); inp.type = 'file'; inp.multiple = true; inp.style.display = 'none';
+      inp.addEventListener('change', () => { resolve([...inp.files]); inp.remove(); }); document.body.appendChild(inp); inp.click(); });
+  }
+  async function uploadFiles(files, itemId) {
+    if (!files.length || !window.KS) return [];
+    if (!S.canWrite) { toast('You can view this board but not change it.'); return []; }
+    const out = []; S.uploading = true; renderLayer();
+    for (const f of files) {
+      if (f.size > 25 * 1024 * 1024) { toast(`${f.name} is over 25 MB.`); continue; }
+      try { const r = await KS.upload(f, S.boardId, itemId); out.push({ name: r.name, url: r.url, id: r.id, size: r.size }); }
+      catch (e) { toast(`${f.name}: ${(e && e.message) || 'upload failed'}`); }
+    }
+    S.uploading = false; if (out.length) toast(out.length === 1 ? `Attached ${out[0].name}` : `Attached ${out.length} files`); renderLayer();
+    return out;
+  }
+
+  // ---------- notifications ----------
+  async function loadNotifs() {
+    if (!window.KS) return;
+    try { const r = await KS.notifications(); S.notifs = { unread: r.unread, items: r.items }; renderRail(); renderNav(); if (S.modal && ['notifs', 'profile'].includes(S.modal.type)) renderLayer(); } catch (e) {}
+  }
+  function markRead(ids) {
+    S.notifs.items.forEach(n => { if (!ids || ids.includes(n.id)) n.read = true; });
+    S.notifs.unread = S.notifs.items.filter(n => !n.read).length;
+    renderRail(); renderNav(); if (S.modal && S.modal.type === 'notifs') renderLayer();
+    KS.markRead(ids ? { ids } : { all: true }).then(r => { S.notifs.unread = r.unread; renderRail(); renderNav(); }).catch(() => {});
+  }
 
   document.addEventListener('change', e => {
     const t = e.target, b = board();
@@ -1584,6 +1711,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
       if (S.boardId !== id) return;
       S.items = snap.docs.map(d => withDefaults(S.boards.find(x => x.id === id), { id: d.id, ...structuredClone(d.data()) }));
       if (!snap.metadata.fromCache) S.itemsLoaded = true;
+      if (S.pendingOpen && S.itemsLoaded) { if (S.items.some(i => i.id === S.pendingOpen)) { S.openItem = S.pendingOpen; S.drawerTab = 'updates'; S.draftFiles = []; } else toast('That item is no longer on this board.'); S.pendingOpen = null; }
       scheduleRender();
     }, () => { S.itemsLoaded = true; toast('This board stopped updating. Reload the page to reconnect.'); });
     render();
@@ -1674,8 +1802,12 @@ td.currency::before, td.percent::after { color: var(--muted); }
     if (!st.configured) return '<p>Not set up yet. Add a Monday API token as MONDAY_API_TOKEN in the server settings (on Render: Environment), then reload this page.</p>';
     const last = st.finishedAt ? (st.error ? `Last copy failed: ${esc(st.error)}` : `Last copied ${esc(fmtTime(st.finishedAt))}: ${st.boards} boards, ${Number(st.items).toLocaleString('en-CA')} items.`) : 'Not copied yet.';
     if (st.running) return `<p><b>Copying now.</b> ${esc(st.msg)}. ${st.boards} boards and ${Number(st.items).toLocaleString('en-CA')} items so far. You can close this window. It keeps going on the server.</p>`;
-    return `<p>Reads ${st.workspaces.length} Monday workspace${st.workspaces.length === 1 ? '' : 's'} and refreshes their boards here. Monday itself is never changed. Items added in Solver.ca stay; items copied from Monday are replaced with Monday’s current version, so edits made here to those items are overwritten.</p>
-      <p>${last}</p><div><button class="btn primary" data-act="monday-sync">Copy from Monday now</button></div>`;
+    const pl = st.pull || {}, hhmm = iso => new Date(iso).toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit' });
+    const live = !pl.enabled ? '<span class="pill">Live pull is off</span>'
+      : `<span class="pill" title="Every 5 minutes, items changed in Monday are copied here">Live from Monday · ${pl.lastPullAt ? 'last pulled ' + esc(hhmm(pl.lastPullAt)) : 'not pulled yet'}</span>${pl.running ? ' <span class="rail-note">Pulling now…</span>' : ''}`;
+    return `<p>Reads ${st.workspaces.length} Monday workspace${st.workspaces.length === 1 ? '' : 's'} and refreshes their boards here. Monday itself is never changed. Items added in Solver.ca stay; items copied from Monday are replaced with Monday’s current version, so edits made here to those items are overwritten. Every 5 minutes, items changed in Monday since the last pull are copied in on their own.</p>
+      <p>${last}${pl.error ? ` Last live pull failed: ${esc(pl.error)}` : pl.lastRunAt && pl.enabled ? ` Last live pull: ${Number(pl.saved || 0)} items updated, ${Number(pl.removed || 0)} removed.` : ''}</p>
+      <div class="form-row"><button class="btn primary" data-act="monday-sync">Copy from Monday now</button>${live}${pl.enabled ? '<button class="btn" data-act="monday-pull">Pull changes now</button>' : ''}</div>`;
   }
   let syncTimer = null;
   async function loadSync() {
@@ -1821,7 +1953,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     const btn = (k, act, label, ic) => `<button data-act="${act}" aria-current="${cur === k}" aria-label="${label}">${ic}<span>${label}</span></button>`;
     nav.innerHTML = btn('home', 'go-home', 'Home', IC.home) + btn('boards', 'sheet-boards', 'Boards', IC.boards)
       + `<button data-act="quick-new" aria-label="New lead"><span class="bnav-plus">${IC.plus}</span></button>`
-      + btn('cal', 'go-calendar', 'Calendar', IC.cal) + btn('me', 'sheet-profile', 'Profile', IC.user);
+      + btn('cal', 'go-calendar', 'Calendar', IC.cal) + btn('me', 'sheet-profile', 'Profile', `<span class="nwrap">${IC.user}${S.notifs.unread ? `<span class="nbadge">${S.notifs.unread > 9 ? '9+' : S.notifs.unread}</span>` : ''}</span>`);
   }
 
   async function init() {
@@ -1835,7 +1967,12 @@ td.currency::before, td.percent::after { color: var(--muted); }
       try { const c = await user.can('data.write'); if (c === false) S.canWrite = false; } catch (e) {}
     }
     checkImport();
-    if (window.KS) KS.users().then(l => { S.teamNames = l.filter(u => !u.disabled).map(u => u.name); }).catch(() => {});
+    if (window.KS) KS.users().then(l => { S.team = l; S.teamNames = l.filter(u => !u.disabled).map(u => u.name); }).catch(() => {});
+    if (window.KS) {
+      loadNotifs();
+      KS.on('notify', n => { if (S.notifs.items.some(x => x.id === n.id)) return; S.notifs.items.unshift(n); S.notifs.unread++; toast(n.text.length > 110 ? n.text.slice(0, 108) + '…' : n.text); renderRail(); renderNav(); if (S.modal && ['notifs', 'profile'].includes(S.modal.type)) renderLayer(); });
+      KS.on('reconnect', loadNotifs);
+    }
     const slow = setTimeout(() => { if (S.status === 'loading') { S.status = 'slow'; render(); } }, 10000);
     db.collection('boards').onSnapshot(snap => {
       S.boards = snap.docs.map(d => ({ id: d.id, ...structuredClone(d.data()) })).sort((a, b) => (a.order || 0) - (b.order || 0));

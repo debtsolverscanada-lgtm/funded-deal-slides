@@ -3,7 +3,7 @@
 'use strict';
 const crypto = require('node:crypto');
 
-module.exports = function integrations({ db, q, now, broadcast, HttpError, readBody, send, merge }) {
+module.exports = function integrations({ db, q, now, broadcast, HttpError, readBody, send, merge, notifyNames = () => 0, itemNotifications = () => {}, fillTemplate = t => t }) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS api_keys (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, prefix TEXT NOT NULL, hash TEXT NOT NULL UNIQUE,
@@ -52,13 +52,14 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     for (const [k, raw] of Object.entries(input || {})) {
       const c = (b.columns || []).find(x => x.id === k) || (b.columns || []).find(x => x.title.toLowerCase() === String(k).toLowerCase());
       if (!c) { errors.push(`No column called “${k}”.`); continue; }
-      if (['formula', 'button', 'item_id', 'created'].includes(c.type) || c.readonly) { errors.push(`“${c.title}” is calculated and can’t be set.`); continue; }
+      if (['formula', 'button', 'item_id', 'created'].includes(c.type) || (c.readonly && c.source !== 'file')) { errors.push(`“${c.title}” is calculated and can’t be set.`); continue; }
       let v = raw;
       if (v === null || v === '') { out[c.id] = ''; continue; }
       if (c.type === 'status') { const l = (c.labels || []).find(x => x.id === String(v) || x.label.toLowerCase() === String(v).toLowerCase()); if (!l) { errors.push(`“${v}” isn’t a label in ${c.title}.`); continue; } v = l.id; }
       else if (c.type === 'number') { v = Number(String(v).replace(/[^0-9.\-]/g, '')); if (!Number.isFinite(v)) { errors.push(`${c.title} needs a number.`); continue; } }
       else if (c.type === 'date') { if (/^\d{4}-\d{2}-\d{2}$/.test(String(v))) v = String(v); else { const d = new Date(v); if (isNaN(d)) { errors.push(`${c.title} needs a date like 2026-11-20.`); continue; } v = new Intl.DateTimeFormat('en-CA', { timeZone: process.env.KS_TIMEZONE || 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d); } }
       else if (c.type === 'checkbox') v = v === true || v === 'true' || v === 1 || v === '1';
+      else if (c.type === 'file' || c.source === 'file') v = Array.isArray(v) ? v.filter(f => f && f.url).map(f => ({ name: String(f.name || f.url), url: String(f.url) })) : String(v);
       else if (Array.isArray(v)) v = v.join(', ');
       else v = String(v);
       out[c.id] = v;
@@ -69,7 +70,15 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
 
   // ---------- the board's own automations, for changes made through the API ----------
   // Same rules the app runs (status/date/assign/move-to-group). Messaging and outside tools stay off.
-  function runRules(b, item, ev, actorName) {
+  // Monday "notify" actions become in-app notifications for the Solver.ca people they name (sent after the item saves).
+  function sendNotes(b, iid, item, notes) {
+    for (const n of notes) {
+      const names = fillTemplate(n.to || '', b, item).split(',').map(x => x.trim()).filter(Boolean);
+      const msg = fillTemplate(n.message || '', b, item).replace(/\s+/g, ' ').trim();
+      try { notifyNames(names, { kind: n.kind || 'automation', text: `${item.name || 'Item'}: ${msg || String(n.title || 'Reminder').replace(/\s*→.*$/, '')}`.slice(0, 400), board: b.id, item: iid }); } catch (e) { console.error('notify:', e.message); }
+    }
+  }
+  function runRules(b, item, ev, actorName, notes = []) {
     const rules = (b.automations || []).filter(r => r.on !== false && r.trigger && (
       (ev.type === 'created' && r.trigger === 'created' && (!r.group || r.group === ev.group)) ||
       (ev.type === 'moved_group' && r.trigger === 'moved_group' && (r.group === ev.group || (r.group === '__top__' && (b.groups[0] || {}).id === ev.group))) ||
@@ -86,6 +95,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
         else if (a.type === 'clear') item.values[a.col] = '';
         else if (a.type === 'assign') item.values[a.col] = [...new Set([...String(item.values[a.col] || '').split(',').map(s => s.trim()).filter(Boolean), a.value])].join(', ');
         else if (a.type === 'move_group') { const g = a.group === '__top__' ? b.groups[0] : b.groups.find(x => x.id === a.group); if (g) item.group = g.id; }
+        else if (a.type === 'notify') notes.push({ to: a.to, message: a.message, title: r.title });
         else continue;
       }
       log.push({ at: now(), by: 'automation', text: `“${r.title || 'Automation'}” ran (via ${actorName})` });
@@ -150,6 +160,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     q.upsertDoc.run(path, `boards/${bid}/items`, iid, JSON.stringify(data), now(), actor.id);
     broadcast({ op: 'set', col: `boards/${bid}/items`, id: iid, data });
     itemChanged(path, before, data, actor.id);
+    try { itemNotifications(path, before, data, actor); } catch (e) { console.error('notifications:', e.message); }
   }
   function createItem(b, body, actor) {
     const errors = []; const values = toValues(b, { ...(body.values || {}), ...(body.fields || {}) }, errors);
@@ -159,8 +170,10 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     const iid = rid('i'); const item = { name, group: grp, pos: Date.now(), values, updates: [], subitems: [], createdAt: now(),
       activity: [{ at: now(), by: actor.id, text: `Created by ${actor.name}` }] };
     if (body.update) item.updates.push({ at: now(), by: '', byName: actor.name, text: String(body.update).slice(0, 4000) });
-    runRules(b, item, { type: 'created', group: grp }, actor.name);
+    const notes = [];
+    runRules(b, item, { type: 'created', group: grp }, actor.name, notes);
     saveItem(b.id, iid, item, actor);
+    sendNotes(b, iid, item, notes);
     return { id: iid, item };
   }
 
@@ -253,9 +266,11 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
       if (errors.length) throw new HttpError(400, errors.join(' '));
       const next = { ...item, values: { ...(item.values || {}), ...values }, group: grp, ...(body.name ? { name: String(body.name) } : {}) };
       next.activity = [{ at: now(), by: user.id, text: `Changed by ${user.name}` }, ...(item.activity || [])].slice(0, 40);
-      for (const [cid, v] of Object.entries(values)) runRules(b, next, { type: 'value', col: cid, value: v }, user.name);
-      if (grp !== item.group) runRules(b, next, { type: 'moved_group', group: grp }, user.name);
+      const notes = [];
+      for (const [cid, v] of Object.entries(values)) runRules(b, next, { type: 'value', col: cid, value: v }, user.name, notes);
+      if (grp !== item.group) runRules(b, next, { type: 'moved_group', group: grp }, user.name, notes);
       saveItem(b.id, iid, next, user);
+      sendNotes(b, iid, next, notes);
       return send(res, 200, itemOut(b, iid, next));
     }
     if (method === 'DELETE') { needWrite(); q.deleteDoc.run(path); broadcast({ op: 'delete', col: `boards/${b.id}/items`, id: iid }); itemChanged(path, item, null, user.id); return send(res, 200, { ok: true }); }
@@ -331,6 +346,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
           d.activity = [{ at: now(), by: 'automation', text: `Reminder: ${r.title || 'date arrived'}` }, ...(d.activity || [])].slice(0, 40);
           q.upsertDoc.run(`boards/${b.id}/items/${ir.id}`, `boards/${b.id}/items`, ir.id, JSON.stringify(d), now(), 'reminder');
           broadcast({ op: 'set', col: `boards/${b.id}/items`, id: ir.id, data: d });
+          sendNotes(b, ir.id, d, (r.actions || []).filter(a => a.type === 'notify').map(a => ({ to: a.to, message: a.message, title: r.title || 'Reminder', kind: 'reminder' })));
           emit('reminder.due', b.id, ir.id, b, d, { reminder: { rule: r.title, column: ((b.columns || []).find(c => c.id === r.col) || {}).title, date: target, notify: (r.actions || []).filter(a => a.type === 'notify').map(a => ({ to: a.to, message: a.message })) } });
         }
       }
