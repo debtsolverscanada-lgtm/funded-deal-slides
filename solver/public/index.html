@@ -716,6 +716,14 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
   .pop .chip { height: 40px; }
   .open-btn, .name-open { min-height: 40px; }
 }
+/* name cell: keep the name, pill and open button inside the sticky cell (no spill into the next column) */
+.board td.name-cell { overflow: hidden; }
+.board td.name-cell .name-wrap { min-width: 0; }
+.name-open .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.name-open .upd-count { flex: 0 0 auto; }
+@media (max-width: 780px) { .board td.name-cell .sub-toggle.sub-empty { display: none; } }
+.board td.name-cell .name-wrap > .cell-input { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board td.name-cell .upd-count, .board td.name-cell .open-btn, .board td.name-cell .rowcheck, .board td.name-cell .sub-toggle { flex: 0 0 auto; }
 </style>
 </head>
 <body>
@@ -1380,7 +1388,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
   const COLW = { status: 150, text: 200, person: 130, date: 140, phone: 140, email: 210, number: 140, formula: 140, button: 130, checkbox: 90, dropdown: 170, link: 200, item_id: 130, created: 130, board_relation: 180, mirror: 180, ai: 220, doc: 200, time_tracking: 150 };
   const colW = c => isFileCol(c) ? 220 : c.long ? 240 : (COLW[c.type] || 170);
   const isNarrow = () => window.matchMedia('(max-width: 780px)').matches;
-  const nameW = () => isNarrow() ? (innerWidth < 400 ? 140 : 160) : 300;
+  const nameW = () => isNarrow() ? (innerWidth < 400 ? 170 : 190) : 300;
   const TV = { cols: [], xs: [], ci: new Map(), total: 0, win: [0, 0], lazy: false, items: [] };
   const GROUP_HEAD_H = 46, ROW_H = 38;
   function tvLayout(b) {
@@ -1444,7 +1452,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     const narrow = isNarrow(), subs = i.subitems || [], exp = S.expanded.has(i.id) && subs.length, sel = S.selected.has(i.id);
     lazyCells = true; let row;
     try { row = `<tr data-row="${esc(i.id)}" data-group="${esc(g.id)}" class="${sel ? 'sel' : ''}${TV.newId === i.id && Date.now() < TV.newUntil ? ' tv-new' : ''}">
-          <td class="name-cell"><div class="name-wrap">${S.canWrite ? `<span class="grip" draggable="true" data-rowdrag="${esc(i.id)}" title="Drag to move" aria-hidden="true">⋮⋮</span>` : ''}<input type="checkbox" class="rowcheck" data-sel="${esc(i.id)}" ${sel ? 'checked' : ''} aria-label="Select ${esc(i.name)}">${(subs.length || (b.subColumns || []).length) ? `<button class="sub-toggle" data-act="subs" data-item="${esc(i.id)}" aria-expanded="${!!exp}" title="Subitems">${exp ? '▾' : '▸'} ${subs.length}</button>` : ''}${narrow ? `<button class="name-open" data-act="open" data-item="${esc(i.id)}">${esc(i.name)}${(i.updates || []).length ? `<span class="upd-count">${i.updates.length}</span>` : ''}</button>` : `<span class="cell-input cell-lazy" tabindex="0" role="textbox" data-lazy="name" data-edit="name" data-item="${esc(i.id)}" aria-label="Item name" style="padding-left:2px">${esc(i.name)}</span><button class="open-btn" data-act="open" data-item="${esc(i.id)}">Open${(i.updates || []).length ? ' · ' + i.updates.length : ''}</button>`}</div></td>
+          <td class="name-cell"><div class="name-wrap">${S.canWrite ? `<span class="grip" draggable="true" data-rowdrag="${esc(i.id)}" title="Drag to move" aria-hidden="true">⋮⋮</span>` : ''}<input type="checkbox" class="rowcheck" data-sel="${esc(i.id)}" ${sel ? 'checked' : ''} aria-label="Select ${esc(i.name)}">${(subs.length || (b.subColumns || []).length) ? `<button class="sub-toggle${subs.length ? '' : ' sub-empty'}" data-act="subs" data-item="${esc(i.id)}" aria-expanded="${!!exp}" title="Subitems">${exp ? '▾' : '▸'} ${subs.length}</button>` : ''}${narrow ? `<button class="name-open" data-act="open" data-item="${esc(i.id)}"><span class="nm">${esc(i.name)}</span>${(i.updates || []).length ? `<span class="upd-count">${i.updates.length}</span>` : ''}</button>` : `<span class="cell-input cell-lazy" tabindex="0" role="textbox" data-lazy="name" data-edit="name" data-item="${esc(i.id)}" aria-label="Item name" style="padding-left:2px">${esc(i.name)}</span><button class="open-btn" data-act="open" data-item="${esc(i.id)}">Open${(i.updates || []).length ? ' · ' + i.updates.length : ''}</button>`}</div></td>
           ${cells.map(c => isSp(c) ? '<td class="tsp"></td>' : `<td class="c-${c.type} ${c.type === 'number' ? 'num-cell' : ''} ${c.format || ''}" data-ci="${ciOf(c)}">${cellEditor(c, i)}</td>`).join('')}<td></td>
         </tr>`; } finally { lazyCells = false; }
     return row + (exp ? `<tr class="sub-row" data-subof="${esc(i.id)}"><td colspan="${span}"><div class="sub-stick">${subTable(b, i)}</div></td></tr>` : '');
