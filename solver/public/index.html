@@ -2170,7 +2170,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
 
   if (window.KSViews) KSViews.init({ S, board, itemById, visibleItems, labelOf, splitPeople, fileList, isFileCol, describe, colEditable, setValue, patchItem, patchBoard, localBoard, formulaResult, hue, initials, toast, render, renderHead, renderContent, renderLayer, savePage });
   // the page's internals the add-ons use (ext.js, automations.js, editor.js, extras.js)
-  window.SolverApp = { S, board, itemById, patchBoard, patchItem, localBoard, render, renderLayer, renderContent, scheduleRender, toast, esc, rid, normRule, describe, labelOf, fmtTime, splitPeople, colEditable, isLocked, fillNames, IC };
+  Object.assign(window.SolverApp = window.SolverApp || {}, { S, board, itemById, patchBoard, patchItem, localBoard, render, renderLayer, renderContent, scheduleRender, toast, esc, rid, normRule, describe, labelOf, fmtTime, splitPeople, colEditable, isLocked, fillNames, IC });
 
   async function init() {
     render();
@@ -2204,7 +2204,8 @@ td.currency::before, td.percent::after { color: var(--muted); }
       scheduleRender();
     }, () => { clearTimeout(slow); S.status = 'ready'; toast('Boards stopped updating. Reload the page to reconnect.'); render(); });
   }
-  window.SolverApp = { S, board, itemById, render, renderLayer, renderContent, renderHead, renderRail, scheduleRender, toast, setValue, patchBoard, localBoard, selectBoard, describe, esc, TYPES, IC, colEditable, fmtTime, labelOf, PALETTE, wsOf, workspaces, savePage, curView };
+  // add to (not replace) the shared object: ext.js/automations.js and features.js both read it
+  Object.assign(window.SolverApp = window.SolverApp || {}, { S, board, itemById, render, renderLayer, renderContent, renderHead, renderRail, scheduleRender, toast, setValue, patchBoard, localBoard, selectBoard, describe, esc, TYPES, IC, colEditable, fmtTime, labelOf, PALETTE, wsOf, workspaces, savePage, curView });
   init();
 })();
 </script>
