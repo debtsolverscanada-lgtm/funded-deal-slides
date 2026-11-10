@@ -76,7 +76,7 @@ tr.mx-flash td { animation: mx-flash 1.2s ease; }
 
 /* celebration canvas */
 .mx-confetti { position: fixed; inset: 0; pointer-events: none; z-index: 60; }
-.mx-banner { position: fixed; left: 50%; top: 18%; transform: translate(-50%, 0); z-index: 61; pointer-events: none; text-align: center; animation: mx-banner 2.6s var(--ease-out) forwards; }
+.mx-banner { position: fixed; left: 50%; top: 18%; transform: translate(-50%, 0); z-index: 61; pointer-events: none; text-align: center; animation: mx-banner 2.6s var(--ease-out) forwards; padding: 18px 34px 16px; border-radius: 26px; background: rgba(8,8,10,.78); backdrop-filter: blur(18px) saturate(150%); -webkit-backdrop-filter: blur(18px) saturate(150%); border: 1px solid var(--neon, rgba(255,255,255,.3)); box-shadow: 0 0 40px var(--neon-glow, rgba(255,255,255,.25)), 0 30px 80px rgba(0,0,0,.6); }
 .mx-banner b { display: block; font: 600 40px/1.1 var(--f-display); letter-spacing: -.03em; color: #fff; text-shadow: 0 0 40px rgba(255,255,255,.5); }
 .mx-banner span { color: rgba(255,255,255,.7); font-size: 15px; }
 @keyframes mx-banner { 0% { opacity: 0; transform: translate(-50%, 16px) scale(.9); } 15% { opacity: 1; transform: translate(-50%, 0) scale(1.04); } 25% { transform: translate(-50%, 0) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -12px); } }
