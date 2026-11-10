@@ -15,6 +15,7 @@ module.exports = function ext(ctx) {
   // integrations.js calls these for rules run through the API, date reminders and /api/v1/events
   integHooks.ruleRan = (bid, rid, iid, itemName, result, via) => automation.logRun(bid, rid, iid, itemName, result, true, via);
   integHooks.sendWebhook = (bid, iid, rule, item, via) => automation.sendWebhook(bid, iid, rule, item, via);
+  integHooks.webhookThrottled = (bid, iid, rule) => automation.throttled(bid, iid, rule);
   integHooks.onEvent = (body, hits, actor) => comms.onEvent(body, hits, actor);
 
   const modules = [automation, ai, docs, push, alerts, comms];

@@ -1006,7 +1006,9 @@ function checkGuestEdit(before, after, user) {
       for (const u of n.slice(kept)) { if (!u || typeof u !== 'object') throw no(); u.by = user.id; u.byName = user.name; u.text = String(u.text || '').slice(0, 4000); delete u.replies; }
       continue;
     }
-    if (k === 'activity') { const old = new Set((before.activity || []).map(js)); if ((Array.isArray(after.activity) ? after.activity : []).some(x => !old.has(js(x)) && !(x && x.by === user.id))) throw no(); continue; }
+    // new activity lines: the guest's own, and the lines an automation their change set off wrote ("… set Status", "… skipped: … is locked")
+    // (what those rules change is still checked: values against the guest-editable columns, nothing else on the item)
+    if (k === 'activity') { const old = new Set((before.activity || []).map(js)); if ((Array.isArray(after.activity) ? after.activity : []).some(x => !old.has(js(x)) && !(x && (x.by === user.id || x.by === 'automation')))) throw no(); continue; }
     throw no();
   }
 }

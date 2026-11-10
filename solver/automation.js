@@ -135,11 +135,13 @@ module.exports = function automation({ db, q, now, HttpError, readBody, send, bo
     catch (e) { const err = new HttpError(400, e.message); err.code = 'invalid_rule'; throw err; }
   }
 
+  // true when this rule already sent this item a moment ago (the send is skipped, and the run log says so)
+  const throttled = (bid, iid, rule) => Date.now() - (lastSent.get(`${bid}|${iid}|${rule.id}`) || 0) < 3000;
   // Sends the signed automation.webhook event for one rule run (from the app, the API or a date reminder).
   function sendWebhook(bid, iid, rule, item, via) {
     const b = boardDoc(bid); if (!b) return 0;
     const key = `${bid}|${iid}|${rule.id}`, t = Date.now();
-    if (t - (lastSent.get(key) || 0) < 3000) return 0;
+    if (throttled(bid, iid, rule)) return 0;
     const acts = (rule.actions || []).filter(a => a.type === 'webhook');
     let n = 0;
     for (const a of acts) n += integ.emit('automation.webhook', bid, iid, b, item, { automation: { id: rule.id, title: rule.title || null, note: a.note || null, via } }, a.hook ? { hook: a.hook } : {});
@@ -185,8 +187,8 @@ module.exports = function automation({ db, q, now, HttpError, readBody, send, bo
       const it = itemDoc(bid, iid); if (!it || !itemVisible(user, info, it)) throw new HttpError(404, 'No such item.');
       const rule = (b.automations || []).find(r => r.id === rid);
       if (!rule || rule.on === false || !(rule.actions || []).some(a => a.type === 'webhook')) throw new HttpError(400, 'That automation doesn’t send to a connected tool.');
-      const sent = sendWebhook(bid, iid, rule, it, 'app');
-      logRun(bid, rid, iid, it.name, sent ? `Sent to ${sent === 1 ? 'a connected tool' : sent + ' connected tools'}` : 'No connected tool is listening (add an outgoing webhook for “Automation sent to a tool”)', !!sent, 'webhook');
+      const thr = throttled(bid, iid, rule), sent = sendWebhook(bid, iid, rule, it, 'app');
+      logRun(bid, rid, iid, it.name, thr ? 'Not sent again: this rule sent this item a few seconds ago (throttled)' : sent ? `Sent to ${sent === 1 ? 'a connected tool' : sent + ' connected tools'}` : 'No connected tool is listening (add an outgoing webhook for “Automation sent to a tool”)', !!sent, 'webhook');
       return send(res, 200, { ok: true, sent });
     }
     // ---- what the editor needs: connected tools to pick from (names only) ----
@@ -199,7 +201,7 @@ module.exports = function automation({ db, q, now, HttpError, readBody, send, bo
     return false;
   }
 
-  return { handle, checkBoard, logRun, sendWebhook };
+  return { handle, checkBoard, logRun, sendWebhook, throttled };
 };
 module.exports.validateAutomations = validateAutomations;
 module.exports.TRIGGERS = TRIGGERS;

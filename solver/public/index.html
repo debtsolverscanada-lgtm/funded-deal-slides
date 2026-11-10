@@ -689,9 +689,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     if (old === value || (typeof value === 'object' && JSON.stringify(old) === JSON.stringify(value))) return;
     const patch = { values: { [colId]: value } };
     const lines = [{ text: `${col.title}: ${describe(col, old)} → ${describe(col, value)}` }], after = [];
-    const groupBefore = item.group;
-    fireRules(b, item, { type: 'value', col: colId, value }, patch, lines, after);
-    if (patch.group && patch.group !== groupBefore) fireRules(b, item, { type: 'moved_group', group: patch.group }, patch, lines, after);
+    fireRules(b, item, { type: 'value', col: colId, value }, patch, lines, after); // also runs the rules its own changes set off
     commitAuto(b, item, patch, lines, after);
   }
 
@@ -718,11 +716,18 @@ td.currency::before, td.percent::after { color: var(--muted); }
   }
   function ymdPlus(days) { const d = new Date(); d.setDate(d.getDate() + Number(days || 0)); return ymd(d); }
   // Applies a rule's actions into `patch` (values/group) and `lines` (activity). Returns extra work to do after saving.
+  // An automation never writes a column the person whose change set it off can't change (and a guest's rules never move or
+  // copy the item): that action is skipped and the activity and run log say so, and the person's own change still saves.
+  const meName = () => (S.me && (S.me.name || S.me.email)) || 'you';
   function applyActions(b, item, rule, patch, lines, after) {
     const name = rule.title ? `“${rule.title}”` : 'Automation';
     const n0 = lines.length;
+    const skip = what => { lines.push({ auto: true, text: `${name} skipped: ${what} is locked for ${meName()}` }); return true; };
+    const blocked = col => !colEditable(col, b) && skip(col.title);
     for (const a of rule.actions || []) {
       const col = a.col && b.columns.find(c => c.id === a.col);
+      if (col && ['set_status', 'set_value', 'set_date', 'clear', 'assign'].includes(a.type) && blocked(col)) continue;
+      if (S.isGuest && ['move_group', 'move_board', 'copy_to_board', 'duplicate'].includes(a.type)) { skip(a.type === 'move_group' ? 'Group' : 'Adding items'); continue; }
       switch (a.type) {
         case 'move_group': { const g = a.group === '__top__' ? b.groups[0] : b.groups.find(x => x.id === a.group); if (g && (patch.group || item.group) !== g.id) { patch.group = g.id; lines.push({ auto: true, text: `${name} moved this to “${g.name}”` }); } break; }
         case 'set_status': case 'set_value': { if (!col) break; patch.values[col.id] = a.value; lines.push({ auto: true, text: `${name} set ${col.title} to ${describe(col, a.value)}` }); break; }
@@ -739,7 +744,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
         default: lines.push({ auto: true, text: `${name} would ${a.label || a.type.replace(/_/g, ' ')} in Monday. Not run in Solver.ca, so nothing was sent.` });
       }
     }
-    if (window.SolverExt) SolverExt.ruleRan(b, item, rule, lines.slice(n0).map(l => l.text.replace(name + ' ', ''))); // the rule's run log
+    after.push({ kind: 'ran', rule, texts: lines.slice(n0).map(l => l.text.replace(name + ' ', '')) }); // the rule's run log, written once the change saved
   }
   // Finds rules for an event and applies them. event: { type, col, value, group }
   function fireRules(b, item, ev, patch, lines, after) {
@@ -769,18 +774,20 @@ td.currency::before, td.percent::after { color: var(--muted); }
       const v = (item.values || {})[c.id]; return v == null || v === '' ? '' : describe(c, v);
     });
   }
-  function finishAfter(b, item, after) {
+  // Runs after the change saved: notifications, posted updates, moves/copies, webhooks and the run log.
+  // hop counts board-to-board moves made by rules, so two boards' rules can't bounce an item forever.
+  function finishAfter(b, item, after, hop = 0) {
     for (const x of after) {
+      if (x.kind === 'ran') { if (window.SolverExt) SolverExt.ruleRan(b, item, x.rule, x.texts); continue; }
       // in-app notifications for the Solver.ca people the rule names (unknown names are skipped by the server)
       if (x.kind === 'notify' && window.KS) { const msg = fillTpl(b, item, x.message || '').replace(/\s+/g, ' ').trim(); KS.notify({ board: b.id, item: item.id, to: fillTpl(b, item, x.to || ''), text: `${item.name}: ${msg || String(x.title || 'Automation').replace(/\s*→.*$/, '')}`.slice(0, 400) }).catch(() => {}); }
-      if (x.kind === 'update' && x.text) { item.updates = [...(item.updates || []), { at: now(), by: 'automation', byName: 'Automation', text: x.text }]; patchItem(item.id, { updates: item.updates }); }
-      if (x.kind === 'move_board') moveItemToBoard(b, item, x.board, x.group, x.name, true, x.map);
-      if (x.kind === 'copy_board') moveItemToBoard(b, item, x.board, x.group, x.name, false, x.map);
-      if (x.kind === 'duplicate') duplicateItem(item, false, x.withUpdates);
+      if (x.kind === 'update' && x.text) { item.updates = [...(item.updates || []), { at: now(), by: 'automation', byName: 'Automation', text: x.text }]; const p = 'boards/' + b.id + '/items/' + item.id; write(p, () => S.db.doc(p).update({ updates: item.updates }), { guest: true }); }
+      if ((x.kind === 'move_board' || x.kind === 'copy_board') && hop < 4) moveItemToBoard(b, item, x.board, x.group, x.name, x.kind === 'move_board', x.map, hop + 1);
+      if (x.kind === 'duplicate' && b.id === S.boardId) duplicateItem(item, false, x.withUpdates);
       if (window.SolverExt) SolverExt.after(x, b, item); // "Send to a connected tool" (automations.js)
     }
   }
-  function moveItemToBoard(b, item, targetBoardId, groupId, why, removeHere = true, map = null) {
+  function moveItemToBoard(b, item, targetBoardId, groupId, why, removeHere = true, map = null, hop = 1) {
     const tb = S.boards.find(x => x.id === targetBoardId); if (!tb) { toast('The board this automation moves items to isn’t in Solver.ca.'); return; }
     const g = (groupId === '__top__' ? tb.groups[0] : tb.groups.find(x => x.id === groupId)) || tb.groups[0];
     const values = {};
@@ -809,8 +816,14 @@ td.currency::before, td.percent::after { color: var(--muted); }
     Object.assign(data.values, tPatch.values); if (tPatch.group) data.group = tPatch.group;
     tLines.forEach(l => { data.activity = [{ at: now(), by: 'automation', text: l.text }, ...data.activity].slice(0, 40); });
     const dst = 'boards/' + tb.id + '/items/' + newId, src = 'boards/' + b.id + '/items/' + item.id;
-    const w = write(dst, () => S.db.doc(dst).set(data));
-    if (removeHere) { w.then(() => write(src, () => S.db.doc(src).delete())); S.items = S.items.filter(x => x.id !== item.id); if (S.openItem === item.id) S.openItem = null; }
+    // once it's saved on the target board: remove it here, then the target board's rules' notifications, webhooks and run log
+    let saved = false;
+    write(dst, () => S.db.doc(dst).set(data).then(r => { saved = true; return r; })).then(() => {
+      if (!saved) return;
+      if (removeHere) write(src, () => S.db.doc(src).delete());
+      finishAfter(tb, { id: newId, ...data }, tAfter, hop);
+    });
+    if (removeHere) { S.items = S.items.filter(x => x.id !== item.id); if (S.openItem === item.id) S.openItem = null; }
     toast(`${removeHere ? 'Moved' : 'Copied'} to ${tb.name}`); scheduleRender();
   }
   // Moving an item into a group by hand runs that group's "when moved to group" rules, like Monday.
@@ -820,20 +833,24 @@ td.currency::before, td.percent::after { color: var(--muted); }
     fireRules(b, item, { type: 'moved_group', group: groupId }, patch, lines, after);
     commitAuto(b, item, patch, lines, after);
   }
-  // Runs rules picked by the caller (used by buttons).
+  // A button was pressed: its rules go through the same engine (conditions, chained rules) as any other change.
   function runRules(b, item, rules, why) {
     const patch = { values: {} }, lines = [{ text: why }], after = [];
-    rules.forEach(r => applyActions(b, item, normRule(r), patch, lines, after));
-    commitAuto(b, item, patch, lines, after);
+    const hit = fireRules(b, item, { type: 'button', col: (rules[0] || {}).col }, patch, lines, after);
+    if (hit.length) commitAuto(b, item, patch, lines, after);
   }
   function commitAuto(b, item, patch, lines, after) {
     let activity = item.activity || [];
     lines.forEach(l => { activity = [{ at: now(), by: l.auto ? 'automation' : S.uid, text: l.text }, ...activity]; });
     patch.activity = activity.slice(0, 40);
     item.values = { ...(item.values || {}), ...patch.values }; if (patch.group) item.group = patch.group; item.activity = patch.activity;
-    patchItem(item.id, patch, { guest: true });
-    lines.filter(l => l.auto).slice(0, 2).forEach(l => toast(l.text));
-    finishAfter(b, item, after);
+    // notifications, webhooks, moves and the run log only once the server took the change
+    let saved = false; const p = 'boards/' + b.id + '/items/' + item.id;
+    write(p, () => S.db.doc(p).update(patch).then(r => { saved = true; return r; }), { guest: true }).then(() => {
+      if (!saved) return;
+      lines.filter(l => l.auto).slice(0, 2).forEach(l => toast(l.text));
+      finishAfter(b, item, after);
+    });
     scheduleRender();
   }
 
@@ -845,9 +862,9 @@ td.currency::before, td.percent::after { color: var(--muted); }
     fireRules(b, { id: ref.id, ...data }, { type: 'created', group: groupId }, patch, lines, after);
     Object.assign(data.values, patch.values); if (patch.group) data.group = patch.group;
     lines.forEach(l => { data.activity = [{ at: now(), by: 'automation', text: l.text }, ...data.activity]; });
-    write(ref.path, () => ref.set(data));
+    let saved = false;
+    write(ref.path, () => ref.set(data).then(r => { saved = true; return r; })).then(() => { if (saved && after.length) finishAfter(b, itemById(ref.id) || { id: ref.id, ...data }, after); });
     S.items.push({ id: ref.id, ...data });
-    if (after.length) setTimeout(() => finishAfter(b, itemById(ref.id), after), 300);
     if (open) S.openItem = ref.id;
     scheduleRender();
   }
@@ -2086,23 +2103,32 @@ td.currency::before, td.percent::after { color: var(--muted); }
   }
   function setSub(itemId, subId, colId, value) {
     const b = board(), item = itemById(itemId); if (!b || !item) return;
+    if (!S.canWrite) { toast(S.isGuest ? 'Guests can’t change subitems.' : 'You can view this board but not change it.'); scheduleRender(); return; }
     const subs = JSON.parse(JSON.stringify(item.subitems || [])); const sb = subs.find(x => String(x.id) === String(subId)); if (!sb) return;
-    const lines = [];
+    const lines = [], ran = [];
     if (colId === 'name') { if (!value || value === sb.name) return; sb.name = value; }
     else {
       const c = (b.subColumns || []).find(x => x.id === colId); if (!c) return;
+      if (!colEditable(c, b)) { toast(`${c.title} is locked. Only admins can change it.`); scheduleRender(); return; }
       if (c.type === 'number' && value !== '') value = Number(String(value).replace(/[^0-9.\-]/g, ''));
       if (String((sb.values || {})[colId] ?? '') === String(value ?? '')) return;
       sb.values = { ...(sb.values || {}), [colId]: value };
       lines.push(`Subitem “${sb.name}”: ${c.title} → ${describe(c, value)}`);
+      // subitem rules: same lock policy as item rules (a column the person can't change is skipped and logged)
       rulesOf(b).filter(r => r.trigger === 'sub_status' && r.col === colId && (r.value == null || String(r.value) === String(value))).forEach(r => {
-        (r.actions || []).forEach(a => { const tc = (b.subColumns || []).find(x => x.id === a.col); if (!tc) return;
-          if (a.type === 'set_date') sb.values[tc.id] = ymdPlus(a.offset); else if (a.type === 'set_status' || a.type === 'set_value') sb.values[tc.id] = a.value; else if (a.type === 'clear') sb.values[tc.id] = ''; else return;
-          lines.push(`“${r.title}” set ${tc.title} on subitem “${sb.name}”`); });
+        const texts = [];
+        (r.actions || []).forEach(a => { const tc = (b.subColumns || []).find(x => x.id === a.col); if (!tc || !['set_date', 'set_status', 'set_value', 'clear'].includes(a.type)) return;
+          if (!colEditable(tc, b)) { texts.push(`skipped: ${tc.title} is locked for ${meName()}`); lines.push(`“${r.title}” skipped: ${tc.title} is locked for ${meName()}`); return; }
+          if (a.type === 'set_date') sb.values[tc.id] = ymdPlus(a.offset); else if (a.type === 'clear') sb.values[tc.id] = ''; else sb.values[tc.id] = a.value;
+          texts.push(`set ${tc.title} on subitem “${sb.name}”`); lines.push(`“${r.title}” set ${tc.title} on subitem “${sb.name}”`); });
+        ran.push({ rule: r, texts });
       });
     }
     item.subitems = subs; let activity = item.activity || []; lines.forEach(t => { activity = [{ at: now(), by: t.startsWith('“') ? 'automation' : S.uid, text: t }, ...activity]; });
-    item.activity = activity.slice(0, 40); patchItem(item.id, { subitems: subs, activity: item.activity }); scheduleRender();
+    item.activity = activity.slice(0, 40);
+    let saved = false; const p = 'boards/' + b.id + '/items/' + item.id;
+    write(p, () => S.db.doc(p).update({ subitems: subs, activity: item.activity }).then(r => { saved = true; return r; })).then(() => { if (saved && window.SolverExt) ran.forEach(x => SolverExt.ruleRan(b, item, x.rule, x.texts)); });
+    scheduleRender();
   }
   function savePage() { try { localStorage.setItem('ks-page', S.page); localStorage.setItem('ks-view', S.view); } catch (e) {} }
   let summaryBusy = false;

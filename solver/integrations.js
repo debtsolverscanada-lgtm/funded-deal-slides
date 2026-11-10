@@ -70,12 +70,22 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
   const groupId = (b, g) => { if (!g) return (b.groups || [])[0] && b.groups[0].id; const x = (b.groups || []).find(y => y.id === g || y.name.toLowerCase() === String(g).toLowerCase()); return x && x.id; };
 
   // ---------- the board's own automations, for changes made through the API ----------
-  // Same rules the app runs (status/date/assign/move-to-group). Messaging and outside tools stay off.
-  // Monday "notify" actions become in-app notifications for the Solver.ca people they name (sent after the item saves).
+  // Same rules the app runs (status/date/assign/move-to-group), chained up to 4 deep like the app. Messaging and outside tools stay off.
+  // A rule never writes a column the person, key, link or form that set it off can't change: that action is skipped and logged.
+  // Monday "notify" actions become in-app notifications for the Solver.ca people they name. Notifications, webhooks and
+  // the run log all go out from here, after the item saved.
   function sendNotes(b, iid, item, notes) {
     for (const n of notes) {
+      if (n.ran) { if (hooks.ruleRan && iid) try { hooks.ruleRan(b.id, n.ran.rule, iid, item.name, n.ran.result, n.ran.via); } catch (e) {} continue; }
       // "Send to a connected tool": a signed automation.webhook event (opt-in per rule)
-      if (n.webhook) { try { const sent = hooks.sendWebhook ? hooks.sendWebhook(b.id, iid, n.rule, item, n.via || 'api') : 0; if (hooks.ruleRan) hooks.ruleRan(b.id, n.rule.id, iid, item.name, sent ? `Sent to ${sent === 1 ? 'a connected tool' : sent + ' connected tools'}` : 'No connected tool is listening', 'webhook'); } catch (e) { console.error('automation webhook:', e.message); } continue; }
+      if (n.webhook) {
+        try {
+          const throttled = !!(hooks.webhookThrottled && hooks.webhookThrottled(b.id, iid, n.rule));
+          const sent = !throttled && hooks.sendWebhook ? hooks.sendWebhook(b.id, iid, n.rule, item, n.via || 'api') : 0;
+          if (hooks.ruleRan) hooks.ruleRan(b.id, n.rule.id, iid, item.name, throttled ? 'Not sent again: this rule sent this item a few seconds ago (throttled)' : sent ? `Sent to ${sent === 1 ? 'a connected tool' : sent + ' connected tools'}` : 'No connected tool is listening', 'webhook');
+        } catch (e) { console.error('automation webhook:', e.message); }
+        continue;
+      }
       const names = fillTemplate(n.to || '', b, item).split(',').map(x => x.trim()).filter(Boolean);
       const msg = fillTemplate(n.message || '', b, item).replace(/\s+/g, ' ').trim();
       try { notifyNames(names, { kind: n.kind || 'automation', text: `${item.name || 'Item'}: ${msg || String(n.title || 'Reminder').replace(/\s*→.*$/, '')}`.slice(0, 400), board: b.id, item: iid }); } catch (e) { console.error('notify:', e.message); }
@@ -94,32 +104,48 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
       default: return list.includes(String(v ?? ''));
     }
   }
-  function runRules(b, item, ev, actorName, notes = [], iid = null) {
+  // ev: { type: 'created'|'moved_group'|'value', col, value, group }. actor: the user, API key, lead link or form that made the change.
+  // Side effects (notify, webhook, run log) go into `notes`; sendNotes sends them once the item is saved.
+  function runRules(b, item, ev, actor, notes = [], iid = null, depth = 0) {
+    const actorName = (actor && actor.name) || 'someone', locked = lockedCols(actor && actor.role ? actor : null, b);
     const rules = (b.automations || []).filter(r => r.on !== false && r.trigger && (
       (ev.type === 'created' && r.trigger === 'created' && (!r.group || r.group === ev.group)) ||
       (ev.type === 'moved_group' && r.trigger === 'moved_group' && (!r.group || r.group === ev.group || (r.group === '__top__' && (b.groups[0] || {}).id === ev.group))) ||
-      (ev.type === 'value' && (r.trigger === 'status' || r.trigger === 'column') && r.col === ev.col && (r.value == null || r.value === '' || String(r.value) === String(ev.value)))));
+      (ev.type === 'value' && (r.trigger === 'status' || r.trigger === 'column') && r.col === ev.col && (r.value == null || r.value === '' || String(r.value) === String(ev.value))))
+    ).filter(r => (r.conditions || []).every(c => condOk(b, item, c)));
+    if (!rules.length) return;
     const today = new Intl.DateTimeFormat('en-CA', { timeZone: process.env.KS_TIMEZONE || 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()), log = [];
     const plus = (n) => { const [y, m, d] = today.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d + Number(n || 0))).toISOString().slice(0, 10); };
+    const title = cid => ((b.columns || []).find(c => c.id === cid) || {}).title || cid;
+    item.values = item.values || {};
+    const beforeVals = { ...item.values }, beforeGroup = item.group;
     for (const r of rules) {
-      if (!(r.conditions || []).every(c => condOk(b, item, c))) continue;
-      const did = [];
+      const did = [], skipped = [], name = `“${r.title || 'Automation'}”`;
+      const canSet = cid => { if (!locked.has(cid)) return true; skipped.push(`skipped: ${title(cid)} is locked for ${actorName}`); return false; };
       for (const a of r.actions || []) {
-        item.values = item.values || {};
-        if (a.type === 'set_status' || a.type === 'set_value') { item.values[a.col] = a.value; did.push('set a column'); }
-        else if (a.type === 'set_date') { item.values[a.col] = a.offset ? plus(a.offset) : today; did.push('set a date'); }
-        else if (a.type === 'clear') { item.values[a.col] = ''; did.push('cleared a column'); }
-        else if (a.type === 'assign') { item.values[a.col] = [...new Set([...String(item.values[a.col] || '').split(',').map(s => s.trim()).filter(Boolean), a.value])].join(', '); did.push('assigned ' + a.value); }
+        if (a.type === 'set_status' || a.type === 'set_value') { if (canSet(a.col)) { item.values[a.col] = a.value; did.push('set ' + title(a.col)); } }
+        else if (a.type === 'set_date') { if (canSet(a.col)) { item.values[a.col] = a.offset ? plus(a.offset) : today; did.push('set ' + title(a.col)); } }
+        else if (a.type === 'clear') { if (canSet(a.col)) { item.values[a.col] = ''; did.push('cleared ' + title(a.col)); } }
+        else if (a.type === 'assign') { if (canSet(a.col)) { item.values[a.col] = [...new Set([...String(item.values[a.col] || '').split(',').map(s => s.trim()).filter(Boolean), a.value])].join(', '); did.push('assigned ' + a.value); } }
         else if (a.type === 'move_group') { const g = a.group === '__top__' ? b.groups[0] : b.groups.find(x => x.id === a.group); if (g) { item.group = g.id; did.push('moved it to ' + g.name); } }
         else if (a.type === 'notify') { notes.push({ to: a.to, message: a.message, title: r.title }); did.push('notified ' + (a.to || 'someone')); }
         else if (a.type === 'webhook') notes.push({ webhook: true, rule: r });
         else if (a.type === 'create_update') { item.updates = [...(item.updates || []), { at: now(), by: 'automation', byName: 'Automation', text: String(a.value || '') }]; did.push('posted an update'); }
-        else continue;
+        // moving, copying and duplicating need the app open: say so instead of skipping quietly
+        else if (a.type === 'move_board' || a.type === 'copy_to_board' || a.type === 'duplicate') skipped.push(`skipped: ${a.type === 'move_board' ? 'moving it to another board' : a.type === 'copy_to_board' ? 'copying it to another board' : 'duplicating it'} only runs for changes made in the app, not through ${actorName}`);
+        else skipped.push(`skipped: ${a.label || String(a.type || 'this action').replace(/_/g, ' ')} isn’t run in Solver.ca`);
       }
-      log.push({ at: now(), by: 'automation', text: `“${r.title || 'Automation'}” ran (via ${actorName})` });
-      if (hooks.ruleRan && iid) try { hooks.ruleRan(b.id, r.id, iid, item.name, did.length ? 'Ran: ' + did.join(', ') : 'Ran (nothing to change here)', 'api · ' + actorName); } catch (e) {}
+      log.push({ at: now(), by: 'automation', text: `${name} ran (via ${actorName})` });
+      skipped.forEach(s => log.push({ at: now(), by: 'automation', text: `${name} ${s}` }));
+      const result = [did.length ? 'Ran: ' + did.join(', ') : skipped.length ? '' : 'Ran (nothing to change here)', ...skipped].filter(Boolean).join('; ');
+      notes.push({ ran: { rule: r.id, result, via: 'api · ' + actorName } });
     }
     if (log.length) item.activity = [...log, ...(item.activity || [])].slice(0, 40);
+    // changes the rules made set off further rules, like the app (4 deep at most)
+    if (depth < 4) {
+      for (const [cid, v] of Object.entries(item.values)) if (JSON.stringify(beforeVals[cid] ?? '') !== JSON.stringify(v ?? '')) runRules(b, item, { type: 'value', col: cid, value: v }, actor, notes, iid, depth + 1);
+      if (item.group !== beforeGroup) runRules(b, item, { type: 'moved_group', group: item.group }, actor, notes, iid, depth + 1);
+    }
   }
 
   // ---------- outgoing webhooks ----------
@@ -208,7 +234,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
       activity: [{ at: now(), by: actor.id, text: `Created by ${actor.name}` }] };
     if (body.update) item.updates.push({ at: now(), by: '', byName: actor.name, text: String(body.update).slice(0, 4000) });
     const notes = [];
-    runRules(b, item, { type: 'created', group: grp }, actor.name, notes, iid);
+    runRules(b, item, { type: 'created', group: grp }, actor, notes, iid);
     saveItem(b.id, iid, item, actor, opts);
     sendNotes(b, iid, item, notes);
     return { id: iid, item };
@@ -324,8 +350,9 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
       const next = { ...item, values: { ...(item.values || {}), ...values }, group: grp, ...(body.name ? { name: String(body.name) } : {}) };
       next.activity = [{ at: now(), by: user.id, text: `Changed by ${user.name}` }, ...(item.activity || [])].slice(0, 40);
       const notes = [];
-      for (const [cid, v] of Object.entries(values)) runRules(b, next, { type: 'value', col: cid, value: v }, user.name, notes, iid);
-      if (grp !== item.group) runRules(b, next, { type: 'moved_group', group: grp }, user.name, notes, iid);
+      // only real changes set off rules (sending the value a column already has does nothing, like the app)
+      for (const [cid, v] of Object.entries(values)) if (JSON.stringify(v ?? '') !== JSON.stringify((item.values || {})[cid] ?? '')) runRules(b, next, { type: 'value', col: cid, value: v }, user, notes, iid);
+      if (grp !== item.group) runRules(b, next, { type: 'moved_group', group: grp }, user, notes, iid);
       saveItem(b.id, iid, next, user);
       sendNotes(b, iid, next, notes);
       return send(res, 200, itemOut(b, iid, next));
@@ -383,27 +410,42 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
   // ---------- "when a date arrives" reminders (Monday's date triggers) ----------
   // Checks every 10 minutes. A due reminder is written to the item's activity and sent as a reminder.due webhook.
   const TZ = process.env.KS_TIMEZONE || 'America/Toronto';
-  const partsIn = d => Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(d).map(p => [p.type, p.value]));
+  const partsIn = (d, tz = TZ) => Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(d).map(p => [p.type, p.value]));
   const addDays = (ymd, n) => { const [y, m, d] = ymd.split('-').map(Number); const t = new Date(Date.UTC(y, m - 1, d + n)); return t.toISOString().slice(0, 10); };
-  function checkReminders() {
-    const nowP = partsIn(new Date()), today = `${nowP.year}-${nowP.month}-${nowP.day}`, hhmm = `${nowP.hour === '24' ? '00' : nowP.hour}:${nowP.minute}`;
+  const zoneOk = z => { try { new Intl.DateTimeFormat('en-CA', { timeZone: z }); return true; } catch (e) { return false; } };
+  // "2 day(s) before the date, at 09:00 America/Edmonton": the time and "today" are read in the rule's own time zone
+  // (the workspace's when the rule names none). Returns what is due right now, or null when it isn't that time yet.
+  function ruleDue(r, at) {
+    const w = String(r.when || ''), t = /at (\d{1,2}):(\d{2})\s*([A-Za-z_]+(?:\/[A-Za-z0-9_+\-]+)+|UTC)?/.exec(w);
+    const tz = t && t[3] && zoneOk(t[3]) ? t[3] : TZ, p = partsIn(at, tz);
+    const today = `${p.year}-${p.month}-${p.day}`, hhmm = `${p.hour === '24' ? '00' : p.hour}:${p.minute}`;
+    if (hhmm < (t ? `${t[1].padStart(2, '0')}:${t[2]}` : '09:00')) return null;
+    const off = /(\d+)\s*day/.exec(w); const n = off ? Number(off[1]) * (/before/.test(w) ? 1 : /after/.test(w) ? -1 : 0) : 0;
+    return { r, today, target: addDays(today, n) }; // target: the item date that is due today
+  }
+  // at: the time to check for (tests pass a fixed clock)
+  function checkReminders(at = new Date()) {
     for (const br of q.docsInCol.all('boards')) {
       const b = { id: br.id, ...JSON.parse(br.data) };
-      const rules = (b.automations || []).filter(r => r.trigger === 'date_arrives' && r.col && r.mondayActive !== false);
-      if (!rules.length) continue;
-      for (const r of rules) {
-        const w = String(r.when || ''); const at = (/at (\d{1,2}:\d{2})/.exec(w) || [])[1] || '09:00';
-        if (hhmm < at.padStart(5, '0')) continue;
-        const off = /(\d+)\s*day/.exec(w); const n = off ? Number(off[1]) * (/before/.test(w) ? 1 : /after/.test(w) ? -1 : 0) : 0;
-        const target = addDays(today, n); // item date that is due today
-        for (const ir of q.docsInCol.all(`boards/${b.id}/items`)) {
-          const d = JSON.parse(ir.data); if ((d.values || {})[r.col] !== target) continue;
-          d.reminded = d.reminded || {}; if (d.reminded[r.id] === today) continue;
-          d.reminded[r.id] = today;
+      const due = (b.automations || []).filter(r => r.on !== false && r.trigger === 'date_arrives' && r.col && r.mondayActive !== false).map(r => ruleDue(r, at)).filter(Boolean);
+      if (!due.length) continue;
+      const quoted = [...new Set(due.map(x => JSON.stringify(x.target)))];
+      for (const ir of q.docsInCol.all(`boards/${b.id}/items`)) { // the board's items are read once for all its rules
+        if (!quoted.some(s => ir.data.includes(s))) continue; // no due date anywhere in this item
+        const d = JSON.parse(ir.data), fired = [];
+        for (const x of due) {
+          const r = x.r;
+          if ((d.values || {})[r.col] !== x.target || (d.reminded && d.reminded[r.id] === x.today)) continue;
+          if (!(r.conditions || []).every(c => condOk(b, d, c))) continue; // "only if status is …" and the rest, like the app
+          d.reminded = { ...(d.reminded || {}), [r.id]: x.today };
           d.activity = [{ at: now(), by: 'automation', text: `Reminder: ${r.title || 'date arrived'}` }, ...(d.activity || [])].slice(0, 40);
-          q.upsertDoc.run(`boards/${b.id}/items/${ir.id}`, `boards/${b.id}/items`, ir.id, JSON.stringify(d), now(), 'reminder');
-          broadcast({ op: 'set', col: `boards/${b.id}/items`, id: ir.id, data: d });
-          sendNotes(b, ir.id, d, [...(r.actions || []).filter(a => a.type === 'notify').map(a => ({ to: a.to, message: a.message, title: r.title || 'Reminder', kind: 'reminder' })), ...((r.actions || []).some(a => a.type === 'webhook') && r.on !== false ? [{ webhook: true, rule: r, via: 'reminder' }] : [])]);
+          fired.push(x);
+        }
+        if (!fired.length) continue;
+        q.upsertDoc.run(`boards/${b.id}/items/${ir.id}`, `boards/${b.id}/items`, ir.id, JSON.stringify(d), now(), 'reminder');
+        broadcast({ op: 'set', col: `boards/${b.id}/items`, id: ir.id, data: d });
+        for (const { r, target } of fired) {
+          sendNotes(b, ir.id, d, [...(r.actions || []).filter(a => a.type === 'notify').map(a => ({ to: a.to, message: a.message, title: r.title || 'Reminder', kind: 'reminder' })), ...((r.actions || []).some(a => a.type === 'webhook') ? [{ webhook: true, rule: r, via: 'reminder' }] : [])]);
           if (hooks.ruleRan) try { hooks.ruleRan(b.id, r.id, ir.id, d.name, `Reminder for ${target}`, 'reminder'); } catch (e) {}
           emit('reminder.due', b.id, ir.id, b, d, { reminder: { rule: r.title, column: ((b.columns || []).find(c => c.id === r.col) || {}).title, date: target, notify: (r.actions || []).filter(a => a.type === 'notify').map(a => ({ to: a.to, message: a.message })) } });
         }
