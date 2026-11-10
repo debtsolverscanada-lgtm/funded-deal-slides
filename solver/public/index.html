@@ -1287,7 +1287,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
         <div class="form-row"><button class="toggle" data-act="access-set" data-private="1" aria-pressed="${priv}">Private</button><button class="toggle" data-act="access-set" data-private="0" aria-pressed="${!priv}">Open to everyone</button></div>
         ${priv ? '' : '<p>Everyone on the team can see this board now. The list below only matters once it’s private.</p>'}
         ${rows || '<p class="rail-note">No one is listed yet.</p>'}
-        <div class="form-row"><input class="field-input" id="acc-email" list="acc-people" type="email" placeholder="Add by email" aria-label="Email to add" style="flex:1 1 220px"><datalist id="acc-people">${opts}</datalist><button class="btn primary" data-act="access-add">Add</button></div>
+        <div class="form-row"><input class="field-input" id="acc-email" list="acc-people" type="email" value="${esc(m.email || '')}" placeholder="Add by email" aria-label="Email to add" style="flex:1 1 220px"><datalist id="acc-people">${opts}</datalist><button class="btn primary" data-act="access-add">Add</button></div>
         <div><button class="btn" data-act="close-modal-btn">Done</button></div>`;
     }
     if (m.type === 'team') {
@@ -1379,7 +1379,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
         const e2 = ($('#acc-email').value || '').trim().toLowerCase();
         if (!/^[^@\s]+@[^@\s]+$/.test(e2)) { toast('Enter an email address.'); return; }
         const ac = { private: true, ...(b.access || {}) }; ac.members = [...new Set([...(ac.members || []), e2])].sort();
-        saveAccess(ac); toast(ac.private ? `${e2} can now see this board` : `Added ${e2}`); break;
+        S.modal.email = ''; saveAccess(ac); toast(ac.private ? `${e2} can now see this board` : `Added ${e2}`); break;
       }
       case 'access-remove': { const ac = { ...(b.access || {}) }; ac.members = (ac.members || []).filter(x => x !== t.dataset.email); saveAccess(ac); break; }
       case 'monday-pull': KS.mondayPull().then(() => { toast('Pulled the latest changes from Monday.'); loadSync(); }).catch(e => { toast(e.message || 'The pull didn’t finish.'); loadSync(); }); if (S.modal && S.modal.sync && S.modal.sync.pull) { S.modal.sync.pull.running = true; renderLayer(); } break;
@@ -1597,6 +1597,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
 
   document.addEventListener('input', e => {
     if (e.target.id === 'search') { S.search = e.target.value; S.shown = {}; renderContent(); }
+    if (e.target.id === 'acc-email' && S.modal) S.modal.email = e.target.value; // survives live re-renders while typing
     if (e.target.id === 'board-filter') { S.boardFilter = e.target.value; renderRail(); }
     if (e.target.id === 'person-q' && S.pop) { S.pop.q = e.target.value; const pos = e.target.selectionStart; renderLayer(); const el = $('#person-q'); if (el) { el.focus(); el.setSelectionRange(pos, pos); } }
   });
