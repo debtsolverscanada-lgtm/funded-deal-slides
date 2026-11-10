@@ -1,0 +1,92 @@
+/* Solver.ca motion: entrances, micro-interactions, celebrations.
+   Everything is skipped when the viewer prefers reduced motion or picks Motion: Off. */
+:root { --spring: cubic-bezier(.2, .9, .25, 1.15); --ease-out: cubic-bezier(.16, 1, .3, 1); }
+
+/* ambient background orbs (very slow) */
+.mx-orbs { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+.mx-orbs span { position: absolute; width: 46vmax; height: 46vmax; border-radius: 50%; filter: blur(60px); opacity: .07; background: radial-gradient(closest-side, #fff, transparent); animation: mx-drift 46s ease-in-out infinite alternate; }
+.mx-orbs span:nth-child(1) { top: -18vmax; right: -12vmax; }
+.mx-orbs span:nth-child(2) { bottom: -22vmax; left: -16vmax; animation-duration: 62s; animation-delay: -20s; opacity: .05; }
+.mx-orbs span:nth-child(3) { top: 30vh; left: 40vw; width: 28vmax; height: 28vmax; animation-duration: 54s; animation-delay: -8s; opacity: .035; }
+@keyframes mx-drift { 0% { transform: translate3d(0, 0, 0) scale(1); } 50% { transform: translate3d(-6vw, 4vh, 0) scale(1.08); } 100% { transform: translate3d(4vw, -3vh, 0) scale(.96); } }
+.app, #layer, .bnav, .toasts { position: relative; z-index: 1; }
+#layer { position: static; }
+
+/* entrances: only when a page/board/view is first shown (motion.js adds .mx-enter for a moment) */
+@keyframes mx-rise { from { opacity: 0; transform: translateY(14px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes mx-fade { from { opacity: 0; } to { opacity: 1; } }
+.mx-enter .home > *, .mx-enter .group, .mx-enter .lane, .mx-enter .cal, .mx-enter .cal-head, .mx-enter .empty { animation: mx-rise .55s var(--ease-out) both; }
+.mx-enter .home > *:nth-child(2) { animation-delay: .05s; } .mx-enter .home > *:nth-child(3) { animation-delay: .1s; }
+.mx-enter .home > *:nth-child(4) { animation-delay: .15s; } .mx-enter .home > *:nth-child(5) { animation-delay: .2s; }
+.mx-enter .home > *:nth-child(6) { animation-delay: .25s; } .mx-enter .home > *:nth-child(7) { animation-delay: .3s; }
+.mx-enter .home > *:nth-child(n+8) { animation-delay: .35s; }
+.mx-enter .group:nth-child(2), .mx-enter .lane:nth-child(2) { animation-delay: .06s; } .mx-enter .group:nth-child(3), .mx-enter .lane:nth-child(3) { animation-delay: .12s; }
+.mx-enter .group:nth-child(n+4), .mx-enter .lane:nth-child(n+4) { animation-delay: .18s; }
+.mx-enter .board tbody tr { animation: mx-fade .4s ease both; }
+.mx-enter .board tbody tr:nth-child(-n+12) { animation-delay: calc(var(--i, 0) * 18ms + .08s); }
+.mx-enter .qa { animation: mx-rise .5s var(--spring) both; }
+.mx-enter .qa:nth-child(2) { animation-delay: .06s; } .mx-enter .qa:nth-child(3) { animation-delay: .12s; }
+.mx-enter .li { animation: mx-rise .45s var(--ease-out) both; }
+.mx-enter .li:nth-child(2) { animation-delay: .04s; } .mx-enter .li:nth-child(3) { animation-delay: .08s; } .mx-enter .li:nth-child(4) { animation-delay: .12s; } .mx-enter .li:nth-child(5) { animation-delay: .16s; }
+
+/* sparkline + ring draw in */
+.mx-draw .spark path:last-of-type { stroke-dasharray: 400; stroke-dashoffset: 400; animation: mx-dash 1.4s .25s var(--ease-out) forwards; }
+.mx-draw .spark path:first-of-type { animation: mx-fade 1.2s .6s ease both; }
+.mx-draw .spark circle { animation: mx-pop .5s 1.4s var(--spring) both; }
+.mx-draw .ring circle:nth-of-type(2) { animation: mx-ring 1.6s .3s var(--ease-out) both; }
+@keyframes mx-dash { to { stroke-dashoffset: 0; } }
+@keyframes mx-ring { from { stroke-dashoffset: 276.5; } }
+
+/* overlays */
+@keyframes mx-slide-in { from { transform: translateX(40px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes mx-scale-in { from { transform: scale(.94) translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes mx-pop-in { from { transform: scale(.9); opacity: 0; } to { transform: none; opacity: 1; } }
+.drawer.mx-new { animation: mx-slide-in .45s var(--spring) both; }
+.scrim.mx-new, .modal-wrap.mx-new { animation: mx-fade .25s ease both; }
+.modal-wrap.mx-new .modal { animation: mx-scale-in .4s var(--spring) both; }
+.pop.mx-new { animation: mx-pop-in .22s var(--spring) both; transform-origin: top left; }
+.bulkbar.mx-new { animation: mx-rise .35s var(--spring) both; }
+.toast { animation: mx-toast .5s var(--spring) both; }
+@keyframes mx-toast { from { transform: translateY(18px) scale(.96); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* micro-interactions */
+.btn, .qa, .tab, .icon-round, .chip, .col-btn, .board-link, .li, .card, .bnav button { transition: transform .18s var(--spring), background-color .2s, border-color .2s, box-shadow .25s, color .2s; }
+.btn:hover, .qa:hover, .icon-round:hover, .col-btn:hover { transform: translateY(-1px); }
+.btn:active, .qa:active, .icon-round:active, .chip:active, .col-btn:active, .tab:active, .bnav button:active, .li:active { transform: scale(.96); }
+.btn.primary:hover { box-shadow: 0 0 34px rgba(255,255,255,.32); }
+.qa:hover .qa-ic { box-shadow: 0 0 30px rgba(255,255,255,.18); }
+.board-link:hover { transform: translateX(2px); }
+.card:hover { transform: translateY(-2px); }
+.card.mx-dragging { transform: rotate(-2.5deg) scale(1.03); box-shadow: 0 24px 60px rgba(0,0,0,.6); }
+.lane.drop { box-shadow: 0 0 0 1px rgba(255,255,255,.25), 0 0 40px rgba(255,255,255,.08); transition: box-shadow .2s; }
+@keyframes mx-pop { 0% { transform: scale(.6); } 60% { transform: scale(1.12); } 100% { transform: scale(1); } }
+.chip.mx-changed { animation: mx-pop .45s var(--spring); box-shadow: 0 0 0 1px rgba(255,255,255,.35), 0 0 24px rgba(255,255,255,.25); }
+@keyframes mx-flash { 0% { background: rgba(255,255,255,.16); } 100% { background: transparent; } }
+tr.mx-flash td { animation: mx-flash 1.2s ease; }
+.bnav-plus { transition: transform .25s var(--spring), box-shadow .25s; }
+.bnav-plus:hover { transform: rotate(90deg) scale(1.05); box-shadow: 0 0 40px rgba(255,255,255,.4); }
+.av { transition: transform .2s var(--spring); }
+.people-cell:hover .av { transform: translateY(-2px); }
+
+/* glass spotlight that follows the pointer */
+.glass, .tablewrap, .modal, .drawer, .lane { --mx: -999px; --my: -999px; }
+.glass::before, .tablewrap::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: radial-gradient(420px circle at var(--mx) var(--my), rgba(255,255,255,.07), transparent 45%); opacity: 0; transition: opacity .3s; z-index: 0; }
+.glass:hover::before, .tablewrap:hover::before { opacity: 1; }
+.glass, .tablewrap { position: relative; }
+
+/* celebration canvas */
+.mx-confetti { position: fixed; inset: 0; pointer-events: none; z-index: 60; }
+.mx-banner { position: fixed; left: 50%; top: 18%; transform: translate(-50%, 0); z-index: 61; pointer-events: none; text-align: center; animation: mx-banner 2.6s var(--ease-out) forwards; }
+.mx-banner b { display: block; font: 600 40px/1.1 var(--f-display); letter-spacing: -.03em; color: #fff; text-shadow: 0 0 40px rgba(255,255,255,.5); }
+.mx-banner span { color: rgba(255,255,255,.7); font-size: 15px; }
+@keyframes mx-banner { 0% { opacity: 0; transform: translate(-50%, 16px) scale(.9); } 15% { opacity: 1; transform: translate(-50%, 0) scale(1.04); } 25% { transform: translate(-50%, 0) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -12px); } }
+
+/* Motion: calm keeps entrances short and drops ambient + celebrations; off/reduced removes everything */
+html.mx-calm .mx-orbs, html.mx-calm .mx-confetti, html.mx-calm .mx-banner { display: none; }
+html.mx-calm .mx-enter * { animation-duration: .25s !important; animation-delay: 0s !important; }
+html.mx-off *, html.mx-off *::before, html.mx-off *::after { animation: none !important; transition: none !important; }
+html.mx-off .mx-orbs, html.mx-off .mx-confetti, html.mx-off .mx-banner { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .mx-orbs, .mx-confetti, .mx-banner { display: none; }
+}

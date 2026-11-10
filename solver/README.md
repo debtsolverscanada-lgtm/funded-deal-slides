@@ -23,6 +23,21 @@ Easiest: set `MONDAY_API_TOKEN` and `MONDAY_WORKSPACE_IDS` on the server, then p
 **Copy from Monday now** under **Team & settings**. Pressing it again refreshes the copy.
 Items created in Solver.ca are kept; items that came from Monday are replaced by Monday's current version.
 
+**Live pull.** While `MONDAY_API_TOKEN` is set, the server also reads what changed in Monday every 5 minutes
+(edited, new, moved, deleted and archived items, and new updates) and copies just those items in. It never writes to
+Monday and never runs webhooks or automations for these changes. Turn it off with `MONDAY_LIVE_PULL=off`.
+**Team & settings** shows "Live from Monday · last pulled hh:mm" and has a **Pull changes now** button.
+
+**Private boards.** A copy also brings over who can see each board: private and shareable Monday boards are only
+visible to their Monday subscribers and owners (matched by email to Solver.ca accounts) and to admins. To set this
+on a database copied before this existed, without a full re-copy, run once (reads Monday only):
+
+```bash
+MONDAY_API_TOKEN=... MONDAY_WORKSPACE_IDS=... DATA_DIR=/data node scripts/monday-board-access.js   # --dry-run to preview
+```
+
+Admins change it per board with the **Access** button in the board header.
+
 Or offline, with files:
 
 ```bash
@@ -80,7 +95,16 @@ docker run -p 3000:3000 -v solver-data:/data \
 | Member | view and change boards and items |
 | Viewer | view only |
 
+Members and viewers only see open boards and the private boards that list their email.
+
+## Notifications and files
+
+- The bell in the sidebar (Profile on phones) shows in-app notifications: @mentions in updates (`@Jan` or
+  `@Jan Smith`), being assigned in a person column, Monday "notify someone" automations, and date reminders.
+  They stay inside Solver.ca; nothing is emailed or texted.
+- File columns and updates take attachments up to 25 MB. They're stored in `DATA_DIR/files` (on the same disk as
+  `solver.db`, so back up the whole `/data` folder) and only people who can see the board can download them.
+
 ## What's not here yet
 
-Monday automations (rebuild under **Automations**), recalculating formulas, files, calls/texts,
-email sequences, dashboards, two-way sync with Monday.
+Calls/texts, email sequences, dashboards, two-way sync with Monday (Solver.ca only reads Monday).
