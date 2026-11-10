@@ -1718,7 +1718,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
         ${outs || '<p class="rail-note">None yet.</p>'}
         <div class="form-row"><input class="field-input" id="io-name" placeholder="Name, e.g. n8n new leads" style="flex:1 1 160px"><input class="field-input" id="io-url" placeholder="https://…" style="flex:2 1 220px"></div>
         <div class="form-row">${EV.map(e => `<label class="pop-check" style="padding:2px 6px"><input type="checkbox" class="io-ev" value="${e}" ${e === 'item.created' ? 'checked' : ''}>${evName[e]}</label>`).join('')}</div>
-        <div class="form-row">${boardSel('io-board', true)}<button class="btn primary" data-act="int-out">Add webhook</button></div>
+        <div class="form-row">${boardSel('io-board', true)}${I.hooks.some(h => h.kind === 'out') ? `<select class="field-input" id="io-secret" aria-label="Signing secret"><option value="">New signing secret</option>${I.hooks.filter(h => h.kind === 'out').map(h => `<option value="${esc(h.id)}">Same secret as ${esc(h.name)}</option>`).join('')}</select>` : ''}<button class="btn primary" data-act="int-out">Add webhook</button></div>
         <h3 style="font-size:16px">Incoming lead links</h3><p>A private web address that turns anything posted to it (a website form, a Facebook lead form through Zapier or n8n) into a new item on a board. Fields are matched to columns by name.</p>
         ${ins || '<p class="rail-note">None yet.</p>'}
         <div class="form-row"><input class="field-input" id="ii-name" placeholder="Name, e.g. Website form" style="flex:1 1 160px">${boardSel('ii-board', false)}<input class="field-input" id="ii-group" placeholder="Group (optional)" style="flex:1 1 140px"></div>
@@ -1760,6 +1760,9 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
         ${rows || '<p class="rail-note">No one is listed yet.</p>'}
         <div class="form-row"><input class="field-input" id="acc-email" list="acc-people" type="email" value="${esc(m.email || '')}" placeholder="Add by email" aria-label="Email to add" style="flex:1 1 220px"><datalist id="acc-people">${opts}</datalist><button class="btn primary" data-act="access-add">Add</button></div>
         ${renderPermsEditor(b)}
+        ${b.mondayId ? `<h3 style="font-size:16px">Copy from Monday</h3>
+        <p>${b.source === 'monday' ? 'Solver.ca copies this board’s changes from Monday every 5 minutes. When the team works this board in Solver.ca instead (for example, a rep who has moved), stop the copy so Monday can never overwrite their work.' : 'This board lives in Solver.ca. Changes made in Monday are no longer copied here.'}</p>
+        <div class="form-row"><button class="toggle" data-act="board-source" data-v="monday" aria-pressed="${b.source === 'monday'}">Keep copying from Monday</button><button class="toggle" data-act="board-source" data-v="solver" aria-pressed="${b.source !== 'monday'}">Lives in Solver.ca</button></div>` : ''}
         <div><button class="btn" data-act="close-modal-btn">Done</button></div>`;
     }
     if (m.type === 'team') {
@@ -1890,6 +1893,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
         render(); break;
       }
       case 'access': S.pop = null; S.modal = { type: 'access' }; renderLayer(); if (!S.team.length && window.KS) KS.users().then(l => { S.team = l; renderLayer(); }).catch(() => {}); break;
+      case 'board-source': { const v = t.dataset.v === 'monday' ? 'monday' : 'solver'; if ((b.source === 'monday') === (v === 'monday')) break; patchBoard({ source: v }); localBoard({ source: v }); toast(v === 'monday' ? 'Copying from Monday again' : 'This board now lives in Solver.ca. Monday changes are no longer copied.'); renderLayer(); break; }
       case 'access-set': { const ac = { ...(b.access || { members: [] }), private: t.dataset.private === '1' }; ac.members = ac.members || []; saveAccess(ac); break; }
       case 'access-add': {
         const e2 = ($('#acc-email').value || '').trim().toLowerCase();
@@ -1914,7 +1918,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
       case 'integrations': S.pop = null; S.modal = { type: 'integrations', data: null, msg: '' }; renderLayer(); loadIntegrations(); break;
       case 'int-key': { const name = $('#ik-name').value, scope = $('#ik-scope').value; KS.api('POST', '/api/admin/keys', { name, scope }).then(r => { S.modal.msg = `New key for <b>${esc(name)}</b>: <code style="word-break:break-all;user-select:all">${esc(r.key)}</code><br>Copy it now. It won’t be shown again.`; loadIntegrations(); }).catch(e => { S.modal.msg = esc(e.message); renderLayer(); }); break; }
       case 'int-revoke': KS.api('DELETE', '/api/admin/keys/' + t.dataset.id).then(loadIntegrations); break;
-      case 'int-out': { const events = [...document.querySelectorAll('.io-ev:checked')].map(x => x.value); KS.api('POST', '/api/admin/hooks', { kind: 'out', name: $('#io-name').value, url: $('#io-url').value, events, board: $('#io-board').value }).then(r => { S.modal.msg = `Webhook added. Its signing secret is <code style="word-break:break-all;user-select:all">${esc(r.secret)}</code>. Copy it now if the receiving tool checks the X-Solver-Signature header.`; loadIntegrations(); }).catch(e => { S.modal.msg = esc(e.message); renderLayer(); }); break; }
+      case 'int-out': { const events = [...document.querySelectorAll('.io-ev:checked')].map(x => x.value); KS.api('POST', '/api/admin/hooks', { kind: 'out', name: $('#io-name').value, url: $('#io-url').value, events, board: $('#io-board').value, sameSecretAs: ($('#io-secret') || {}).value || undefined }).then(r => { S.modal.msg = r.secret ? `Webhook added. Its signing secret is <code style="word-break:break-all;user-select:all">${esc(r.secret)}</code>. Copy it now if the receiving tool checks the X-Solver-Signature header.` : `Webhook added. ${esc(r.note || '')}`; loadIntegrations(); }).catch(e => { S.modal.msg = esc(e.message); renderLayer(); }); break; }
       case 'int-in': { const bd = S.boards.find(x => x.id === $('#ii-board').value); const gname = $('#ii-group').value.trim(); const g = gname && bd && bd.groups.find(x => x.name.toLowerCase() === gname.toLowerCase()); if (gname && !g) { S.modal.msg = `No group called “${esc(gname)}” on ${esc(bd ? bd.name : 'that board')}.`; renderLayer(); break; }
         const phone = bd && bd.columns.find(c => c.type === 'phone'); KS.api('POST', '/api/admin/hooks', { kind: 'in', name: $('#ii-name').value, board: $('#ii-board').value, group: g ? g.id : '', dedupe: $('#ii-dedupe').checked && phone ? phone.id : '' }).then(() => { S.modal.msg = 'Lead link created. Copy it below and paste it into your form tool.'; loadIntegrations(); }).catch(e => { S.modal.msg = esc(e.message); renderLayer(); }); break; }
       case 'int-test': KS.api('POST', '/api/admin/hooks/' + t.dataset.id + '/test', {}).then(r => { S.modal.msg = r.status >= 200 && r.status < 300 ? `Test delivered (${r.status}).` : `The other tool answered ${r.status || 'nothing'}. Check the address.`; loadIntegrations(); }); break;
