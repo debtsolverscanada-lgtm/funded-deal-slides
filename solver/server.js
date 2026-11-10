@@ -20,6 +20,8 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 const { syncFromMonday, pullFromMonday } = require('./monday.js');
+const sec = require('./security.js');
+const sheets = require('./sheets.js');
 
 const PORT = Number(process.env.PORT || 3000);
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
@@ -41,7 +43,7 @@ db.exec(`
   PRAGMA foreign_keys = ON;
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
-    role TEXT NOT NULL CHECK (role IN ('admin','member','viewer')),
+    role TEXT NOT NULL CHECK (role IN ('admin','member','viewer','guest')),
     pw TEXT NOT NULL, created_at TEXT NOT NULL, disabled INTEGER NOT NULL DEFAULT 0
   );
   CREATE TABLE IF NOT EXISTS sessions (
@@ -63,6 +65,22 @@ db.exec(`
   );
 `);
 try { db.exec('ALTER TABLE users ADD COLUMN home_board TEXT'); } catch (e) { /* already there */ }
+// Older databases only allowed admin/member/viewer: rebuild the users table once so 'guest' is allowed too.
+{ const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'").get();
+  if (row && !row.sql.includes("'guest'")) {
+    db.exec('PRAGMA foreign_keys = OFF'); db.exec('BEGIN');
+    try {
+      db.exec(`CREATE TABLE users_new (
+        id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
+        role TEXT NOT NULL CHECK (role IN ('admin','member','viewer','guest')),
+        pw TEXT NOT NULL, created_at TEXT NOT NULL, disabled INTEGER NOT NULL DEFAULT 0, home_board TEXT)`);
+      db.exec('INSERT INTO users_new (id, email, name, role, pw, created_at, disabled, home_board) SELECT id, email, name, role, pw, created_at, disabled, home_board FROM users');
+      db.exec('DROP TABLE users'); db.exec('ALTER TABLE users_new RENAME TO users'); db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; } finally { db.exec('PRAGMA foreign_keys = ON'); }
+  } }
+// two-factor sign-in (TOTP) and how each session signed in
+for (const sql of ['ALTER TABLE users ADD COLUMN totp_secret TEXT', 'ALTER TABLE users ADD COLUMN totp_pending TEXT', 'ALTER TABLE users ADD COLUMN totp_on INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE users ADD COLUMN totp_last INTEGER NOT NULL DEFAULT -1', 'ALTER TABLE users ADD COLUMN backup_codes TEXT', "ALTER TABLE sessions ADD COLUMN method TEXT NOT NULL DEFAULT 'pw'"]) { try { db.exec(sql); } catch (e) { /* already there */ } }
 
 // ---------- helpers ----------
 const now = () => new Date().toISOString();
@@ -98,11 +116,11 @@ function merge(target, patch) {
 const q = {
   userByEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
   userById: db.prepare('SELECT * FROM users WHERE id = ?'),
-  users: db.prepare('SELECT id, email, name, role, created_at, disabled, home_board FROM users ORDER BY name'),
+  users: db.prepare('SELECT id, email, name, role, created_at, disabled, home_board, totp_on FROM users ORDER BY name'),
   userCount: db.prepare('SELECT COUNT(*) AS n FROM users'),
   insertUser: db.prepare('INSERT INTO users (id, email, name, role, pw, created_at) VALUES (?, ?, ?, ?, ?, ?)'),
-  session: db.prepare('SELECT s.token, s.expires, u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?'),
-  insertSession: db.prepare('INSERT INTO sessions (token, user_id, expires) VALUES (?, ?, ?)'),
+  session: db.prepare('SELECT s.token, s.expires, s.method, u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?'),
+  insertSession: db.prepare('INSERT INTO sessions (token, user_id, expires, method) VALUES (?, ?, ?, ?)'),
   deleteSession: db.prepare('DELETE FROM sessions WHERE token = ?'),
   deleteUserSessions: db.prepare('DELETE FROM sessions WHERE user_id = ?'),
   docsInCol: db.prepare('SELECT id, data FROM docs WHERE col = ?'),
@@ -113,12 +131,13 @@ const q = {
   deleteCol: db.prepare('DELETE FROM docs WHERE col = ?'),
 };
 
+const ROLES = ['admin', 'member', 'viewer', 'guest'];
 function createUser({ email, name, role, password }) {
   email = String(email || '').trim().toLowerCase();
   name = String(name || '').trim();
   if (!/^[^@\s]+@[^@\s]+$/.test(email)) throw new HttpError(400, 'Enter a valid email address.');
   if (!name) throw new HttpError(400, 'Enter a name.');
-  if (!['admin', 'member', 'viewer'].includes(role)) throw new HttpError(400, 'Role must be admin, member or viewer.');
+  if (!ROLES.includes(role)) throw new HttpError(400, 'Role must be admin, member, viewer or guest.');
   if (String(password || '').length < 8) throw new HttpError(400, 'Passwords need at least 8 characters.');
   if (q.userByEmail.get(email)) throw new HttpError(409, 'Someone already uses that email.');
   const id = newId('u_');
@@ -129,38 +148,113 @@ module.exports = { createUser, db, q, merge, now };
 
 // ---------- who can see which board ----------
 // A board doc may carry access: { private: true|false, members: [emails] }. Admins see every board;
-// everyone else sees open boards and the private boards that list their email.
+// members and viewers see open boards and the private boards that list their email.
+// Guests (a lender, a lawyer) only ever see the boards that list their email, open or private.
 function canSee(u, access) {
+  if (u && u.role === 'guest') {
+    const me = String(u.email || '').toLowerCase();
+    return !!me && !!access && (access.members || []).some(e => String(e).toLowerCase() === me);
+  }
   if (!access || !access.private) return true;
   if (!u) return false;
   if (u.role === 'admin') return true;
   const me = String(u.email || '').toLowerCase();
   return !!me && (access.members || []).some(e => String(e).toLowerCase() === me);
 }
-const boardCache = new Map(); // board id -> { t, v: { name, access, columns } | null }
+const boardCache = new Map(); // board id -> { t, v: { name, access, columns, perms, groups } | null }
 function boardInfo(bid) {
   const hit = boardCache.get(bid); if (hit && Date.now() - hit.t < 10000) return hit.v;
   const r = q.doc.get('boards/' + bid); let v = null;
-  if (r) { try { const d = JSON.parse(r.data); v = { name: d.name, access: d.access || null, columns: d.columns || [] }; } catch (e) {} }
+  if (r) { try { const d = JSON.parse(r.data); v = { name: d.name, access: d.access || null, columns: d.columns || [], perms: d.perms || null, groups: d.groups || [] }; } catch (e) {} }
   boardCache.set(bid, { t: Date.now(), v }); return v;
 }
 const boardOfPath = p => { const m = /^boards\/([^/]+)(\/items(\/[^/]+)?)?$/.exec(p || ''); return m ? m[1] : null; };
 function mustSee(user, bid) { const b = boardInfo(bid); if (b && !canSee(user, b.access)) throw new HttpError(404, 'That board doesn’t exist or isn’t shared with you.'); return b; }
 
+// ---------- fine-grained permissions, per board (admins set them in the Access window) ----------
+// board.perms = { locks: { colId: [emails who may still edit] }, assignedOnly: [person col ids], guestEdit: [col ids] }
+const permsOf = b => (b && b.perms) || {};
+const lowerList = a => (Array.isArray(a) ? a : []).map(e => String(e || '').trim().toLowerCase()).filter(Boolean);
+// Columns this person may NOT change. Admins can change everything. Guests can only change guest-editable columns.
+// API keys and lead links are `null` users: locked columns are closed to them too.
+function lockedCols(user, b) {
+  const out = new Set(); if (!b) return out;
+  if (user && user.role === 'admin') return out;
+  const locks = permsOf(b).locks || {}, me = String((user && user.email) || '').toLowerCase();
+  for (const [cid, emails] of Object.entries(locks)) if (!me || !lowerList(emails).includes(me)) out.add(cid);
+  if (user && user.role === 'guest') { const ge = new Set(permsOf(b).guestEdit || []); for (const c of b.columns || []) if (!ge.has(c.id)) out.add(c.id); }
+  return out;
+}
+const colTitle = (b, cid) => ((b.columns || []).find(c => c.id === cid) || {}).title || cid;
+const baseCol = k => String(k).replace(/__d?t$/, ''); // "date4__dt" (Monday's time part) belongs to "date4"
+function changedCols(before, after) {
+  const x = (before && before.values) || {}, y = (after && after.values) || {}, out = new Set();
+  for (const k of new Set([...Object.keys(x), ...Object.keys(y)])) if (JSON.stringify(x[k] ?? '') !== JSON.stringify(y[k] ?? '')) out.add(baseCol(k));
+  return out;
+}
+function lockError(b, cols) {
+  const names = [...cols].map(c => '“' + colTitle(b, c) + '”');
+  const e = new HttpError(403, `${names.join(', ')} ${names.length === 1 ? 'is' : 'are'} locked on this board. Only admins${Object.keys(permsOf(b).locks || {}).length ? ' and the people the admin listed' : ''} can change ${names.length === 1 ? 'it' : 'them'}.`);
+  e.code = 'locked'; return e;
+}
+// "Members see only items assigned to them": a person column holds names like "Jan Smith, Ana".
+// Someone matches by full name or email (any case), or by first name alone when no one else on the team shares it.
+let teamCache = { at: 0, users: [] };
+const activeTeam = () => { if (Date.now() - teamCache.at > 5000) teamCache = { at: Date.now(), users: db.prepare('SELECT id, email, name, role FROM users WHERE disabled = 0').all() }; return teamCache.users; };
+function personMatches(user, cell) {
+  const full = norm(user.name), email = norm(user.email), first = full.split(' ')[0];
+  const firstUnique = !!first && activeTeam().filter(u => norm(u.name).split(' ')[0] === first).length === 1;
+  return String(cell || '').split(',').map(norm).filter(Boolean).some(n => n === full || n === email || (firstUnique && !n.includes(' ') && n === first));
+}
+function itemVisible(user, b, item) {
+  if (!b || !item) return true;
+  if (user && user.role === 'admin') return true;
+  const cols = permsOf(b).assignedOnly || []; if (!cols.length) return true;
+  if (!user) return false;
+  return cols.some(cid => personMatches(user, (item.values || {})[cid]));
+}
+const restricted = (user, b) => !!b && !(user && user.role === 'admin') && (permsOf(b).assignedOnly || []).length > 0;
+// Guests never see who else a board is shared with.
+function boardForUser(user, data) {
+  if (!data || !user || user.role !== 'guest') return data;
+  const { access, perms, ...rest } = data;
+  return { ...rest, access: { private: true, members: [String(user.email).toLowerCase()] }, perms: { guestEdit: (perms && perms.guestEdit) || [], locks: Object.fromEntries(Object.keys((perms && perms.locks) || {}).map(k => [k, []])) } };
+}
+function cleanPerms(p, b) {
+  const ids = new Set(((b && b.columns) || []).map(c => c.id)), person = new Set(((b && b.columns) || []).filter(c => c.type === 'person').map(c => c.id));
+  const locks = {};
+  for (const [cid, emails] of Object.entries((p && p.locks) || {})) if (ids.has(cid)) locks[cid] = [...new Set(lowerList(emails).filter(e => /^[^@\s]+@[^@\s]+$/.test(e)))].sort();
+  return { locks, assignedOnly: [...new Set(((p && p.assignedOnly) || []).filter(c => person.has(c)))], guestEdit: [...new Set(((p && p.guestEdit) || []).filter(c => ids.has(c)))] };
+}
+
 class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
 
 // ---------- live updates (server-sent events) ----------
 // Each open page is tracked with its signed-in person, so private boards' changes only reach people who can see them.
-const clients = new Map(); // res -> { id, email, role, name }
+const clients = new Map(); // res -> { id, email, role, name }  (each open page and its signed-in person)
 function broadcast(evt) {
+  // evt.prevAccess (not sent): the board's access before this change, so only people who just lost it are told it's gone
+  const prevAccess = evt.prevAccess; if ('prevAccess' in evt) { evt = { ...evt }; delete evt.prevAccess; }
   const line = `data: ${JSON.stringify(evt)}\n\n`;
   if (evt.op === 'notify') { for (const [res, u] of clients) if (u.id === evt.user) res.write(line); return; }
+  if (evt.op === 'reload') { for (const res of clients.keys()) res.write(line); return; }
   const bid = evt.col === 'boards' ? evt.id : boardOfPath(evt.col);
   if (evt.col === 'boards') boardCache.delete(evt.id);
-  const access = !bid ? null : evt.col === 'boards' && evt.op === 'set' ? (evt.data || {}).access : (boardInfo(bid) || {}).access;
-  if (!access || !access.private) { for (const res of clients.keys()) res.write(line); return; }
-  const gone = evt.col === 'boards' && evt.op === 'set' ? `data: ${JSON.stringify({ op: 'delete', col: 'boards', id: evt.id })}\n\n` : null;
-  for (const [res, u] of clients) { if (canSee(u, access)) res.write(line); else if (gone) res.write(gone); }
+  if (!bid) { for (const [res, u] of clients) if (u.role !== 'guest') res.write(line); return; } // workspace settings: never to guests
+  const isBoard = evt.col === 'boards';
+  const access = isBoard && evt.op === 'set' ? (evt.data || {}).access : (boardInfo(bid) || {}).access;
+  const gone = isBoard && evt.op === 'set' ? `data: ${JSON.stringify({ op: 'delete', col: 'boards', id: evt.id })}\n\n` : null;
+  const info = isBoard ? null : boardInfo(bid);
+  // an item-level event on a board where non-admins only see items assigned to them: check each person
+  let itemData;
+  const itemNow = () => { if (itemData === undefined) { itemData = evt.data || null; if (!itemData && evt.op !== 'delete') { const r = q.doc.get(`${evt.col}/${evt.id}`); itemData = r ? JSON.parse(r.data) : null; } } return itemData; };
+  const hide = `data: ${JSON.stringify({ op: 'delete', col: evt.col, id: evt.id })}\n\n`;
+  for (const [res, u] of clients) {
+    if (!canSee(u, access)) { if (gone && (prevAccess !== undefined ? canSee(u, prevAccess) : u.role !== 'guest')) res.write(gone); continue; }
+    if (isBoard && u.role === 'guest' && evt.op === 'set') { res.write(`data: ${JSON.stringify({ ...evt, data: boardForUser(u, evt.data) })}\n\n`); continue; }
+    if (!isBoard && restricted(u, info) && evt.op !== 'delete' && !itemVisible(u, info, itemNow())) { if (evt.op === 'set') res.write(hide); continue; }
+    res.write(line);
+  }
 }
 function refreshClients(userId) {
   const row = q.userById.get(userId);
@@ -220,6 +314,7 @@ function notifyUsers(users, { kind, text, board, item }, exceptId) {
   const b = board ? boardInfo(board) : null; let n = 0;
   for (const u of users) {
     if (u.id === exceptId || (b && !canSee(u, b.access))) continue;
+    if (b && item && restricted(u, b)) { const r = q.doc.get(`boards/${board}/items/${item}`); if (r && !itemVisible(u, b, JSON.parse(r.data))) continue; }
     const row = { id: newId('n_'), at: now(), kind, text: String(text).slice(0, 400), board: board || null, item: item || null, read: 0 };
     nq.insert.run(row.id, u.id, row.at, row.kind, row.text, row.board, row.item);
     broadcast({ op: 'notify', user: u.id, n: row }); n++;
@@ -301,9 +396,60 @@ function currentUser(req) {
   if (!token) return null;
   const row = q.session.get(token);
   if (!row || row.disabled || row.expires < now()) return null;
-  return { id: row.id, email: row.email, name: row.name, role: row.role, homeBoard: row.home_board || '', token };
+  return { id: row.id, email: row.email, name: row.name, role: row.role, homeBoard: row.home_board || '', token, method: row.method || 'pw', totpOn: !!row.totp_on, needs2fa: needsTwoFactor(row, row.method) };
 }
 const publicUser = u => ({ id: u.id, email: u.email, name: u.name, role: u.role, homeBoard: u.homeBoard ?? u.home_board ?? '' });
+
+// ---------- sign-in security settings (meta/security, admins only) ----------
+let secCache = { at: 0, v: null };
+function secSettings() {
+  if (secCache.v && Date.now() - secCache.at < 3000) return secCache.v;
+  let v = {}; try { const r = q.doc.get('meta/security'); if (r) v = JSON.parse(r.data) || {}; } catch (e) {}
+  secCache = { at: Date.now(), v: { require2fa: !!v.require2fa, googleCounts2fa: !!v.googleCounts2fa } };
+  return secCache.v;
+}
+// With "Require two-factor for everyone" on, a person without it must set it up before anything else works.
+// A Google sign-in is exempt when the admin turned on "Google sign-in counts as two-factor".
+function needsTwoFactor(row, method) {
+  const st = secSettings();
+  return st.require2fa && !row.totp_on && !(method === 'google' && st.googleCounts2fa);
+}
+function startSession(u, method) {
+  const token = crypto.randomBytes(32).toString('base64url');
+  const expires = new Date(Date.now() + SESSION_DAYS * 864e5).toISOString();
+  q.insertSession.run(token, u.id, expires, method || 'pw');
+  return `ks_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_DAYS * 86400}${SECURE_COOKIE ? '; Secure' : ''}`;
+}
+// Password (or Google) done, code still needed: a short-lived ticket, at most 5 tries.
+const tickets = new Map(); // ticket -> { uid, method, exp, tries }
+function newTicket(uid, method) {
+  for (const [k, t] of tickets) if (t.exp < Date.now()) tickets.delete(k);
+  const t = crypto.randomBytes(24).toString('base64url'); tickets.set(t, { uid, method, exp: Date.now() + 5 * 60 * 1000, tries: 0 }); return t;
+}
+// Wrong codes per person: 8 in 15 minutes locks code entry for 15 minutes.
+const codeFails = new Map();
+function codeLocked(uid) { const r = codeFails.get(uid); if (!r) return false; if (Date.now() - r.at > 15 * 60 * 1000) { codeFails.delete(uid); return false; } return r.n >= 8; }
+function codeFailed(uid) { const r = codeFails.get(uid) || { n: 0, at: Date.now() }; r.n++; r.at = Date.now(); codeFails.set(uid, r); }
+// Checks a 6-digit authenticator code, or one of the person's unused backup codes (which is then used up).
+function checkSecondFactor(uid, code) {
+  const u = q.userById.get(uid); if (!u || !u.totp_on || !u.totp_secret) return null;
+  const k = sec.verifyTotp(u.totp_secret, code, u.totp_last);
+  if (k !== null) { db.prepare('UPDATE users SET totp_last = ? WHERE id = ?').run(k, uid); return 'totp'; }
+  if (sec.looksLikeBackup(code)) {
+    const list = JSON.parse(u.backup_codes || '[]'), h = sec.hashBackup(uid, code), i = list.indexOf(h);
+    if (i >= 0) { list.splice(i, 1); db.prepare('UPDATE users SET backup_codes = ? WHERE id = ?').run(JSON.stringify(list), uid); return 'backup'; }
+  }
+  return null;
+}
+function newBackupCodesFor(uid) { const codes = sec.newBackupCodes(10); db.prepare('UPDATE users SET backup_codes = ? WHERE id = ?').run(JSON.stringify(codes.map(c => sec.hashBackup(uid, c))), uid); return codes; }
+function clearTwoFactor(uid) { db.prepare("UPDATE users SET totp_on = 0, totp_secret = NULL, totp_pending = NULL, totp_last = -1, backup_codes = NULL WHERE id = ?").run(uid); }
+const googleStates = new Map(); // state -> { nonce, exp, redirectUri }
+function googleRedirectUri(req) {
+  if (process.env.GOOGLE_REDIRECT_URI) return process.env.GOOGLE_REDIRECT_URI;
+  const base = process.env.PUBLIC_URL ? String(process.env.PUBLIC_URL).replace(/\/+$/, '')
+    : `${String(req.headers['x-forwarded-proto'] || (SECURE_COOKIE ? 'https' : 'http')).split(',')[0].trim()}://${req.headers['x-forwarded-host'] || req.headers.host}`;
+  return base + '/api/auth/google/callback';
+}
 const canWrite = u => u && (u.role === 'admin' || u.role === 'member');
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json' };
@@ -325,14 +471,16 @@ function throttled(ip) {
   return r.n >= 10;
 }
 
-const integ = require('./integrations.js')({ db, q, now, broadcast, HttpError, readBody, send, merge, notifyNames, itemNotifications, fillTemplate, buzz });
+const integ = require('./integrations.js')({ db, q, now, broadcast, HttpError, readBody, send, merge, notifyNames, itemNotifications, fillTemplate, buzz, lockedCols, lockError });
 module.exports.integ = integ;
+module.exports.setGuestBoards = (...a) => setGuestBoards(...a);
 
 async function api(req, res, url) {
   const p = url.pathname;
   const method = req.method;
   if (p.startsWith('/api/v1/')) return integ.handleV1(req, res, url);
 
+  if (p === '/api/auth/config' && method === 'GET') return send(res, 200, { google: sec.googleOn() });
   if (p === '/api/login' && method === 'POST') {
     const ip = req.socket.remoteAddress;
     if (throttled(ip)) throw new HttpError(429, 'Too many tries. Wait 15 minutes and try again.');
@@ -343,10 +491,57 @@ async function api(req, res, url) {
       throw new HttpError(401, 'That email and password don’t match.');
     }
     loginFails.delete(ip);
-    const token = crypto.randomBytes(32).toString('base64url');
-    const expires = new Date(Date.now() + SESSION_DAYS * 864e5).toISOString();
-    q.insertSession.run(token, u.id, expires);
-    return send(res, 200, publicUser(u), { 'Set-Cookie': `ks_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_DAYS * 86400}${SECURE_COOKIE ? '; Secure' : ''}` });
+    // two-factor on: the password alone doesn't sign in; the next step asks for a code
+    if (u.totp_on) return send(res, 200, { twofa: true, ticket: newTicket(u.id, 'pw') });
+    return send(res, 200, { ...publicUser(u), setup2fa: needsTwoFactor(u, 'pw') }, { 'Set-Cookie': startSession(u, 'pw') });
+  }
+  if (p === '/api/login/2fa' && method === 'POST') {
+    const ip = req.socket.remoteAddress;
+    if (throttled(ip)) throw new HttpError(429, 'Too many tries. Wait 15 minutes and try again.');
+    const { ticket, code } = await readBody(req);
+    const t = tickets.get(String(ticket || ''));
+    if (!t || t.exp < Date.now()) { tickets.delete(String(ticket || '')); throw new HttpError(401, 'That sign-in took too long. Start again.'); }
+    if (codeLocked(t.uid)) throw new HttpError(429, 'Too many wrong codes. Wait 15 minutes and try again.');
+    const kind = checkSecondFactor(t.uid, code);
+    if (!kind) {
+      t.tries++; codeFailed(t.uid);
+      const r = loginFails.get(ip) || { n: 0, at: Date.now() }; r.n++; r.at = Date.now(); loginFails.set(ip, r);
+      if (t.tries >= 5) { tickets.delete(String(ticket)); throw new HttpError(401, 'Too many wrong codes. Start again.'); }
+      throw new HttpError(401, 'That code didn’t work. Check your authenticator app and try again.');
+    }
+    tickets.delete(String(ticket)); codeFails.delete(t.uid);
+    const u = q.userById.get(t.uid); if (!u || u.disabled) throw new HttpError(401, 'Sign in to continue.');
+    const left = JSON.parse(u.backup_codes || '[]').length;
+    return send(res, 200, { ...publicUser(u), usedBackup: kind === 'backup', backupLeft: left }, { 'Set-Cookie': startSession(u, t.method) });
+  }
+  // ---- Sign in with Google (only when GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set). Never creates accounts. ----
+  if (p === '/api/auth/google/start' && method === 'GET') {
+    if (!sec.googleOn()) throw new HttpError(404, 'Google sign-in is not set up.');
+    for (const [k, v] of googleStates) if (v.exp < Date.now()) googleStates.delete(k);
+    const state = crypto.randomBytes(24).toString('base64url'), nonce = crypto.randomBytes(24).toString('base64url'), redirectUri = googleRedirectUri(req);
+    googleStates.set(state, { nonce, exp: Date.now() + 10 * 60 * 1000, redirectUri });
+    res.writeHead(302, { Location: sec.googleAuthUrl({ redirectUri, state, nonce }), 'Cache-Control': 'no-store',
+      'Set-Cookie': `ks_gstate=${state}; HttpOnly; SameSite=Lax; Path=/api/auth/google; Max-Age=600${SECURE_COOKIE ? '; Secure' : ''}` });
+    return res.end();
+  }
+  if (p === '/api/auth/google/callback' && method === 'GET') {
+    const back = (hash, cookie) => { const h = { Location: '/login#' + hash, 'Cache-Control': 'no-store' }; h['Set-Cookie'] = [`ks_gstate=; Path=/api/auth/google; Max-Age=0`, ...(cookie ? [cookie] : [])]; res.writeHead(302, h); res.end(); };
+    const fail = msg => back('error=' + encodeURIComponent(msg));
+    if (!sec.googleOn()) return fail('Google sign-in is not set up.');
+    const state = url.searchParams.get('state') || '', code = url.searchParams.get('code') || '';
+    if (url.searchParams.get('error')) return fail('Google sign-in was cancelled.');
+    const st = googleStates.get(state); googleStates.delete(state);
+    if (!st || st.exp < Date.now() || !state || cookies(req).ks_gstate !== state) return fail('That Google sign-in expired or didn’t start here. Try again.');
+    if (!code) return fail('Google didn’t send a sign-in code. Try again.');
+    let claims;
+    try { claims = await sec.verifyGoogleIdToken(await sec.googleExchange(code, st.redirectUri), { clientId: process.env.GOOGLE_CLIENT_ID, nonce: st.nonce }); }
+    catch (e) { console.error('Google sign-in:', e.message); return fail(e.message || 'Google sign-in failed.'); }
+    const email = String(claims.email).toLowerCase();
+    if (!sec.domainAllowed(email)) return fail('That Google account’s domain isn’t allowed here.');
+    const u = q.userByEmail.get(email);
+    if (!u || u.disabled) return fail(`There’s no Solver.ca account for ${email}. Ask an admin to add you.`);
+    if (u.totp_on && !secSettings().googleCounts2fa) return back('twofa=' + newTicket(u.id, 'google') + '&via=google');
+    return back('ok=1', startSession(u, 'google'));
   }
 
   const user = currentUser(req);
@@ -355,7 +550,55 @@ async function api(req, res, url) {
   if (method !== 'GET' && req.headers['x-solver'] !== '1') throw new HttpError(403, 'Request refused.');
 
   if (p === '/api/logout' && method === 'POST') { q.deleteSession.run(user.token); return send(res, 200, { ok: true }, { 'Set-Cookie': 'ks_session=; Path=/; Max-Age=0' }); }
-  if (p === '/api/me') return send(res, 200, publicUser(user));
+  if (p === '/api/me') return send(res, 200, { ...publicUser(user), twofa: user.totpOn, mustSetup2fa: user.needs2fa, signedInWith: user.method });
+
+  // ---- two-factor: set up, turn off, new backup codes ----
+  if (p === '/api/2fa/status' && method === 'GET') {
+    const row = q.userById.get(user.id), st = secSettings();
+    return send(res, 200, { on: !!row.totp_on, backupLeft: JSON.parse(row.backup_codes || '[]').length, required: st.require2fa, googleCounts: st.googleCounts2fa, google: sec.googleOn() });
+  }
+  if (p === '/api/2fa/setup' && method === 'POST') {
+    const row = q.userById.get(user.id);
+    if (row.totp_on) throw new HttpError(400, 'Two-factor is already on. Turn it off first to move it to a new app.');
+    // the same key until it's confirmed, so a second tab or a reload shows the code already scanned
+    const secret = row.totp_pending || sec.newSecret();
+    if (!row.totp_pending) db.prepare('UPDATE users SET totp_pending = ? WHERE id = ?').run(secret, user.id);
+    return send(res, 200, { secret, uri: sec.otpauthUri(secret, user.email) });
+  }
+  if (p === '/api/2fa/enable' && method === 'POST') {
+    const { code } = await readBody(req), row = q.userById.get(user.id);
+    if (row.totp_on) throw new HttpError(400, 'Two-factor is already on.');
+    if (!row.totp_pending) throw new HttpError(400, 'Start the setup again.');
+    if (codeLocked(user.id)) throw new HttpError(429, 'Too many wrong codes. Wait 15 minutes and try again.');
+    const k = sec.verifyTotp(row.totp_pending, code, -1);
+    if (k === null) { codeFailed(user.id); throw new HttpError(400, 'That code didn’t match. Check the time on your phone and enter the newest code.'); }
+    db.prepare('UPDATE users SET totp_secret = totp_pending, totp_pending = NULL, totp_on = 1, totp_last = ? WHERE id = ?').run(k, user.id);
+    console.log(`Two-factor turned on for ${user.email}`);
+    return send(res, 200, { ok: true, backupCodes: newBackupCodesFor(user.id) });
+  }
+  if ((p === '/api/2fa/disable' || p === '/api/2fa/backup-codes') && method === 'POST') {
+    const { code } = await readBody(req);
+    if (codeLocked(user.id)) throw new HttpError(429, 'Too many wrong codes. Wait 15 minutes and try again.');
+    const row = q.userById.get(user.id); if (!row.totp_on) throw new HttpError(400, 'Two-factor is off.');
+    if (p === '/api/2fa/disable' && secSettings().require2fa) throw new HttpError(400, 'Your admin requires two-factor for everyone, so it can’t be turned off.');
+    const kind = checkSecondFactor(user.id, code);
+    if (!kind) { codeFailed(user.id); throw new HttpError(400, 'That code didn’t work.'); }
+    if (p === '/api/2fa/disable') { clearTwoFactor(user.id); console.log(`Two-factor turned off by ${user.email}`); return send(res, 200, { ok: true }); }
+    return send(res, 200, { ok: true, backupCodes: newBackupCodesFor(user.id) });
+  }
+  // With "Require two-factor" on, nothing else works until it's set up.
+  if (user.needs2fa) { const e = new HttpError(403, 'Set up two-factor sign-in to continue.'); e.code = 'twofa_setup'; throw e; }
+  if (p === '/api/admin/security') {
+    if (user.role !== 'admin') throw new HttpError(403, 'Only admins can change sign-in settings.');
+    if (method === 'GET') return send(res, 200, { ...secSettings(), google: sec.googleOn(), googleDomains: sec.allowedDomains() });
+    if (method === 'PUT' || method === 'PATCH') {
+      const b = await readBody(req), cur = secSettings();
+      const v = { require2fa: typeof b.require2fa === 'boolean' ? b.require2fa : cur.require2fa, googleCounts2fa: typeof b.googleCounts2fa === 'boolean' ? b.googleCounts2fa : cur.googleCounts2fa };
+      q.upsertDoc.run('meta/security', 'meta', 'security', JSON.stringify(v), now(), user.id); secCache = { at: 0, v: null };
+      console.log(`Sign-in settings changed by ${user.email}:`, JSON.stringify(v));
+      return send(res, 200, v);
+    }
+  }
 
   if (p === '/api/events' && method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
@@ -372,7 +615,9 @@ async function api(req, res, url) {
   }
   if (p === '/api/users' && method === 'POST') {
     if (user.role !== 'admin') throw new HttpError(403, 'Only admins can add people.');
-    return send(res, 201, createUser(await readBody(req)));
+    const b = await readBody(req), made = createUser(b);
+    if (made.role === 'guest' && Array.isArray(b.boards)) setGuestBoards(made.email, b.boards, user.id);
+    return send(res, 201, made);
   }
   const um = p.match(/^\/api\/users\/(u_[A-Za-z0-9_-]+)$/);
   if (um) {
@@ -380,7 +625,7 @@ async function api(req, res, url) {
     const target = q.userById.get(um[1]); if (!target) throw new HttpError(404, 'That person no longer exists.');
     if (method === 'PATCH') {
       const b = await readBody(req);
-      if (b.role && !['admin', 'member', 'viewer'].includes(b.role)) throw new HttpError(400, 'Role must be admin, member or viewer.');
+      if (b.role && !ROLES.includes(b.role)) throw new HttpError(400, 'Role must be admin, member, viewer or guest.');
       if (target.id === user.id && b.role && b.role !== 'admin') throw new HttpError(400, 'You can’t remove your own admin role.');
       if (b.password && String(b.password).length < 8) throw new HttpError(400, 'Passwords need at least 8 characters.');
       if (b.role) db.prepare('UPDATE users SET role = ? WHERE id = ?').run(b.role, target.id);
@@ -392,6 +637,8 @@ async function api(req, res, url) {
         db.prepare('UPDATE users SET disabled = ? WHERE id = ?').run(b.disabled ? 1 : 0, target.id);
         if (b.disabled) q.deleteUserSessions.run(target.id);
       }
+      if (b.reset2fa === true) { clearTwoFactor(target.id); console.log(`Two-factor reset for ${target.email} by ${user.email}`); }
+      if (Array.isArray(b.boards)) setGuestBoards(target.email, b.boards, user.id);
       refreshClients(target.id);
       return send(res, 200, { ok: true });
     }
@@ -442,10 +689,13 @@ async function api(req, res, url) {
 
   // ---- files ----
   if (p === '/api/files' && method === 'POST') {
-    if (!canWrite(user)) throw new HttpError(403, 'Your account can view boards but not change them.');
+    // guests may attach files to their updates; viewers can't upload
+    if (!canWrite(user) && user.role !== 'guest') throw new HttpError(403, 'Your account can view boards but not change them.');
     const bid = url.searchParams.get('board') || '', iid = url.searchParams.get('item') || '';
     if (!/^[A-Za-z0-9_\-.~:@+]{1,200}$/.test(bid) || !boardInfo(bid)) throw new HttpError(404, 'No such board.');
     mustSee(user, bid);
+    if (user.role === 'guest' && !iid) throw new HttpError(403, 'Guests can only attach files to an item.');
+    if (iid) { const ir = /^[A-Za-z0-9_\-.~:@+]{1,200}$/.test(iid) && q.doc.get(`boards/${bid}/items/${iid}`); if (ir ? !itemVisible(user, boardInfo(bid), JSON.parse(ir.data)) : user.role === 'guest') throw new HttpError(404, 'No such item.'); }
     let name = 'file'; try { name = decodeURIComponent(String(req.headers['x-filename'] || 'file')); } catch (e) {}
     name = name.replace(/[\\/\r\n\0]/g, '_').trim().slice(0, 200) || 'file';
     const type = String(req.headers['content-type'] || 'application/octet-stream').split(';')[0].trim().slice(0, 100);
@@ -459,6 +709,7 @@ async function api(req, res, url) {
   if (fm && method === 'GET') {
     const f = db.prepare('SELECT * FROM files WHERE id = ?').get(fm[1]);
     if (!f || !boardInfo(f.board) || !canSee(user, boardInfo(f.board).access)) throw new HttpError(404, 'That file doesn’t exist or isn’t shared with you.');
+    if (f.item && restricted(user, boardInfo(f.board))) { const ir = q.doc.get(`boards/${f.board}/items/${f.item}`); if (ir && !itemVisible(user, boardInfo(f.board), JSON.parse(ir.data))) throw new HttpError(404, 'That file doesn’t exist or isn’t shared with you.'); }
     const full = path.join(FILES_DIR, f.id); if (!fs.existsSync(full)) throw new HttpError(404, 'That file is missing on the server.');
     const SAFE = /^(image\/(png|jpe?g|gif|webp)|application\/pdf|text\/plain)$/;
     const inline = url.searchParams.get('inline') === '1' && SAFE.test(f.type || '');
@@ -488,57 +739,165 @@ async function api(req, res, url) {
     const ws = url.searchParams.get('ws') || 'main';
     let hit = summaryCache.get(ws);
     if (!hit || Date.now() - hit.at > 60000) { hit = { at: Date.now(), boards: buildSummary(ws) }; summaryCache.set(ws, hit); }
-    return send(res, 200, summaryFor(ws, hit.boards.filter(x => canSee(user, x.access))));
+    // boards where this person only sees items assigned to them are counted for them alone
+    const mine = hit.boards.filter(x => canSee(user, x.access)).map(x => {
+      const info = boardInfo(x.id); if (!restricted(user, info)) return x;
+      const r = q.doc.get('boards/' + x.id); return r ? boardStats(x.id, JSON.parse(r.data), d => itemVisible(user, info, d)) : x;
+    });
+    return send(res, 200, summaryFor(ws, mine));
+  }
+
+  // ---- export the board view (CSV or Excel) ----
+  if (p === '/api/export' && (method === 'GET' || method === 'POST')) {
+    const body = method === 'POST' ? await readBody(req) : {};
+    const bid = String(body.board || url.searchParams.get('board') || ''), format = String(body.format || url.searchParams.get('format') || 'csv').toLowerCase();
+    if (!/^[A-Za-z0-9_\-.~:@+]{1,200}$/.test(bid) || !boardInfo(bid)) throw new HttpError(404, 'No such board.');
+    mustSee(user, bid);
+    if (!['csv', 'xlsx'].includes(format)) throw new HttpError(400, 'Pick csv or xlsx.');
+    const r = q.doc.get('boards/' + bid), b = { id: bid, ...JSON.parse(r.data) }, info = boardInfo(bid);
+    let items;
+    if (Array.isArray(body.items)) items = body.items.slice(0, 50000).map(String).map(id => { const x = /^[A-Za-z0-9_\-.~:@+]{1,200}$/.test(id) && q.doc.get(`boards/${bid}/items/${id}`); return x ? { id, ...JSON.parse(x.data) } : null; }).filter(Boolean);
+    else { const gpos = new Map((b.groups || []).map((g, i) => [g.id, i])); items = q.docsInCol.all(`boards/${bid}/items`).map(x => ({ id: x.id, ...JSON.parse(x.data) })).sort((a, c) => ((gpos.get(a.group) ?? 1e9) - (gpos.get(c.group) ?? 1e9)) || ((a.pos || 0) - (c.pos || 0))); }
+    items = items.filter(it => itemVisible(user, info, it));
+    const want = Array.isArray(body.columns) ? body.columns.map(String) : (url.searchParams.get('cols') ? url.searchParams.get('cols').split(',') : null);
+    const cols = (want ? want.map(id => (b.columns || []).find(c => c.id === id)).filter(Boolean) : (b.columns || [])).filter(c => c.type !== 'button');
+    const rows = [['Name', 'Group', ...cols.map(c => c.title)], ...items.map(it => [it.name || '', ((b.groups || []).find(g => g.id === it.group) || {}).name || '', ...cols.map(c => exportCell(b, c, it))])];
+    const day = new Date().toISOString().slice(0, 10), base = `${String(b.name || 'Board').replace(/[\\/:*?"<>|\r\n]+/g, ' ').trim() || 'Board'} ${day}`;
+    const out = format === 'xlsx' ? sheets.toXlsx(rows, b.name || 'Board') : Buffer.from(sheets.toCsv(rows), 'utf8');
+    res.writeHead(200, { 'Content-Type': format === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv; charset=utf-8',
+      'Content-Length': out.length, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'X-Row-Count': String(items.length),
+      'Content-Disposition': `attachment; filename="${base.replace(/[^\x20-\x7e]/g, '_')}.${format}"; filename*=UTF-8''${encodeURIComponent(base)}.${format}` });
+    return res.end(out);
+  }
+
+  // ---- import a CSV or .xlsx into a board (admins and members) ----
+  if (p === '/api/import/preview' && method === 'POST') {
+    if (!canWrite(user)) throw new HttpError(403, 'Only admins and members can import.');
+    const bid = url.searchParams.get('board') || '';
+    if (!/^[A-Za-z0-9_\-.~:@+]{1,200}$/.test(bid) || !boardInfo(bid)) throw new HttpError(404, 'No such board.');
+    mustSee(user, bid);
+    let name = 'file'; try { name = decodeURIComponent(String(req.headers['x-filename'] || 'file')); } catch (e) {}
+    const buf = await readRaw(req, 10 * 1024 * 1024);
+    let table;
+    try { table = /\.xlsx$/i.test(name) || (buf[0] === 0x50 && buf[1] === 0x4b) ? sheets.parseXlsx(buf) : sheets.parseCsv(buf.toString('utf8')); }
+    catch (e) { throw new HttpError(400, e.message || 'That file couldn’t be read. Save it as CSV and try again.'); }
+    if (table.length < 2) throw new HttpError(400, 'The file needs a header row and at least one row of data.');
+    if (table.length > 5001) throw new HttpError(400, 'Import up to 5,000 rows at a time.');
+    const b = JSON.parse(q.doc.get('boards/' + bid).data), locked = lockedCols(user, { ...b, id: bid });
+    const headers = table[0].map(h => String(h || '').trim());
+    const key = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const settable = (b.columns || []).filter(c => !['formula', 'button', 'item_id', 'created'].includes(c.type) && !(c.readonly && c.source !== 'file'));
+    const used = new Set();
+    const mapping = headers.map(h => {
+      const k = key(h);
+      if (!used.has('name') && ['name', 'item', 'itemname', 'lead', 'client', 'clientname', 'fullname'].includes(k)) { used.add('name'); return 'name'; }
+      if (!used.has('group') && k === 'group') { used.add('group'); return 'group'; }
+      const c = settable.find(x => !used.has(x.id) && !locked.has(x.id) && (key(x.title) === k || x.id === h)); if (c) { used.add(c.id); return c.id; }
+      return '';
+    });
+    for (const [k, v] of importUploads) if (v.exp < Date.now()) importUploads.delete(k);
+    const token = crypto.randomBytes(18).toString('base64url');
+    importUploads.set(token, { uid: user.id, bid, rows: table.slice(1), headers, exp: Date.now() + 30 * 60 * 1000 });
+    return send(res, 200, { token, name, headers, sample: table.slice(1, 6), rows: table.length - 1, mapping,
+      columns: settable.map(c => ({ id: c.id, title: c.title, type: c.type, locked: locked.has(c.id) })), groups: (b.groups || []).map(g => ({ id: g.id, name: g.name })) });
+  }
+  if (p === '/api/import/commit' && method === 'POST') {
+    if (!canWrite(user)) throw new HttpError(403, 'Only admins and members can import.');
+    const body = await readBody(req), up = importUploads.get(String(body.token || ''));
+    if (!up || up.uid !== user.id || up.exp < Date.now()) throw new HttpError(400, 'That upload expired. Choose the file again.');
+    mustSee(user, up.bid);
+    const r = q.doc.get('boards/' + up.bid); if (!r) throw new HttpError(404, 'No such board.');
+    const b = { id: up.bid, ...JSON.parse(r.data) }, locked = lockedCols(user, b);
+    const mapping = Array.isArray(body.mapping) ? body.mapping.map(x => String(x || '')) : [];
+    const blocked = mapping.filter(m => m && locked.has(m)); if (blocked.length) throw lockError(b, new Set(blocked));
+    if (!mapping.includes('name')) throw new HttpError(400, 'Pick the column that holds each item’s name.');
+    const grp = body.group && (b.groups || []).some(g => g.id === body.group) ? body.group : ((b.groups || [])[0] || {}).id;
+    if (!grp) throw new HttpError(400, 'Add a group to the board first.');
+    importUploads.delete(String(body.token));
+    const actor = { id: user.id, name: user.name, email: user.email, role: user.role };
+    let created = 0; const errors = [];
+    up.rows.forEach((row, ri) => {
+      const item = { name: '', group: grp, values: {} };
+      mapping.forEach((m, ci) => {
+        const v = String(row[ci] ?? '').trim(); if (!m || v === '') return;
+        if (m === 'name') item.name = v;
+        else if (m === 'group') { const g = (b.groups || []).find(x => x.name.toLowerCase() === v.toLowerCase() || x.id === v); if (g) item.group = g.id; }
+        else { const c = (b.columns || []).find(x => x.id === m); if (!c) return; item.values[m] = c.type === 'date' && /^\d{4,5}(\.\d+)?$/.test(v) && Number(v) > 20000 && Number(v) < 80000 ? sheets.excelSerialToYmd(v) : v; }
+      });
+      try { integ.createItem(b, item, actor, { quiet: true }); created++; }
+      catch (e) { if (errors.length < 25) errors.push(`Row ${ri + 2}: ${e.message}`); }
+    });
+    summaryCache.clear();
+    console.log(`Import by ${user.email} into ${b.name}: ${created} created, ${up.rows.length - created} skipped`);
+    return send(res, 200, { created, skipped: up.rows.length - created, errors });
   }
 
   // ---- documents ----
   if (p === '/api/col' && method === 'GET') {
     const col = url.searchParams.get('path') || '';
     if (!COLLECTION_RE.test(col)) throw new HttpError(400, 'Unknown collection.');
-    const bid = boardOfPath(col); if (bid) mustSee(user, bid);
+    if (col === 'meta' && user.role === 'guest') throw new HttpError(403, 'Guests can’t open workspace settings.');
+    const bid = boardOfPath(col), info = bid ? mustSee(user, bid) : null;
     let rows = q.docsInCol.all(col).map(r => ({ id: r.id, data: JSON.parse(r.data) }));
-    if (col === 'boards') rows = rows.filter(r => canSee(user, r.data.access));
+    if (col === 'boards') rows = rows.filter(r => canSee(user, r.data.access)).map(r => ({ id: r.id, data: boardForUser(user, r.data) }));
+    if (bid && restricted(user, info)) rows = rows.filter(r => itemVisible(user, info, r.data));
     return send(res, 200, rows);
   }
   if (p === '/api/doc') {
     const dp = url.searchParams.get('path') || '';
     if (!DOC_RE.test(dp)) throw new HttpError(400, 'Unknown document.');
     const { col, id } = splitDoc(dp);
-    const bid = boardOfPath(dp); if (bid) mustSee(user, bid);
-    if (method === 'GET') { const r = q.doc.get(dp); return send(res, 200, r ? { id, exists: true, data: JSON.parse(r.data) } : { id, exists: false }); }
-    if (!canWrite(user)) throw new HttpError(403, 'Your account can view boards but not change them.');
+    const bid = boardOfPath(dp), info = bid ? mustSee(user, bid) : null;
+    const isItem = /^boards\/[^/]+\/items\/[^/]+$/.test(dp), isBoard = /^boards\/[^/]+$/.test(dp);
+    if (dp.startsWith('meta/') && user.role === 'guest') throw new HttpError(403, 'Guests can’t open workspace settings.');
+    const prev = q.doc.get(dp), before = prev ? JSON.parse(prev.data) : null;
+    if (isItem && before && !itemVisible(user, info, before)) throw new HttpError(404, 'That item doesn’t exist or isn’t shared with you.');
+    if (method === 'GET') return send(res, 200, before ? { id, exists: true, data: isBoard ? boardForUser(user, before) : before } : { id, exists: false });
+    const guestEdit = user.role === 'guest' && isItem && method === 'PATCH';
+    if (!canWrite(user) && !guestEdit) throw new HttpError(403, user.role === 'guest' ? 'Guests can post updates and fill in the columns the admin opened to guests.' : 'Your account can view boards but not change them.');
     if (dp.startsWith('meta/') && user.role !== 'admin') throw new HttpError(403, 'Only admins can change workspace settings.');
     if (method === 'PUT' || method === 'PATCH') {
       const body = await readBody(req);
       let data = body;
-      const prev = q.doc.get(dp), before = prev ? JSON.parse(prev.data) : null;
-      // Only admins decide who can see a board.
-      if (/^boards\/[^/]+$/.test(dp) && user.role !== 'admin') {
-        const was = before ? before.access : undefined;
-        if (method === 'PATCH' && 'access' in body && JSON.stringify(body.access) !== JSON.stringify(was)) throw new HttpError(403, 'Only admins can change who sees a board.');
-        delete body.access;
-        if (method === 'PUT' && was !== undefined) data.access = was;
+      // Only admins decide who can see a board and who can change which columns.
+      if (isBoard && user.role !== 'admin') {
+        for (const k of ['access', 'perms']) {
+          const was = before ? before[k] : undefined;
+          if (method === 'PATCH' && k in body && JSON.stringify(body[k]) !== JSON.stringify(was)) throw new HttpError(403, k === 'access' ? 'Only admins can change who sees a board.' : 'Only admins can change a board’s permissions.');
+          delete body[k];
+          if (method === 'PUT' && was !== undefined) data[k] = was;
+        }
       }
-      if (/^boards\/[^/]+$/.test(dp) && user.role === 'admin' && data.access) data.access = cleanAccess(data.access, method === 'PATCH' && before ? before.access : null);
+      if (isBoard && user.role === 'admin' && data.access) data.access = cleanAccess(data.access, method === 'PATCH' && before ? before.access : null);
+      const newPerms = isBoard && user.role === 'admin' && body.perms && typeof body.perms === 'object' ? body.perms : null;
       if (method === 'PATCH') {
         if (!prev) throw new HttpError(404, 'That record no longer exists.');
         data = merge(JSON.parse(prev.data), body);
+      }
+      if (newPerms) data.perms = cleanPerms(newPerms, data); // replaced as a whole, so a lock can be removed
+      let stripped = [];
+      if (isItem) {
+        if (user.role === 'guest') checkGuestEdit(before, data, user);
+        const locked = lockedCols(user, info);
+        if (locked.size) {
+          if (before) { const bad = [...changedCols(before, data)].filter(c => locked.has(c)); if (bad.length) throw lockError(info, new Set(bad)); }
+          else for (const k of Object.keys(data.values || {})) if (locked.has(baseCol(k)) && data.values[k] !== '' && data.values[k] != null) { delete data.values[k]; if (!stripped.includes(baseCol(k))) stripped.push(baseCol(k)); }
+        }
       }
       const json = JSON.stringify(data);
       if (json.length > 1024 * 1024) throw new HttpError(413, 'That record is too large.');
       q.upsertDoc.run(dp, col, id, json, now(), user.id);
       { const m = /^boards\/([^/]+)\/items\/([^/]+)$/.exec(dp); if (m) buzz(m[1], m[2], before, data, user.id); }
       if (col === 'boards') boardCache.delete(id);
-      broadcast({ op: 'set', col, id, data });
+      broadcast({ op: 'set', col, id, data, ...(isBoard ? { prevAccess: before ? before.access || null : null } : {}) });
       integ.itemChanged(dp, before, data, user.id);
       try { itemNotifications(dp, before, data, user); } catch (e) { console.error('notifications:', e.message); }
-      return send(res, 200, { ok: true });
+      return send(res, 200, stripped.length ? { ok: true, stripped: stripped.map(c => colTitle(info, c)) } : { ok: true });
     }
     if (method === 'DELETE') {
-      const prev = q.doc.get(dp);
       q.deleteDoc.run(dp);
-      if (prev) integ.itemChanged(dp, JSON.parse(prev.data), null, user.id);
-      if (/^boards\/[^/]+$/.test(dp)) { q.deleteCol.run(dp + '/items'); boardCache.delete(id); }
+      if (prev) integ.itemChanged(dp, before, null, user.id);
+      if (isBoard) { q.deleteCol.run(dp + '/items'); boardCache.delete(id); }
       broadcast({ op: 'delete', col, id });
       return send(res, 200, { ok: true });
     }
@@ -549,29 +908,33 @@ async function api(req, res, url) {
 // ---------- home summary ----------
 // Per-board numbers are cached per workspace; each person's summary adds up only the boards they can see.
 const summaryCache = new Map();
-function buildSummary(ws) {
+function boardStats(id, b, keep) {
   const day = d => d.toISOString().slice(0, 10);
   const today = day(new Date()), weekAgo = Date.now() - 7 * 864e5, inWeek = day(new Date(Date.now() + 7 * 864e5));
   const sparkStart = new Date(Date.now() - 13 * 864e5); sparkStart.setUTCHours(0, 0, 0, 0);
+  const followCols = (b.columns || []).filter(c => c.type === 'date' && /follow|next|callback|due/i.test(c.title)).map(c => c.id);
+  const x = { id, name: b.name, folder: b.folder || '', access: b.access || null, count: 0, newWeek: 0, spark: Array(14).fill(0), overdue: 0, dueToday: 0, upcoming: 0 };
+  for (const it of q.docsInCol.all(`boards/${id}/items`)) {
+    let d; try { d = JSON.parse(it.data); } catch (e) { continue; }
+    if (keep && !keep(d)) continue;
+    x.count++;
+    const c = d.createdAt ? Date.parse(d.createdAt) : NaN;
+    if (c >= weekAgo) x.newWeek++;
+    if (c >= sparkStart.getTime()) { const k = Math.floor((c - sparkStart.getTime()) / 864e5); if (k >= 0 && k < 14) x.spark[k]++; }
+    for (const fc of followCols) {
+      const v = (d.values || {})[fc]; if (!v) continue;
+      if (v < today) x.overdue++; else if (v === today) x.dueToday++; else if (v <= inWeek) x.upcoming++;
+      break;
+    }
+  }
+  return x;
+}
+function buildSummary(ws) {
   const boards = [];
   for (const r of q.docsInCol.all('boards')) {
     let b; try { b = JSON.parse(r.data); } catch (e) { continue; }
     const w = (b.workspace && b.workspace.id) || 'main'; if (w !== ws) continue;
-    const followCols = (b.columns || []).filter(c => c.type === 'date' && /follow|next|callback|due/i.test(c.title)).map(c => c.id);
-    const x = { id: r.id, name: b.name, folder: b.folder || '', access: b.access || null, count: 0, newWeek: 0, spark: Array(14).fill(0), overdue: 0, dueToday: 0, upcoming: 0 };
-    for (const it of q.docsInCol.all(`boards/${r.id}/items`)) {
-      let d; try { d = JSON.parse(it.data); } catch (e) { continue; }
-      x.count++;
-      const c = d.createdAt ? Date.parse(d.createdAt) : NaN;
-      if (c >= weekAgo) x.newWeek++;
-      if (c >= sparkStart.getTime()) { const k = Math.floor((c - sparkStart.getTime()) / 864e5); if (k >= 0 && k < 14) x.spark[k]++; }
-      for (const fc of followCols) {
-        const v = (d.values || {})[fc]; if (!v) continue;
-        if (v < today) x.overdue++; else if (v === today) x.dueToday++; else if (v <= inWeek) x.upcoming++;
-        break;
-      }
-    }
-    boards.push(x);
+    boards.push(boardStats(r.id, b));
   }
   return boards;
 }
@@ -581,9 +944,91 @@ function summaryFor(ws, list) {
   const boards = list.map(x => ({ id: x.id, name: x.name, count: x.count, newWeek: x.newWeek, folder: x.folder })).sort((a, b) => b.count - a.count);
   return { ws, total, newWeek, spark, boards, followups };
 }
+// Puts a guest's email on exactly these boards' access lists (and takes it off every other board).
+// A guest only ever sees boards that list them; listing them doesn't open the board to anyone else.
+function setGuestBoards(email, boardIds, by) {
+  email = String(email || '').toLowerCase(); const want = new Set((boardIds || []).map(String));
+  for (const r of q.docsInCol.all('boards')) {
+    let d; try { d = JSON.parse(r.data); } catch (e) { continue; }
+    const members = lowerList((d.access || {}).members), has = members.includes(email), should = want.has(r.id);
+    if (has === should) continue;
+    const prevAccess = d.access || null;
+    d.access = cleanAccess({ ...(d.access || { private: false }), members: should ? [...members, email] : members.filter(e => e !== email) });
+    q.upsertDoc.run('boards/' + r.id, 'boards', r.id, JSON.stringify(d), now(), by || 'admin');
+    boardCache.delete(r.id); broadcast({ op: 'set', col: 'boards', id: r.id, data: d, prevAccess });
+  }
+  summaryCache.clear();
+}
 function cleanAccess(a) {
   const members = [...new Set((Array.isArray(a.members) ? a.members : []).map(e => String(e || '').trim().toLowerCase()).filter(e => /^[^@\s]+@[^@\s]+$/.test(e)))].sort();
   return { private: !!a.private, members, ...(a.kind ? { kind: String(a.kind) } : {}) };
+}
+// Guests may post updates (as themselves) and change guest-editable columns. Nothing else on an item.
+function checkGuestEdit(before, after, user) {
+  if (!before) throw new HttpError(403, 'Guests can’t add items.');
+  const no = msg => { const e = new HttpError(403, msg || 'Guests can post updates and fill in the columns the admin opened to guests, nothing else.'); e.code = 'locked'; return e; };
+  const js = v => JSON.stringify(v ?? null);
+  for (const k of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    if (js(before[k]) === js(after[k]) || k === 'values') continue; // values are checked against the board's guest-editable columns
+    if (k === 'updates') {
+      const a = (before.updates || []).map(js), n = Array.isArray(after.updates) ? after.updates : [];
+      let kept = -1; // the older updates must stay as they were (the oldest may roll off past 100)
+      for (let d = 0; d <= (n.length >= 100 ? a.length : 0); d++) { const keep = a.slice(d); if (keep.length <= n.length && keep.every((u, i) => u === js(n[i]))) { kept = keep.length; break; } }
+      if (kept < 0) throw no('Guests can add updates but not change existing ones.');
+      for (const u of n.slice(kept)) { if (!u || typeof u !== 'object') throw no(); u.by = user.id; u.byName = user.name; u.text = String(u.text || '').slice(0, 4000); delete u.replies; }
+      continue;
+    }
+    if (k === 'activity') { const old = new Set((before.activity || []).map(js)); if ((Array.isArray(after.activity) ? after.activity : []).some(x => !old.has(js(x)) && !(x && x.by === user.id))) throw no(); continue; }
+    throw no();
+  }
+}
+// What a cell shows in an export: labels for statuses, numbers as numbers, dates as YYYY-MM-DD.
+const KSFormula = require('./public/formula.js');
+function fileNames(v) { if (Array.isArray(v)) return v.filter(f => f && f.url).map(f => f.name || f.url).join(', '); return String(v || ''); }
+function refValue(b, item, id, depth) {
+  if (id === 'name') return item.name || '';
+  const c = (b.columns || []).find(x => x.id === id); if (!c) return '';
+  const v = (item.values || {})[id];
+  switch (c.type) {
+    case 'formula': { const r = formulaResult(b, item, c, depth); return r.error || r.value === '' ? KSFormula.BLANK_REF : r.value; }
+    case 'number': { if (v === '' || v == null) return ''; const n = Number(v); return c.format === 'percent' ? n / 100 : n; }
+    case 'status': return (((c.labels || []).find(l => l.id === String(v))) || {}).label || '';
+    case 'checkbox': return !!v;
+    case 'date': { const dt = (item.values || {})[id + '__dt']; return v ? (dt || v) : ''; }
+    case 'item_id': return String(item.mondayId || item.id);
+    case 'created': return String(item.createdAt || '').slice(0, 10);
+    default: return v == null ? '' : Array.isArray(v) ? fileNames(v) : v;
+  }
+}
+function formulaResult(b, item, c, depth = 0) {
+  try {
+    const refs = [...String(c.formula || '').matchAll(/\{([^}]+)\}/g)].map(m => m[1]);
+    const r = KSFormula.evaluate(c.formula, (id, d) => refValue(b, item, id, d), depth);
+    if (!r.error && /^\s*IF\s*\(/i.test(c.formula) && refs.length && refs.every(id => { const x = (b.columns || []).find(k => k.id === id); return x && x.type === 'number'; }) && refs.every(id => { const v = (item.values || {})[id]; return v === '' || v == null; })) return { value: '' };
+    return r;
+  } catch (e) { return { error: e.message }; }
+}
+function exportCell(b, c, item) {
+  const v = (item.values || {})[c.id];
+  switch (c.type) {
+    case 'formula': { const r = formulaResult(b, item, c); if (r.error || r.value === '' || r.value == null) return ''; return typeof r.value === 'number' && Number.isFinite(r.value) ? r.value : KSFormula.format(r.value); }
+    case 'number': { if (v === '' || v == null) return ''; const n = Number(v); return Number.isFinite(n) ? n : String(v); }
+    case 'status': return v == null || v === '' ? '' : (((c.labels || []).find(l => l.id === String(v))) || {}).label ?? '';
+    case 'date': return v ? String(v).slice(0, 10) : '';
+    case 'checkbox': return v ? 'Yes' : '';
+    case 'item_id': return String(item.mondayId || item.id);
+    case 'created': return String(item.createdAt || '').slice(0, 10);
+    default: return v == null ? '' : Array.isArray(v) || c.type === 'file' || c.source === 'file' ? fileNames(v) : String(v);
+  }
+}
+const importUploads = new Map(); // token -> { uid, bid, rows, headers, exp }
+function readRaw(req, limit) {
+  return new Promise((resolve, reject) => {
+    let size = 0; const chunks = [];
+    req.on('data', c => { size += c.length; if (size > limit) { reject(new HttpError(413, 'That file is too large (10 MB at most).')); req.destroy(); } else chunks.push(c); });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
 }
 // Raw-body upload to disk, up to 25 MB.
 function saveUpload(req, file) {
@@ -692,16 +1137,20 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/login') return serveStatic(req, res, 'login.html');
     if (url.pathname === '/developers') return serveStatic(req, res, 'developers.html');
     if (url.pathname === '/' ) {
-      if (!currentUser(req)) { res.writeHead(302, { Location: '/login' }); return res.end(); }
+      const u = currentUser(req);
+      if (!u) { res.writeHead(302, { Location: '/login' }); return res.end(); }
+      if (u.needs2fa) { res.writeHead(302, { Location: '/login?setup=1' }); return res.end(); }
       return serveStatic(req, res, 'index.html');
     }
     return serveStatic(req, res, url.pathname.replace(/^\/+/, ''));
   } catch (e) {
     const status = e.status || 500;
     if (status === 500) console.error(e);
-    if (!res.headersSent) send(res, status, { error: status === 500 ? 'Something went wrong on the server.' : e.message });
+    if (!res.headersSent) send(res, status, { error: status === 500 ? 'Something went wrong on the server.' : e.message, ...(e.code && status !== 500 ? { code: e.code } : {}) });
   }
 });
+
+module.exports.server = server;
 
 if (require.main === module) {
   // ADMIN_EMAIL + ADMIN_PASSWORD always give a working admin sign-in: created if missing, password reset if it exists.
@@ -711,11 +1160,20 @@ if (require.main === module) {
       const existing = q.userByEmail.get(email);
       if (existing) {
         if (String(password).length < 8) throw new Error('ADMIN_PASSWORD needs at least 8 characters.');
+        // resets the password and admin role; two-factor stays as it is (see ADMIN_RESET_2FA below)
         db.prepare("UPDATE users SET pw = ?, role = 'admin', disabled = 0 WHERE id = ?").run(hashPassword(password), existing.id);
-        console.log('Admin sign-in ready:', email);
+        console.log('Admin sign-in ready:', email + (existing.totp_on ? ' (two-factor stays on)' : ''));
       } else { createUser({ email, name: process.env.ADMIN_NAME || 'Admin', role: 'admin', password }); console.log('Created admin sign-in:', email); }
     } catch (e) { console.error('Could not set up the admin sign-in:', e.message); }
-  } else if (q.userCount.get().n === 0) {
+  }
+  // Locked out of two-factor? ADMIN_RESET_2FA=1 clears ADMIN_EMAIL's two-factor on this start. Remove it again afterwards.
+  if (/^(1|true|yes)$/i.test(String(process.env.ADMIN_RESET_2FA || ''))) {
+    const u = email && q.userByEmail.get(email);
+    if (!u) console.error('ADMIN_RESET_2FA is set, but ADMIN_EMAIL doesn’t match an account. Nothing was reset.');
+    else if (u.role !== 'admin') console.error('ADMIN_RESET_2FA only resets an admin. Nothing was reset.');
+    else { clearTwoFactor(u.id); console.warn(`ADMIN_RESET_2FA: two-factor sign-in was turned OFF for ${email}. Sign in, set it up again, and remove ADMIN_RESET_2FA from the server settings.`); }
+  }
+  if (!(email && password) && q.userCount.get().n === 0) {
     console.log('No accounts yet. Set ADMIN_EMAIL and ADMIN_PASSWORD, or run:  node scripts/create-user.js you@example.com "Your Name" admin "a-strong-password"');
   }
   // First start with a Monday token: fill in each board's private/open access from Monday (read-only), once.

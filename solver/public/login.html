@@ -12,7 +12,7 @@
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body { background: radial-gradient(800px 500px at 75% -10%, rgba(255,255,255,0.08), transparent 60%), #000; color: var(--fg); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Plus Jakarta Sans", system-ui, sans-serif; -webkit-font-smoothing: antialiased; display: grid; place-items: center; padding: 16px; }
-form { background: linear-gradient(160deg, rgba(255,255,255,0.09), rgba(255,255,255,0.025)); backdrop-filter: blur(26px) saturate(150%); -webkit-backdrop-filter: blur(26px) saturate(150%); box-shadow: 0 1px 0 rgba(255,255,255,0.08) inset, 0 30px 80px rgba(0,0,0,0.6); border: 1px solid var(--line); border-radius: 28px; padding: 28px 26px; width: min(380px, 100%); display: flex; flex-direction: column; gap: 14px; }
+form { max-height: calc(100vh - 32px); overflow-y: auto; } form { background: linear-gradient(160deg, rgba(255,255,255,0.09), rgba(255,255,255,0.025)); backdrop-filter: blur(26px) saturate(150%); -webkit-backdrop-filter: blur(26px) saturate(150%); box-shadow: 0 1px 0 rgba(255,255,255,0.08) inset, 0 30px 80px rgba(0,0,0,0.6); border: 1px solid var(--line); border-radius: 28px; padding: 28px 26px; width: min(380px, 100%); display: flex; flex-direction: column; gap: 14px; }
 .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
 .brand img { width: 34px; height: 34px; filter: grayscale(1) brightness(1.4); }
 h1 { font-size: 24px; font-weight: 600; margin: 0; letter-spacing: -.025em; }
@@ -23,30 +23,110 @@ button { font: inherit; font-weight: 600; padding: 13px; border: 0; border-radiu
 button:disabled { opacity: .6; }
 .err { color: var(--danger); font-size: 14px; min-height: 1.5em; margin: 0; }
 .note { color: var(--muted); font-size: 13px; margin: 0; }
+.note a, #step-setup a { color: #fff; }
+[hidden] { display: none !important; }
+#step-pw, #step-code, #step-setup { display: flex; flex-direction: column; gap: 14px; }
+h2 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -.01em; }
+.gbtn { display: flex; align-items: center; justify-content: center; gap: 10px; font-weight: 600; padding: 12px; border-radius: 999px; border: 1px solid var(--line); background: rgba(255,255,255,0.05); color: #fff; text-decoration: none; }
+.gbtn svg { width: 18px; height: 18px; }
+.qr { align-self: center; background: #fff; padding: 6px; border-radius: 14px; line-height: 0; }
+.qr svg { width: min(220px, 64vw); height: auto; }
+.key, .codes code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; letter-spacing: .05em; padding: 8px 10px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,0.05); word-break: break-all; text-align: center; user-select: all; }
+.codes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 </style>
 </head>
 <body>
-<form id="f">
+<form id="f" novalidate>
   <div class="brand"><img src="/icon.svg" alt=""><h1>Solver.ca</h1></div>
-  <label>Email <input id="email" type="email" autocomplete="username" required></label>
-  <label>Password <input id="password" type="password" autocomplete="current-password" required></label>
+  <div id="step-pw">
+    <label>Email <input id="email" type="email" autocomplete="username"></label>
+    <label>Password <input id="password" type="password" autocomplete="current-password"></label>
+  </div>
+  <div id="step-code" hidden>
+    <p class="note">Enter the 6-digit code from your authenticator app. Lost your phone? Enter one of your backup codes instead.</p>
+    <label>Code <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="9" placeholder="123456"></label>
+  </div>
+  <div id="step-setup" hidden></div>
   <p class="err" id="err" role="alert"></p>
   <button id="go">Sign in</button>
-  <p class="note">Forgot your password? Ask an admin to set a new one.</p>
+  <a class="gbtn" id="google" href="/api/auth/google/start" hidden><svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#fff" d="M44.5 20H24v8.5h11.8C34.7 33.9 30.1 37 24 37c-7.2 0-13-5.8-13-13s5.8-13 13-13c3.1 0 5.9 1.1 8.1 2.9l6.4-6.4C34.6 4.1 29.6 2 24 2 11.8 2 2 11.8 2 24s9.8 22 22 22c11 0 21-8 21-22 0-1.3-.2-2.7-.5-4z"/></svg>Sign in with Google</a>
+  <p class="note" id="note">Forgot your password? Ask an admin to set a new one.</p>
 </form>
+<script src="/qr.js"></script>
 <script>
-document.getElementById('f').addEventListener('submit', async e => {
-  e.preventDefault();
-  const go = document.getElementById('go'), err = document.getElementById('err');
-  go.disabled = true; err.textContent = '';
-  try {
-    const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: document.getElementById('email').value, password: document.getElementById('password').value }) });
-    if (r.ok) { location.href = '/'; return; }
+(() => {
+  const $ = id => document.getElementById(id);
+  const H = { 'Content-Type': 'application/json', 'X-Solver': '1' };
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  let step = 'pw', ticket = '', setup = null, codes = null;
+  async function post(url, body) {
+    const r = await fetch(url, { method: 'POST', headers: H, body: JSON.stringify(body || {}), credentials: 'same-origin' });
     const d = await r.json().catch(() => ({}));
-    err.textContent = d.error || 'Sign-in failed. Try again.';
-  } catch (x) { err.textContent = 'Can’t reach the server. Check your connection.'; }
-  go.disabled = false;
-});
+    if (!r.ok) throw new Error(d.error || 'That didn’t work. Try again.');
+    return d;
+  }
+  function show(next) {
+    step = next;
+    $('step-pw').hidden = step !== 'pw'; $('step-code').hidden = step !== 'code'; $('step-setup').hidden = step !== 'setup';
+    $('google').hidden = step !== 'pw' || !window.__google;
+    $('note').textContent = step === 'pw' ? 'Forgot your password? Ask an admin to set a new one.' : step === 'code' ? 'Wrong account? Reload this page to start over.' : '';
+    $('go').textContent = step === 'pw' ? 'Sign in' : step === 'code' ? 'Verify' : codes ? 'Continue' : 'Turn on two-factor';
+    if (step === 'code') setTimeout(() => $('code').focus(), 0);
+  }
+  function renderSetup() {
+    const el = $('step-setup');
+    if (codes) { el.innerHTML = `<h2>Save your backup codes</h2><p class="note">Each works once, in place of a code from your app, if you lose your phone. Save them somewhere safe now. They won’t be shown again.</p><div class="codes">${codes.map(c => `<code>${esc(c)}</code>`).join('')}</div>`; return; }
+    if (!setup) { el.innerHTML = '<p class="note">Getting your setup code…</p>'; return; }
+    let qr = ''; try { qr = window.KSQR ? KSQR.svg(setup.uri, { scale: 4 }) : ''; } catch (e) {}
+    el.innerHTML = `<h2>Set up two-factor sign-in</h2>
+      <p class="note">Your admin requires a code from an authenticator app (Google Authenticator, 1Password, Authy) each time you sign in. Scan this with the app:</p>
+      <div class="qr">${qr}</div>
+      <p class="note">Can’t scan? Add it by hand with this key (time-based, 6 digits):</p>
+      <code class="key">${esc(setup.secret.replace(/(.{4})/g, '$1 ').trim())}</code>
+      <p class="note"><a href="${esc(setup.uri)}">Open in an authenticator app on this device</a></p>
+      <label>Then enter the 6-digit code it shows <input id="setup-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456"></label>
+      <p class="note"><a href="#" id="signout">Sign out</a></p>`;
+    $('signout').onclick = async e => { e.preventDefault(); try { await post('/api/logout'); } catch (x) {} location.href = '/login'; };
+  }
+  async function startSetup() {
+    show('setup'); renderSetup();
+    try { setup = await post('/api/2fa/setup'); renderSetup(); setTimeout(() => $('setup-code') && $('setup-code').focus(), 0); }
+    catch (e) { $('err').textContent = e.message; if (/already on/i.test(e.message)) location.href = '/'; }
+  }
+  $('f').addEventListener('submit', async e => {
+    e.preventDefault();
+    const go = $('go'), err = $('err');
+    go.disabled = true; err.textContent = '';
+    try {
+      if (step === 'pw') {
+        const d = await post('/api/login', { email: $('email').value, password: $('password').value });
+        if (d.twofa) { ticket = d.ticket; show('code'); }
+        else if (d.setup2fa) await startSetup();
+        else { location.href = '/'; return; }
+      } else if (step === 'code') {
+        const d = await post('/api/login/2fa', { ticket, code: $('code').value.trim() });
+        if (d.usedBackup) { alert(`You used a backup code. ${d.backupLeft} left. Make new ones under Security once you’re in.`); }
+        location.href = '/'; return;
+      } else if (step === 'setup') {
+        if (codes) { location.href = '/'; return; }
+        const d = await post('/api/2fa/enable', { code: ($('setup-code').value || '').trim() });
+        codes = d.backupCodes; renderSetup(); show('setup');
+      }
+    } catch (x) {
+      err.textContent = x.message || 'Can’t reach the server. Check your connection.';
+      if (step === 'code' && /start again|took too long/i.test(err.textContent)) { show('pw'); }
+    }
+    go.disabled = false;
+  });
+  // where we came from: a Google sign-in, a forced two-factor setup, or an error
+  const hash = new URLSearchParams(location.hash.slice(1)); history.replaceState(null, '', location.pathname + location.search);
+  fetch('/api/auth/config').then(r => r.json()).then(c => { window.__google = !!c.google; show(step); }).catch(() => {});
+  if (hash.get('error')) $('err').textContent = hash.get('error');
+  if (hash.get('ok')) { location.href = '/'; return; }
+  if (hash.get('twofa')) { ticket = hash.get('twofa'); show('code'); }
+  else if (new URLSearchParams(location.search).get('setup')) startSetup();
+  else show('pw');
+})();
 </script>
 </body>
 </html>

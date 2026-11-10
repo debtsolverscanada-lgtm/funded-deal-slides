@@ -82,7 +82,7 @@ docker run -p 3000:3000 -v solver-data:/data \
   -e COOKIE_SECURE=1 solver
 ```
 
-- `ADMIN_*` only creates the first admin when there are no accounts yet.
+- `ADMIN_*` creates the admin if missing and resets its password and admin role on every start (two-factor stays on; see `ADMIN_RESET_2FA`).
 - Serve it over HTTPS (every host above does this for you) and set `COOKIE_SECURE=1`.
 - Back up `/data/solver.db` daily. That one file is the whole CRM.
 - Add the rest of the team from **Team** in the sidebar (admins only).
@@ -91,11 +91,69 @@ docker run -p 3000:3000 -v solver-data:/data \
 
 | Role | Can |
 |---|---|
-| Admin | everything, plus add people, change roles, reset passwords |
-| Member | view and change boards and items |
-| Viewer | view only |
+| Admin | everything, plus add people, change roles, reset passwords and two-factor, set board access and permissions |
+| Member | view and change boards and items, import and export |
+| Viewer | view only (and export what they can see) |
+| Guest | for a lender or lawyer: sees only the boards an admin shared with them, reads items, posts updates, attaches files, and changes only the columns marked "Guests edit" |
 
-Members and viewers only see open boards and the private boards that list their email.
+Members and viewers see open boards and the private boards that list their email. **Guests never see open boards**:
+they see a board only when their email is on its access list (open or private). They don't see Team & settings,
+Integrations, the workspace switcher, other people's emails or the Monday copy controls, and they always see a
+"Guest" badge. Add a guest under **Team & settings > Add a person > Guest** and tick their boards, or later use
+"+ Share a board…" on their row. From a shell: `node scripts/create-user.js lender@bank.ca "Name" guest "password" --boards=<boardId>,<boardId>`.
+All of this is checked on the server (boards, items, live updates, search, home summary, exports, files, notifications),
+not just hidden in the page.
+
+## Sign-in security
+
+**Two-factor sign-in (TOTP).** Anyone can turn it on under **Security** (sidebar, or Profile on phones): scan the QR
+code with Google Authenticator, 1Password or Authy (or type the key shown under it), enter the 6-digit code, then save
+the 10 one-time backup codes (only their hashes are stored). After that, signing in takes the password and then a code
+or a backup code. Wrong codes are limited: 5 per sign-in attempt and 8 per person per 15 minutes; a code can't be
+used twice. The QR code is drawn in the browser by `public/qr.js` (no outside service sees the key).
+
+- **Require two-factor for everyone** (Team & settings > Sign-in security): people without it must set it up right
+  after signing in; nothing else works until they do. It can't be turned off by the person while this is on.
+- **Reset two-factor** (Team & settings, on a person's row): for someone who lost their phone and backup codes.
+- **Admin locked out?** `ADMIN_EMAIL` + `ADMIN_PASSWORD` still reset the admin's password and role on every start,
+  but they do **not** turn two-factor off. To clear the admin's two-factor, set `ADMIN_RESET_2FA=1` (with
+  `ADMIN_EMAIL`) and restart: the log says `ADMIN_RESET_2FA: two-factor sign-in was turned OFF for …`. Sign in, set it
+  up again, then **remove `ADMIN_RESET_2FA`**. With shell access you can also run
+  `DATA_DIR=/data node scripts/reset-2fa.js person@example.com`.
+
+**Sign in with Google (optional).** Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (Google Cloud console >
+APIs & Services > Credentials > OAuth client ID, type "Web application") and add this authorized redirect URI:
+`https://<your-site>/api/auth/google/callback`. The login page then shows "Sign in with Google". Only people who
+already have a Solver.ca account (matched by email) get in; nobody is created automatically. The server checks the
+state and nonce and verifies Google's ID token (RS256 signature against Google's published keys, issuer, audience,
+expiry, verified email). Two-factor still applies after Google unless the admin turns on **Google sign-in counts as
+two-factor**.
+
+| Setting | What it does |
+|---|---|
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | turn on Sign in with Google (both needed) |
+| `GOOGLE_ALLOWED_DOMAINS` | optional, comma list like `mortgagesolvers.ca`: only Google accounts on these domains |
+| `GOOGLE_REDIRECT_URI` or `PUBLIC_URL` | optional: the exact callback address, when the server can't work it out from the request (behind some proxies) |
+| `ADMIN_RESET_2FA` | `1` clears `ADMIN_EMAIL`'s two-factor on the next start (logged). Remove it afterwards |
+
+## Board permissions (admins, in the board's **Access** window)
+
+- **Column locks.** Lock a column so only admins (and the emails you list on it) can change it. Everyone else sees it
+  read-only with a lock icon. The server refuses changes to locked columns from the app, the API (`/api/v1`) and
+  imports with a clear message; when a member creates or duplicates an item, locked values are left out.
+- **Members see only items assigned to them.** Pick person columns; non-admins then only get items where their
+  Solver.ca name is in one of them (full name, any case, or a first name no one else on the team has). This applies to
+  the board, single items, live updates, the home summary, exports, files and notifications. Admins see everything.
+- **Guests edit.** Mark the columns guests may change (none by default).
+
+## Export and import
+
+- **Export** (board header) downloads the current view as Excel (.xlsx) or CSV: the filters, search, sort, saved
+  view and visible columns you have on screen. Numbers stay numbers, dates are YYYY-MM-DD text, statuses are their
+  labels, formulas are calculated. Only items you're allowed to see are included.
+- **Import** (admins and members) reads a CSV or .xlsx with a header row, matches its columns to the board's by name,
+  lets you change the matching and pick the group, then adds the rows through the same path as the API, so the
+  board's automations and outgoing webhooks run for each new item. Up to 5,000 rows / 10 MB at a time.
 
 ## Notifications and files
 

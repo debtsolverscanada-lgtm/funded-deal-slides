@@ -3,7 +3,7 @@
 'use strict';
 const crypto = require('node:crypto');
 
-module.exports = function integrations({ db, q, now, broadcast, HttpError, readBody, send, merge, notifyNames = () => 0, itemNotifications = () => {}, fillTemplate = t => t, buzz = () => {} }) {
+module.exports = function integrations({ db, q, now, broadcast, HttpError, readBody, send, merge, notifyNames = () => 0, itemNotifications = () => {}, fillTemplate = t => t, buzz = () => {}, lockedCols = () => new Set(), lockError = null }) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS api_keys (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, prefix TEXT NOT NULL, hash TEXT NOT NULL UNIQUE,
@@ -154,16 +154,17 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
   }
 
   // ---------- writes shared by the API and incoming links ----------
-  function saveItem(bid, iid, data, actor) {
+  function saveItem(bid, iid, data, actor, opts = {}) {
     const path = `boards/${bid}/items/${iid}`;
     const old = q.doc.get(path); const before = old ? JSON.parse(old.data) : null;
     q.upsertDoc.run(path, `boards/${bid}/items`, iid, JSON.stringify(data), now(), actor.id);
     broadcast({ op: 'set', col: `boards/${bid}/items`, id: iid, data });
     itemChanged(path, before, data, actor.id);
-    buzz(bid, iid, before, data, actor.id);
+    if (!opts.quiet) buzz(bid, iid, before, data, actor.id);
     try { itemNotifications(path, before, data, actor); } catch (e) { console.error('notifications:', e.message); }
   }
-  function createItem(b, body, actor) {
+  // opts.quiet: no pet heads-up per item (used by spreadsheet imports, which can add thousands of rows)
+  function createItem(b, body, actor, opts = {}) {
     const errors = []; const values = toValues(b, { ...(body.values || {}), ...(body.fields || {}) }, errors);
     const name = String(body.name || '').trim(); if (!name) errors.push('Give the item a name.');
     const grp = groupId(b, body.group); if (!grp) errors.push(`No group called “${body.group}”.`);
@@ -173,7 +174,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     if (body.update) item.updates.push({ at: now(), by: '', byName: actor.name, text: String(body.update).slice(0, 4000) });
     const notes = [];
     runRules(b, item, { type: 'created', group: grp }, actor.name, notes);
-    saveItem(b.id, iid, item, actor);
+    saveItem(b.id, iid, item, actor, opts);
     sendNotes(b, iid, item, notes);
     return { id: iid, item };
   }
@@ -280,6 +281,9 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
       const values = toValues(b, { ...(body.values || {}), ...(body.fields || {}) }, errors);
       let grp = item.group; if (body.group) { grp = groupId(b, body.group); if (!grp) errors.push(`No group called “${body.group}”.`); }
       if (errors.length) throw new HttpError(400, errors.join(' '));
+      // columns an admin locked can't be changed through the API either
+      const locked = lockedCols(null, b), bad = Object.keys(values).filter(k => locked.has(k) && JSON.stringify(values[k] ?? '') !== JSON.stringify((item.values || {})[k] ?? ''));
+      if (bad.length) { if (lockError) throw lockError(b, new Set(bad)); throw new HttpError(403, 'That column is locked.'); }
       const next = { ...item, values: { ...(item.values || {}), ...values }, group: grp, ...(body.name ? { name: String(body.name) } : {}) };
       next.activity = [{ at: now(), by: user.id, text: `Changed by ${user.name}` }, ...(item.activity || [])].slice(0, 40);
       const notes = [];
@@ -370,5 +374,5 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
   }
   if (process.env.KS_REMINDERS !== 'off') { setInterval(() => { try { checkReminders(); } catch (e) { console.error('reminders:', e.message); } }, 10 * 60 * 1000).unref(); setTimeout(() => { try { checkReminders(); } catch (e) {} }, 30000).unref(); }
 
-  return { handleV1, handleAdmin, itemChanged, EVENTS, checkReminders };
+  return { handleV1, handleAdmin, itemChanged, EVENTS, checkReminders, createItem };
 };

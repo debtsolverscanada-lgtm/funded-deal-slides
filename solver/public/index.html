@@ -491,6 +491,24 @@ td.currency::before, td.percent::after { color: var(--muted); }
   .home h1 { font-size: 27px; }
   .hero-num { font-size: 40px; }
 }
+/* security, permissions, guests, import/export */
+.guest-badge { background: rgba(255,255,255,0.16) !important; border: 1px solid rgba(255,255,255,0.35) !important; color: #fff !important; font-weight: 600; letter-spacing: .02em; padding: 1px 8px; border-radius: 99px; font-size: 11px; }
+.whoami .role.guest-badge { align-self: flex-start; }
+.lock-ic { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; vertical-align: -1px; margin-right: 4px; opacity: .75; flex: none; }
+.qr-box { align-self: flex-start; background: #fff; padding: 6px; border-radius: 14px; line-height: 0; box-shadow: 0 0 30px rgba(255,255,255,0.15); }
+.qr-box svg { width: min(240px, 70vw); height: auto; }
+.secret-key { font-family: var(--f-data, ui-monospace, monospace); font-size: 15px; letter-spacing: .06em; padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,0.05); word-break: break-all; display: inline-block; }
+.backup-codes { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.backup-codes code { font-family: var(--f-data, ui-monospace, monospace); font-size: 15px; padding: 8px 10px; text-align: center; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,0.05); user-select: all; }
+.perm-list { display: flex; flex-direction: column; gap: 6px; max-height: 340px; overflow-y: auto; padding-right: 4px; }
+.perm-row .rule-text { flex: 1 1 200px; min-width: 0; }
+.guest-boards { flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.guest-boards .icon-btn { padding: 0 2px; margin-left: 2px; }
+.imp-map { max-height: 340px; overflow: auto; border: 1px solid var(--line); border-radius: 14px; }
+.imp-map table { width: 100%; }
+.imp-map td, .imp-map th { padding: 6px 10px; vertical-align: top; text-align: left; }
+.imp-map select { width: 100%; min-width: 160px; }
+.imp-errors { max-height: 160px; overflow: auto; font-size: 12.5px; color: var(--muted); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; }
 </style>
 </head>
 <body>
@@ -511,6 +529,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
 
 <script src="/formula.js"></script>
 <script src="/ks-client.js"></script>
+<script src="/qr.js"></script>
 <script>
 (() => {
   const PALETTE = ['#2f8f6f', '#3a78c2', '#c2852b', '#b44a5c', '#7a5bc0', '#5f7a2e', '#6b7280', '#c45f2c', '#2a8a9a'];
@@ -523,11 +542,12 @@ td.currency::before, td.percent::after { color: var(--muted); }
     person: '', boardFilter: '', shown: {}, expanded: new Set(), me: null, isOwner: false,
     importManifest: null, importState: null, importing: null,
     ws: null, sort: null, filters: {}, hidden: new Set(), selected: new Set(), drawerTab: 'updates', calCol: null, calMonth: null, dragKind: null, teamNames: [], page: 'home', summary: null,
-    team: [], notifs: { unread: 0, items: [] }, draftFiles: [], uploading: false, pendingOpen: null
+    team: [], notifs: { unread: 0, items: [] }, draftFiles: [], uploading: false, pendingOpen: null,
+    role: '', isGuest: false
   };
   const PAGE = 50;
   try { S.view = localStorage.getItem('ks-view') || 'table'; S.boardId = localStorage.getItem('ks-board'); S.ws = localStorage.getItem('ks-ws'); S.page = localStorage.getItem('ks-page') || 'home'; } catch (e) {}
-  const IC = {"home": "<svg viewBox=\"0 0 24 24\"><path d=\"M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z\"/></svg>", "boards": "<svg viewBox=\"0 0 24 24\"><rect x=\"3\" y=\"4\" width=\"18\" height=\"16\" rx=\"3\"/><path d=\"M3 9h18M9 9v11\"/></svg>", "plus": "<svg viewBox=\"0 0 24 24\"><path d=\"M12 5v14M5 12h14\"/></svg>", "cal": "<svg viewBox=\"0 0 24 24\"><rect x=\"3\" y=\"5\" width=\"18\" height=\"16\" rx=\"3\"/><path d=\"M3 10h18M8 3v4M16 3v4\"/></svg>", "user": "<svg viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"8\" r=\"4\"/><path d=\"M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6\"/></svg>", "menu": "<svg viewBox=\"0 0 24 24\"><path d=\"M4 7h16M4 12h16M4 17h10\"/></svg>", "bell": "<svg viewBox=\"0 0 24 24\"><path d=\"M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9\"/><path d=\"M10 20a2 2 0 0 0 4 0\"/></svg>", "more": "<svg viewBox=\"0 0 24 24\"><circle cx=\"5\" cy=\"12\" r=\"1.3\"/><circle cx=\"12\" cy=\"12\" r=\"1.3\"/><circle cx=\"19\" cy=\"12\" r=\"1.3\"/></svg>"};
+  const IC = {"home": "<svg viewBox=\"0 0 24 24\"><path d=\"M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z\"/></svg>", "boards": "<svg viewBox=\"0 0 24 24\"><rect x=\"3\" y=\"4\" width=\"18\" height=\"16\" rx=\"3\"/><path d=\"M3 9h18M9 9v11\"/></svg>", "plus": "<svg viewBox=\"0 0 24 24\"><path d=\"M12 5v14M5 12h14\"/></svg>", "cal": "<svg viewBox=\"0 0 24 24\"><rect x=\"3\" y=\"5\" width=\"18\" height=\"16\" rx=\"3\"/><path d=\"M3 10h18M8 3v4M16 3v4\"/></svg>", "user": "<svg viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"8\" r=\"4\"/><path d=\"M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6\"/></svg>", "menu": "<svg viewBox=\"0 0 24 24\"><path d=\"M4 7h16M4 12h16M4 17h10\"/></svg>", "bell": "<svg viewBox=\"0 0 24 24\"><path d=\"M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9\"/><path d=\"M10 20a2 2 0 0 0 4 0\"/></svg>", "more": "<svg viewBox=\"0 0 24 24\"><circle cx=\"5\" cy=\"12\" r=\"1.3\"/><circle cx=\"12\" cy=\"12\" r=\"1.3\"/><circle cx=\"19\" cy=\"12\" r=\"1.3\"/></svg>", "lock": "<svg class=\"lock-ic\" viewBox=\"0 0 24 24\" aria-label=\"Locked\"><rect x=\"5\" y=\"11\" width=\"14\" height=\"10\" rx=\"2\"/><path d=\"M8 11V8a4 4 0 0 1 8 0v3\"/></svg>"};
 
 
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -541,6 +561,17 @@ td.currency::before, td.percent::after { color: var(--muted); }
   const wsOf = b => (b && b.workspace && b.workspace.id) ? b.workspace : { id: 'main', name: 'Main workspace' };
   function workspaces() { const m = new Map(); S.boards.forEach(b => { const w = wsOf(b); if (!m.has(w.id)) m.set(w.id, w); }); return [...m.values()]; }
   const wsBoards = () => S.boards.filter(b => wsOf(b).id === S.ws);
+  // ---- permissions: column locks and guest-editable columns (the server enforces them; this only shows them) ----
+  const permsOf = b => (b && b.perms) || {};
+  const isLocked = (col, b = board()) => !!(b && col && Object.prototype.hasOwnProperty.call(permsOf(b).locks || {}, col.id));
+  function colEditable(col, b = board()) {
+    if (!col || !b) return false;
+    if (S.isOwner) return true;
+    if (isLocked(col, b)) { const me = String((S.me && S.me.email) || '').toLowerCase(); if (!((permsOf(b).locks || {})[col.id] || []).map(e => String(e).toLowerCase()).includes(me)) return false; }
+    if (S.isGuest) return (permsOf(b).guestEdit || []).includes(col.id);
+    return S.canWrite;
+  }
+  const roleLabel = () => S.isOwner ? 'Admin' : S.isGuest ? 'Guest' : S.canWrite ? 'Member' : 'Viewer';
   // File columns hold [{ name, url }]. Older copies stored Monday's text: a comma-separated list of links.
   const isFileCol = c => !!c && (c.type === 'file' || c.source === 'file');
   function fileList(v) {
@@ -602,10 +633,13 @@ td.currency::before, td.percent::after { color: var(--muted); }
 
   // ---------- writes (one at a time per document) ----------
   const chains = {};
-  function write(path, fn) {
+  function write(path, fn, opts) {
     if (!S.db) { toast('The workspace is not connected yet.'); return Promise.resolve(); }
-    if (!S.canWrite) { toast('You can view this board but not change it.'); return Promise.resolve(); }
-    chains[path] = (chains[path] || Promise.resolve()).then(fn).catch(e => {
+    if (!S.canWrite && !(opts && opts.guest && S.isGuest)) { toast('You can view this board but not change it.'); return Promise.resolve(); }
+    chains[path] = (chains[path] || Promise.resolve()).then(fn).then(r => { if (r && r.stripped && r.stripped.length) toast(`Locked columns weren’t filled in: ${r.stripped.join(', ')}`); return r; }).catch(e => {
+      // the server refused a change to a locked column: say so and put the real values back
+      if (e && e.code === 'locked') { toast(e.message || 'That column is locked.'); if (window.KS) KS.reload(path.replace(/\/[^/]+$/, '')); return; }
+      if (e && e.code === 'invalid_argument' && S.isGuest) { toast(e.message || 'Guests can’t change that.'); if (window.KS) KS.reload(path.replace(/\/[^/]+$/, '')); return; }
       if (e && e.code === 'invalid_argument') { S.canWrite = false; toast('Your access to this board is view-only.'); }
       else if (e && e.code === 'quota_exceeded') toast('This workspace is full. Delete some items first.');
       else toast('That change did not save. Try again.');
@@ -615,7 +649,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
   const itemsCol = () => S.db.collection('boards/' + S.boardId + '/items');
   const boardDoc = () => S.db.doc('boards/' + S.boardId);
   function patchBoard(patch) { const id = S.boardId; return write('boards/' + id, () => S.db.doc('boards/' + id).update(patch)); }
-  function patchItem(itemId, patch) { const p = 'boards/' + S.boardId + '/items/' + itemId; return write(p, () => S.db.doc(p).update(patch)); }
+  function patchItem(itemId, patch, opts) { const p = 'boards/' + S.boardId + '/items/' + itemId; return write(p, () => S.db.doc(p).update(patch), opts); }
   const act = (item, text, auto) => [{ at: now(), by: auto ? 'automation' : S.uid, text }, ...(item.activity || [])].slice(0, 40);
 
   function describe(col, v) {
@@ -630,6 +664,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
   function setValue(itemId, colId, value) {
     const b = board(), item = itemById(itemId), col = b && b.columns.find(c => c.id === colId);
     if (!item || !col || (col.readonly && !isFileCol(col))) return;
+    if (!colEditable(col, b)) { toast(isLocked(col, b) ? `${col.title} is locked. Only admins can change it.` : S.isGuest ? `Guests can’t change ${col.title}.` : 'You can view this board but not change it.'); scheduleRender(); return; }
     if (col.type === 'number') value = value === '' ? '' : Number(String(value).replace(/[^0-9.\-]/g, ''));
     if (col.type === 'number' && value !== '' && isNaN(value)) { toast('Enter a number, like 245000.'); scheduleRender(); return; }
     const old = (item.values || {})[colId] ?? '';
@@ -773,7 +808,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     lines.forEach(l => { activity = [{ at: now(), by: l.auto ? 'automation' : S.uid, text: l.text }, ...activity]; });
     patch.activity = activity.slice(0, 40);
     item.values = { ...(item.values || {}), ...patch.values }; if (patch.group) item.group = patch.group; item.activity = patch.activity;
-    patchItem(item.id, patch);
+    patchItem(item.id, patch, { guest: true });
     lines.filter(l => l.auto).slice(0, 2).forEach(l => toast(l.text));
     finishAfter(b, item, after);
     scheduleRender();
@@ -824,16 +859,16 @@ td.currency::before, td.percent::after { color: var(--muted); }
     $('#rail').innerHTML = `
       <div class="brand"><div class="brand-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><text x="12" y="17" text-anchor="middle" font-size="16" font-weight="700" font-family="-apple-system, system-ui, sans-serif" fill="#fff">S</text></svg></div>
         <div><div class="brand-name">Solver.ca</div><div class="brand-tag">CRM · test build</div></div></div>
-      ${S.me ? `<div class="whoami"><span class="role">${S.isOwner ? 'Admin' : S.canWrite ? 'Member' : 'Viewer'}</span><b>${esc(S.me.name || 'Signed in')}</b></div>` : ''}
+      ${S.me ? `<div class="whoami"><span class="role ${S.isGuest ? 'guest-badge' : ''}">${roleLabel()}</span><b>${esc(S.me.name || 'Signed in')}</b></div>` : ''}
       <button class="board-link" data-act="go-home" aria-current="${S.page === 'home'}"><span class="dot"></span>Home</button>
       <button class="board-link" data-act="notifs" aria-label="Notifications${S.notifs.unread ? ', ' + S.notifs.unread + ' unread' : ''}" style="margin-top:-14px">${IC.bell.replace('<svg', '<svg class="bell"')}Notifications${S.notifs.unread ? `<span class="nbadge">${S.notifs.unread > 99 ? '99+' : S.notifs.unread}</span>` : ''}</button>
-      <div><h2>Workspace</h2><select class="kbd-select ws-select" id="ws-select" aria-label="Workspace">${workspaces().map(w => `<option value="${esc(w.id)}" ${w.id === S.ws ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select></div>
-      <div><h2>Boards · ${wsBoards().length}</h2>
+      ${S.isGuest ? '' : `<div><h2>Workspace</h2><select class="kbd-select ws-select" id="ws-select" aria-label="Workspace">`}${S.isGuest ? '' : `${workspaces().map(w => `<option value="${esc(w.id)}" ${w.id === S.ws ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select></div>`}
+      <div><h2>${S.isGuest ? 'Boards shared with you' : 'Boards'} · ${wsBoards().length}</h2>
         ${wsBoards().length > 6 ? `<input class="rail-input" id="board-filter" placeholder="Find a board" value="${esc(S.boardFilter)}" aria-label="Find a board" style="margin-bottom:6px;border-style:solid">` : ''}
         <div class="board-list">${list || '<span class="rail-note">No boards yet.</span>'}</div></div>
       ${S.canWrite && S.db ? '<input class="rail-input" id="new-board" placeholder="+ New board" aria-label="New board name">' : ''}
-      <p class="rail-note">Changes save for everyone on the team, live. Automations run the moment a status changes.</p>
-      <div class="form-row">${S.isOwner ? '<button class="btn" data-act="team">Team & settings</button><button class="btn" data-act="integrations">Integrations</button>' : ''}<button class="btn" data-act="logout">Sign out</button></div>`;
+      <p class="rail-note">${S.isGuest ? 'You’re a guest: you see only the boards shared with you, and you can read items and post updates.' : 'Changes save for everyone on the team, live. Automations run the moment a status changes.'}</p>
+      <div class="form-row">${S.isOwner ? '<button class="btn" data-act="team">Team & settings</button><button class="btn" data-act="integrations">Integrations</button>' : ''}<button class="btn" data-act="security">Security</button><button class="btn" data-act="logout">Sign out</button></div>`;
     if (filterEl) { const f = $('#board-filter'); if (f) { f.focus(); f.setSelectionRange(f.value.length, f.value.length); } }
   }
 
@@ -847,7 +882,9 @@ td.currency::before, td.percent::after { color: var(--muted); }
       <div class="head-row">
         <select class="board-select" id="board-select" aria-label="Board">${opts}</select>
         <input class="board-title" id="board-title" value="${esc(b.name)}" aria-label="Board name" ${S.canWrite ? '' : 'readonly'}>
-        <button class="btn primary" data-act="new-item">+ New item</button>
+        ${S.isGuest ? '<span class="pill guest-badge" title="You see only the boards shared with you">Guest</span>' : ''}
+        <button class="btn" data-act="export-menu" title="Download this view as a spreadsheet">Export</button>
+        ${S.canWrite ? '<button class="btn" data-act="import" title="Add items from a CSV or Excel file">Import</button><button class="btn primary" data-act="new-item">+ New item</button>' : ''}
       </div>
       <div class="head-row">
         <div class="tabs" role="group" aria-label="View">
@@ -868,8 +905,8 @@ td.currency::before, td.percent::after { color: var(--muted); }
         <span class="group-count">${visibleItems().length} of ${S.items.length} items</span>
         <span class="spacer"></span>
         ${S.isOwner ? `<button class="btn" data-act="access" title="Who can see this board">${b.access && b.access.private ? `Private · ${(b.access.members || []).length}` : 'Open to everyone'} · Access</button>` : b.access && b.access.private ? '<span class="pill" title="Only the people this board is shared with can see it">Private board</span>' : ''}
-        <button class="btn" data-act="automations">Automations · ${(b.automations || []).filter(r => r.on !== false).length}</button>
-        <button class="btn" data-act="add-column">+ Column</button>
+        ${S.isGuest ? '' : `<button class="btn" data-act="automations">Automations · ${(b.automations || []).filter(r => r.on !== false).length}</button>`}
+        ${S.canWrite ? '<button class="btn" data-act="add-column">+ Column</button>' : ''}
       </div>`;
   }
 
@@ -908,33 +945,33 @@ td.currency::before, td.percent::after { color: var(--muted); }
 
   function cellEditor(col, item, inDrawer) {
     const v = (item.values || {})[col.id] ?? '';
-    const ro = S.canWrite ? '' : 'readonly';
+    const canEd = colEditable(col), ro = canEd ? '' : 'readonly';
     const base = `class="cell-input" data-edit="value" data-item="${esc(item.id)}" data-col="${esc(col.id)}" aria-label="${esc(col.title)}" ${ro}`;
     if (col.type === 'formula') { const r = formulaResult(board(), item, col); const t = r.error ? '⚠' : KSFormula.format(r.value); return `<div class="ro fx" title="${esc(r.error ? 'Formula problem: ' + r.error : col.formula)}">${esc(t)}</div>`; }
     if (col.type === 'item_id') return `<div class="ro">${esc(item.mondayId || item.id)}</div>`;
     if (col.type === 'created') return `<div class="ro">${esc(fmtTime(item.createdAt))}</div>`;
     if (col.type === 'button') return `<button class="col-btn" data-act="col-button" data-item="${esc(item.id)}" data-col="${esc(col.id)}">${esc(col.title)}</button>`;
-    if (col.type === 'checkbox') return `<label class="cb"><input type="checkbox" data-edit="check" data-item="${esc(item.id)}" data-col="${esc(col.id)}" ${v ? 'checked' : ''} ${S.canWrite ? '' : 'disabled'} aria-label="${esc(col.title)}"></label>`;
-    if (col.type === 'dropdown') { const vals = splitPeople(v); return `<button class="people-cell dd-cell" data-act="dropdown" data-item="${esc(item.id)}" data-col="${esc(col.id)}" ${S.canWrite ? '' : 'disabled'}>${vals.length ? vals.map(x => `<span class="pill">${esc(x)}</span>`).join('') : `<span class="pempty">${inDrawer ? 'Choose' : ''}</span>`}</button>`; }
+    if (col.type === 'checkbox') return `<label class="cb"><input type="checkbox" data-edit="check" data-item="${esc(item.id)}" data-col="${esc(col.id)}" ${v ? 'checked' : ''} ${canEd ? '' : 'disabled'} aria-label="${esc(col.title)}"></label>`;
+    if (col.type === 'dropdown') { const vals = splitPeople(v); return `<button class="people-cell dd-cell" data-act="dropdown" data-item="${esc(item.id)}" data-col="${esc(col.id)}" ${canEd ? '' : 'disabled'}>${vals.length ? vals.map(x => `<span class="pill">${esc(x)}</span>`).join('') : `<span class="pempty">${inDrawer ? 'Choose' : ''}</span>`}</button>`; }
     if (col.type === 'link') { const lp = linkParts(v); return `<div class="link-cell"><input type="text" ${base} value="${esc(v)}" placeholder="${inDrawer ? 'https://' : ''}">${lp.url ? `<a href="${esc(lp.url)}" target="_blank" rel="noopener" aria-label="Open link">↗</a>` : ''}</div>`; }
     if (isFileCol(col)) {
       const at = `data-item="${esc(item.id)}" data-col="${esc(col.id)}"`;
-      const chips = fileList(v).map((f, k) => `<span class="file-chip"><a href="${esc(f.url)}" target="_blank" rel="noopener" title="${esc(f.name)}" ${String(f.url).startsWith('/api/files/') ? 'download' : ''}>${esc(f.name)}</a>${S.canWrite && inDrawer ? `<button class="icon-btn" data-act="file-remove" ${at} data-k="${k}" aria-label="Remove ${esc(f.name)}" title="Remove">×</button>` : ''}</span>`).join('');
-      return `<div class="file-cell">${chips}${S.canWrite ? `<button class="icon-btn file-add" data-act="file-add" ${at} title="Add file" aria-label="Add file to ${esc(col.title)}">${inDrawer || !chips ? '+ Add file' : '+'}</button>` : ''}</div>`;
+      const chips = fileList(v).map((f, k) => `<span class="file-chip"><a href="${esc(f.url)}" target="_blank" rel="noopener" title="${esc(f.name)}" ${String(f.url).startsWith('/api/files/') ? 'download' : ''}>${esc(f.name)}</a>${canEd && inDrawer ? `<button class="icon-btn" data-act="file-remove" ${at} data-k="${k}" aria-label="Remove ${esc(f.name)}" title="Remove">×</button>` : ''}</span>`).join('');
+      return `<div class="file-cell">${chips}${canEd ? `<button class="icon-btn file-add" data-act="file-add" ${at} title="Add file" aria-label="Add file to ${esc(col.title)}">${inDrawer || !chips ? '+ Add file' : '+'}</button>` : ''}</div>`;
     }
     if (col.readonly) return `<div class="ro" title="${esc(v)}">${esc(v)}</div>`;
     if (col.long && inDrawer) return `<textarea ${base} rows="3" style="height:auto;padding:8px 10px;resize:vertical">${esc(v)}</textarea>`;
     switch (col.type) {
       case 'status': {
         const l = labelOf(col, v);
-        return `<button class="chip ${l ? '' : 'none'}" style="${l ? '--c:' + esc(l.color) : ''}" title="${esc(l && l.desc || '')}" data-act="status" data-item="${esc(item.id)}" data-col="${esc(col.id)}">${l ? esc(l.label) : inDrawer ? 'Set ' + esc(col.title.toLowerCase()) : ''}</button>`;
+        return `<button class="chip ${l ? '' : 'none'}" style="${l ? '--c:' + esc(l.color) : ''}" title="${esc(l && l.desc || '')}" data-act="status" data-item="${esc(item.id)}" data-col="${esc(col.id)}" ${canEd ? '' : 'aria-disabled="true"'}>${l ? esc(l.label) : inDrawer && canEd ? 'Set ' + esc(col.title.toLowerCase()) : ''}</button>`;
       }
-      case 'date': return `<input type="date" ${base} value="${esc(v)}" ${v && v < ymd(new Date()) && /follow|due|deadline|next|callback/i.test(col.title) ? 'data-overdue title="Overdue"' : ''}>`;
+      case 'date': return canEd ? `<input type="date" ${base} value="${esc(v)}" ${v && v < ymd(new Date()) && /follow|due|deadline|next|callback/i.test(col.title) ? 'data-overdue title="Overdue"' : ''}>` : `<input type="text" ${base} value="${esc(v)}">`;
       case 'number': return `<input type="text" inputmode="decimal" ${base} value="${col.format === 'currency' ? esc(fmtMoney(v)) : esc(v)}" style="${col.format === 'currency' ? 'padding-left:20px' : ''}">`;
       case 'person': {
         const ps = splitPeople(v);
         const avs = ps.slice(0, 3).map(n => `<span class="av" style="background:${hue(n)}" title="${esc(n)}">${esc(initials(n))}</span>`).join('');
-        return `<button class="people-cell" data-act="person" data-item="${esc(item.id)}" data-col="${esc(col.id)}" aria-label="${esc(col.title)}: ${esc(ps.join(', ') || 'nobody')}" ${S.canWrite ? '' : 'disabled'}>${ps.length ? avs + (inDrawer ? `<span class="pnames">${esc(ps.join(', '))}</span>` : ps.length > 3 ? `<span class="pmore">+${ps.length - 3}</span>` : '') : `<span class="pempty">${inDrawer ? 'Assign' : ''}</span>`}</button>`;
+        return `<button class="people-cell" data-act="person" data-item="${esc(item.id)}" data-col="${esc(col.id)}" aria-label="${esc(col.title)}: ${esc(ps.join(', ') || 'nobody')}" ${canEd ? '' : 'disabled'}>${ps.length ? avs + (inDrawer ? `<span class="pnames">${esc(ps.join(', '))}</span>` : ps.length > 3 ? `<span class="pmore">+${ps.length - 3}</span>` : '') : `<span class="pempty">${inDrawer ? 'Assign' : ''}</span>`}</button>`;
       }
       case 'phone': return `<input type="text" inputmode="tel" ${base} value="${esc(v)}">`;
       case 'email': return `<input type="text" inputmode="email" ${base} value="${esc(v)}">`;
@@ -979,7 +1016,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     const narrow = window.matchMedia('(max-width: 780px)').matches;
     const cols = visCols(b);
     const sortMark = id => S.sort && S.sort.col === id ? `<span class="th-sort">${S.sort.dir === 'desc' ? '↓' : '↑'}</span>` : '';
-    const head = cols.map(c => `<th class="w-${c.type}"><button class="col-head" data-act="col-menu" data-col="${esc(c.id)}" title="Sort, filter or hide">${esc(c.title)} ${sortMark(c.id)}${(S.filters[c.id] || []).length ? '<span class="th-filter" title="Filtered"></span>' : ''}</button></th>`).join('');
+    const head = cols.map(c => `<th class="w-${c.type}"><button class="col-head" data-act="col-menu" data-col="${esc(c.id)}" title="${isLocked(c, b) ? (colEditable(c, b) ? 'Locked: you can still change it' : 'Locked: only admins can change it') + '. ' : ''}Sort, filter or hide">${isLocked(c, b) ? IC.lock : ''}${esc(c.title)} ${sortMark(c.id)}${(S.filters[c.id] || []).length ? '<span class="th-filter" title="Filtered"></span>' : ''}</button></th>`).join('');
     const addColTh = S.canWrite ? '<th class="add-col"><button data-act="add-column" aria-label="Add column" title="Add column">+</button></th>' : '<th class="add-col"></th>';
     const subCols = b.subColumns || [];
     const span = cols.length + 2;
@@ -1088,7 +1125,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
       const i = itemById(S.openItem);
       if (!i) S.openItem = null;
       else {
-        const fields = b.columns.map(c => `<div class="f-label">${esc(c.title)}</div><div class="f-value ${c.format === 'currency' ? 'currency' : ''}" ${c.format === 'currency' ? 'style="position:relative"' : ''}>${c.format === 'currency' ? '<span style="position:absolute;left:10px;color:var(--muted);font-family:var(--f-data)">$</span>' : ''}${cellEditor(c, i, true)}</div>`).join('');
+        const fields = b.columns.map(c => `<div class="f-label">${isLocked(c, b) ? IC.lock : ''}${esc(c.title)}</div><div class="f-value ${c.format === 'currency' ? 'currency' : ''}" ${c.format === 'currency' ? 'style="position:relative"' : ''}>${c.format === 'currency' ? '<span style="position:absolute;left:10px;color:var(--muted);font-family:var(--f-data)">$</span>' : ''}${cellEditor(c, i, true)}</div>`).join('');
         const groupSel = `<div class="f-label">Group</div><div class="f-value"><select class="kbd-select" data-edit="group" data-item="${esc(i.id)}" ${S.canWrite ? '' : 'disabled'} aria-label="Group">${b.groups.map(g => `<option value="${esc(g.id)}" ${g.id === i.group ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}${b.groups.some(g => g.id === i.group) ? '' : '<option selected>Pick a group</option>'}</select></div>`;
         const updates = (i.updates || []).slice().reverse().map(u => `<div class="update"><div class="u-meta"><b data-uid="${esc(u.by)}">${esc(u.byName || 'Someone')}</b><span>${esc(fmtTime(u.at))}</span></div>${u.text ? `<div class="u-text">${esc(u.text)}</div>` : ''}${(u.files || []).length ? `<div class="file-cell" style="flex-wrap:wrap;padding:0;min-height:0">${u.files.map(f => f.url ? `<span class="file-chip" style="padding-right:10px"><a href="${esc(f.url)}" target="_blank" rel="noopener" title="${esc(f.name)}" ${String(f.url).startsWith('/api/files/') ? 'download' : ''}>📎 ${esc(f.name)}</a></span>` : `<span class="file-chip" style="padding-right:10px">📎 ${esc(f.name)}</span>`).join('')}</div>` : ''}${(u.replies || []).map(rp => `<div class="update" style="margin:6px 0 0 18px"><div class="u-meta"><b>${esc(rp.byName || 'Someone')}</b><span>${esc(fmtTime(rp.at))}</span></div><div class="u-text">${esc(rp.text)}</div></div>`).join('')}</div>`).join('');
         const sys = a => a.by === 'automation' || a.by === 'import' || a.by === 'seed';
@@ -1107,7 +1144,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
             ${(b.subColumns || []).length || (i.subitems || []).length ? `<div><h4 class="sec-title">Subitems · ${(i.subitems || []).length}</h4>${subTable(b, i)}</div>` : ''}
             ${S.canWrite ? `<div><button class="btn danger" data-act="delete-item" data-item="${esc(i.id)}">${S.confirmDelete === 'i:' + i.id ? 'Click again to delete this item' : 'Delete item'}</button></div>` : ''}` : ''}
             ${S.drawerTab === 'updates' ? `<div>
-              ${S.canWrite ? `<div class="composer"><textarea id="update-text" placeholder="Write an update. Call notes, next steps, what the client said. Type @ and a name to notify a teammate."></textarea>
+              ${S.canWrite || S.isGuest ? `<div class="composer"><textarea id="update-text" placeholder="Write an update. Call notes, next steps, what the client said. Type @ and a name to notify a teammate."></textarea>
                 ${S.draftFiles.length ? `<div class="file-cell" style="flex-wrap:wrap;padding:0">${S.draftFiles.map((f, k) => `<span class="file-chip"><a href="${esc(f.url)}" target="_blank" rel="noopener" download>${esc(f.name)}</a><button class="icon-btn" data-act="draft-file-remove" data-k="${k}" aria-label="Remove ${esc(f.name)}">×</button></span>`).join('')}</div>` : ''}
                 <div class="form-row"><button class="btn primary" data-act="post-update" data-item="${esc(i.id)}">Post update</button><button class="btn" data-act="attach-update" data-item="${esc(i.id)}">${S.uploading ? 'Uploading…' : 'Attach file'}</button></div></div>` : ''}
               <div style="margin-top:12px">${updates || '<p class="rail-note">No updates yet. Post the first one above.</p>'}</div></div>` : ''}
@@ -1126,7 +1163,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
         <button class="btn danger" data-act="bulk-del">${S.confirmDelete === 'bulk' ? `Click again to delete ${S.selected.size}` : 'Delete'}</button>` : ''}
         <button class="btn" data-act="bulk-clear">Clear selection</button></div>`;
     }
-    if (S.modal && (b || ['team', 'boards', 'profile', 'integrations', 'notifs'].includes(S.modal.type))) html += `<div class="modal-wrap" data-act="close-modal"><div class="modal" role="dialog" aria-modal="true">${renderModal(b)}</div></div>`;
+    if (S.modal && (b || ['team', 'boards', 'profile', 'integrations', 'notifs', 'security'].includes(S.modal.type))) html += `<div class="modal-wrap" data-act="close-modal"><div class="modal" role="dialog" aria-modal="true">${renderModal(b)}</div></div>`;
     if (S.pop && b) html += renderPop(b);
     const layer = $('#layer');
     const draft = $('#update-text') ? $('#update-text').value : '';
@@ -1183,6 +1220,12 @@ td.currency::before, td.percent::after { color: var(--muted); }
         ${b.columns.filter(c => S.hidden.has(c.id)).map(c => `<label class="pop-check"><input type="checkbox" data-showcol="${esc(c.id)}">${esc(c.title)}</label>`).join('')}
         <button class="pop-btn" data-act="show-all-cols">Show all columns</button></div>`;
     }
+    if (p.type === 'export') {
+      return `<div class="pop" style="${style};width:250px" data-pop><div class="pop-section">Download this view</div>
+        <button class="pop-btn" data-act="export" data-fmt="xlsx">Excel (.xlsx)</button>
+        <button class="pop-btn" data-act="export" data-fmt="csv">CSV</button>
+        <p class="rail-note" style="margin:4px 8px">${visibleItems().length.toLocaleString('en-CA')} items and the columns you can see, with your filters, search and sort.</p></div>`;
+    }
     if (p.type === 'color') {
       return `<div class="pop" style="${style};flex-direction:row;flex-wrap:wrap;width:200px" data-pop>${PALETTE.map(c => `<button class="chip" style="width:32px;height:32px;background:${c}" data-act="pick-color" data-val="${c}" aria-label="Colour ${c}"></button>`).join('')}</div>`;
     }
@@ -1228,6 +1271,42 @@ td.currency::before, td.percent::after { color: var(--muted); }
         ${S.canWrite ? form : ''}
         <div><button class="btn" data-act="close-modal-btn">Done</button></div>`;
     }
+    if (m.type === 'security') {
+      const st = m.status;
+      const head = `<h3>Security</h3><p>Two-factor sign-in asks for a 6-digit code from an app on your phone (Google Authenticator, 1Password, Authy) after your password.</p>${m.msg ? `<div class="rule"><div class="rule-text">${esc(m.msg)}</div></div>` : ''}`;
+      const done = '<div><button class="btn" data-act="close-modal-btn">Done</button></div>';
+      if (!st) return head + '<p>Checking.</p>' + done;
+      if (m.codes) return head + `<h3 style="font-size:16px">Your backup codes</h3><p>Each one works once, in place of a code from your app, if you lose your phone. Save them somewhere safe now (a password manager is good). They won’t be shown again.</p>
+        <div class="backup-codes">${m.codes.map(c => `<code>${esc(c)}</code>`).join('')}</div>
+        <div class="form-row"><button class="btn" data-act="tf-copy">Copy codes</button><button class="btn primary" data-act="tf-saved">I saved them</button></div>`;
+      if (m.setup) return head + `<h3 style="font-size:16px">1. Scan this with your authenticator app</h3>
+        <div class="qr-box">${(() => { try { return window.KSQR ? KSQR.svg(m.setup.uri, { scale: 4 }) : ''; } catch (e) { return ''; } })()}</div>
+        <p>Can’t scan? Add an account by hand with this key (time-based, 6 digits):</p>
+        <p><code class="secret-key" style="user-select:all">${esc(m.setup.secret.replace(/(.{4})/g, '$1 ').trim())}</code></p>
+        <p><a href="${esc(m.setup.uri)}" style="color:#fff">Open in an authenticator app on this device</a></p>
+        <h3 style="font-size:16px">2. Enter the 6-digit code it shows</h3>
+        <div class="form-row"><input class="field-input" id="tf-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" style="width:140px"><button class="btn primary" data-act="tf-enable">Turn on two-factor</button><button class="btn" data-act="close-modal-btn">Cancel</button></div>`;
+      if (st.on) return head + `<div class="rule"><div class="rule-text"><b>Two-factor is on.</b> ${st.backupLeft} backup code${st.backupLeft === 1 ? '' : 's'} left.${st.required ? ' Your admin requires it for everyone.' : ''}</div></div>
+        <p>To get new backup codes${st.required ? '' : ' or turn two-factor off'}, enter a code from your app (or a backup code):</p>
+        <div class="form-row"><input class="field-input" id="tf-code" autocomplete="one-time-code" placeholder="123456" style="width:140px"><button class="btn" data-act="tf-codes">New backup codes</button>${st.required ? '' : '<button class="btn danger" data-act="tf-off">Turn off two-factor</button>'}</div>` + done;
+      return head + `<div class="rule"><div class="rule-text"><b>Two-factor is off.</b>${st.required ? ' Your admin requires it, so set it up now.' : ''}</div></div>
+        <div class="form-row"><button class="btn primary" data-act="tf-setup">Set up two-factor</button></div>` + done;
+    }
+    if (m.type === 'import') {
+      const d = m.data;
+      const head = `<h3>Import into ${esc(b.name)}</h3>${m.msg ? `<div class="rule"><div class="rule-text">${esc(m.msg)}</div></div>` : ''}`;
+      if (m.result) return head + `<div class="rule"><div class="rule-text"><b>${m.result.created.toLocaleString('en-CA')} item${m.result.created === 1 ? '' : 's'} added.</b>${m.result.skipped ? ` ${m.result.skipped.toLocaleString('en-CA')} row${m.result.skipped === 1 ? '' : 's'} skipped.` : ''}</div></div>
+        ${(m.result.errors || []).length ? `<div class="imp-errors">${m.result.errors.map(e => `<div>${esc(e)}</div>`).join('')}</div>` : ''}<div><button class="btn primary" data-act="close-modal-btn">Done</button></div>`;
+      if (!d) return head + `<p>Choose a CSV file (or an Excel .xlsx file) with a header row. Columns are matched to this board’s columns by their names; you can change the matching before anything is added. New items run the board’s automations and webhooks, like items added through the API.</p>
+        <div class="form-row"><button class="btn primary" data-act="imp-pick" ${m.busy ? 'disabled' : ''}>${m.busy ? 'Reading the file…' : 'Choose a file'}</button><button class="btn" data-act="close-modal-btn">Cancel</button></div>`;
+      const opt = (val, label, sel, dis) => `<option value="${esc(val)}" ${sel ? 'selected' : ''} ${dis ? 'disabled' : ''}>${esc(label)}</option>`;
+      const rows = d.headers.map((h, i) => `<tr><td><b>${esc(h || '(no header)')}</b><div class="rail-note">${esc(d.sample.map(r => r[i]).filter(Boolean).slice(0, 2).join(' · ').slice(0, 80))}</div></td>
+        <td><select class="field-input" data-imp-map="${i}" aria-label="Column for ${esc(h)}">${opt('', 'Skip this column', !m.mapping[i])}${opt('name', 'Item name', m.mapping[i] === 'name')}${opt('group', 'Group (by name)', m.mapping[i] === 'group')}${d.columns.map(c => opt(c.id, c.title + (c.locked ? ' (locked)' : ''), m.mapping[i] === c.id, c.locked)).join('')}</select></td></tr>`).join('');
+      return head + `<p><b>${esc(d.name)}</b>: ${d.rows.toLocaleString('en-CA')} row${d.rows === 1 ? '' : 's'}. Check where each column goes.${d.columns.some(c => c.locked) ? ' Locked columns can’t be filled by an import.' : ''}</p>
+        <div class="imp-map"><table class="board"><thead><tr><th>In the file</th><th>Goes to</th></tr></thead><tbody>${rows}</tbody></table></div>
+        <div class="form-row"><label for="imp-group">Add to group</label><select class="field-input" id="imp-group">${d.groups.map(g => opt(g.id, g.name, g.id === m.group)).join('')}</select></div>
+        <div class="form-row"><button class="btn primary" data-act="imp-go" ${m.busy ? 'disabled' : ''}>${m.busy ? 'Importing…' : `Import ${d.rows.toLocaleString('en-CA')} row${d.rows === 1 ? '' : 's'}`}</button><button class="btn" data-act="close-modal-btn">Cancel</button></div>`;
+    }
     if (m.type === 'save-view') {
       return `<h3>Save as view</h3><p>Saves the current filters, person, sort and visible columns as a tab on this board, for everyone.</p>
         <div class="form-row"><input class="field-input" id="sv-name" placeholder="View name, e.g. My follow-ups" style="flex:1 1 220px"><button class="btn primary" data-act="do-save-view">Save view</button><button class="btn" data-act="close-modal-btn">Cancel</button></div>`;
@@ -1264,12 +1343,13 @@ td.currency::before, td.percent::after { color: var(--muted); }
     if (m.type === 'boards') {
       const link = x => `<button class="li" data-act="board" data-id="${esc(x.id)}"><span class="li-ic">${esc(initials(x.name))}</span><span class="li-main"><b>${esc(x.name)}</b></span><span class="chev">›</span></button>`;
       return `<h3>Boards</h3>
-        <select class="kbd-select ws-select" id="ws-select" aria-label="Workspace">${workspaces().map(w => `<option value="${esc(w.id)}" ${w.id === S.ws ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select>
+        ${S.isGuest ? '' : `<select class="kbd-select ws-select" id="ws-select" aria-label="Workspace">${workspaces().map(w => `<option value="${esc(w.id)}" ${w.id === S.ws ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select>`}
         <div class="glass list">${wsBoards().map(link).join('') || '<p class="home-skel">No boards in this workspace.</p>'}</div>
         <div><button class="btn" data-act="close-modal-btn">Close</button></div>`;
     }
     if (m.type === 'profile') {
-      return `<h3>${esc((S.me && S.me.name) || 'Signed in')}</h3><p>${esc((S.me && S.me.email) || '')} · ${S.isOwner ? 'Admin' : S.canWrite ? 'Member' : 'Viewer'}</p>
+      return `<h3>${esc((S.me && S.me.name) || 'Signed in')}</h3><p>${esc((S.me && S.me.email) || '')} · ${S.isGuest ? '<span class="pill guest-badge">Guest</span>' : roleLabel()}</p>
+        <div class="form-row"><button class="btn" data-act="security">Security${S.me && S.me.twofa ? ' · two-factor on' : ''}</button></div>
         <div class="form-row"><button class="btn primary" data-act="notifs">Notifications${S.notifs.unread ? ' · ' + S.notifs.unread + ' new' : ''}</button>${S.isOwner ? '<button class="btn" data-act="team">Team &amp; settings</button><button class="btn" data-act="integrations">Integrations</button>' : ''}<button class="btn" data-act="logout">Sign out</button><button class="btn" data-act="close-modal-btn">Close</button></div>`;
     }
     if (m.type === 'notifs') {
@@ -1281,33 +1361,47 @@ td.currency::before, td.percent::after { color: var(--muted); }
     }
     if (m.type === 'access') {
       const ac = b.access || { private: false, members: [] }, priv = !!ac.private;
-      const who = e => (S.team.find(u => String(u.email || '').toLowerCase() === e) || {}).name;
-      const rows = (ac.members || []).map(e => `<div class="rule"><div class="rule-text"><b>${esc(who(e) || e)}</b>${who(e) ? ` · ${esc(e)}` : ' · <span class="rail-note">no Solver.ca account with this email yet</span>'}</div><button class="icon-btn" data-act="access-remove" data-email="${esc(e)}">Remove</button></div>`).join('');
+      const person = e => S.team.find(u => String(u.email || '').toLowerCase() === e) || {}, who = e => person(e).name;
+      const rows = (ac.members || []).map(e => `<div class="rule"><div class="rule-text"><b>${esc(who(e) || e)}</b>${person(e).role === 'guest' ? ' <span class="pill guest-badge">Guest</span>' : ''}${who(e) ? ` · ${esc(e)}` : ' · <span class="rail-note">no Solver.ca account with this email yet</span>'}</div><button class="icon-btn" data-act="access-remove" data-email="${esc(e)}">Remove</button></div>`).join('');
       const opts = S.team.filter(u => u.email && !(ac.members || []).includes(String(u.email).toLowerCase())).map(u => `<option value="${esc(u.email)}">${esc(u.name)}</option>`).join('');
       return `<h3>Who can see ${esc(b.name)}</h3>
         <p>Admins see every board. A private board is only visible to the people listed here, like a private board in Monday.${ac.source === 'monday' || ac.kind ? ' This list came from the board’s Monday subscribers.' : ''}</p>
         <div class="form-row"><button class="toggle" data-act="access-set" data-private="1" aria-pressed="${priv}">Private</button><button class="toggle" data-act="access-set" data-private="0" aria-pressed="${!priv}">Open to everyone</button></div>
-        ${priv ? '' : '<p>Everyone on the team can see this board now. The list below only matters once it’s private.</p>'}
+        ${priv ? '' : '<p>Everyone on the team can see this board now. The list below only matters once it’s private, except for guests: a guest sees a board only when they’re listed here.</p>'}
         ${rows || '<p class="rail-note">No one is listed yet.</p>'}
         <div class="form-row"><input class="field-input" id="acc-email" list="acc-people" type="email" value="${esc(m.email || '')}" placeholder="Add by email" aria-label="Email to add" style="flex:1 1 220px"><datalist id="acc-people">${opts}</datalist><button class="btn primary" data-act="access-add">Add</button></div>
+        ${renderPermsEditor(b)}
         <div><button class="btn" data-act="close-modal-btn">Done</button></div>`;
     }
     if (m.type === 'team') {
-      const rows = (m.list || []).map(u => `<div class="rule ${u.disabled ? 'off' : ''}"><div class="rule-text"><b>${esc(u.name)}</b> · ${esc(u.email || '')}${u.id === S.uid ? ' (you)' : ''}</div>
-          <select class="field-input" data-role-for="${esc(u.id)}" aria-label="Role for ${esc(u.name)}" ${u.id === S.uid ? 'disabled' : ''}>${['admin', 'member', 'viewer'].map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r[0].toUpperCase() + r.slice(1)}</option>`).join('')}</select>
+      const guestBoards = u => S.boards.filter(x => ((x.access || {}).members || []).map(e => String(e).toLowerCase()).includes(String(u.email || '').toLowerCase()));
+      const boardOpts = (skip) => S.boards.filter(x => !skip.includes(x.id)).map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');
+      const rows = (m.list || []).map(u => `<div class="rule ${u.disabled ? 'off' : ''}"><div class="rule-text"><b>${esc(u.name)}</b> · ${esc(u.email || '')}${u.id === S.uid ? ' (you)' : ''}${u.role === 'guest' ? ' <span class="pill guest-badge">Guest</span>' : ''}${u.totp_on ? ' <span class="pill" title="Signs in with a code from an authenticator app">Two-factor on</span>' : ''}
+          ${u.role === 'guest' ? `<div class="card-meta guest-boards">${guestBoards(u).map(x => `<span class="pill">${esc(x.name)}<button class="icon-btn" data-act="guest-board-remove" data-id="${esc(u.id)}" data-board="${esc(x.id)}" aria-label="Take ${esc(u.name)} off ${esc(x.name)}">×</button></span>`).join('') || '<span class="rail-note">No boards yet: this guest sees nothing.</span>'}
+            <select class="field-input" data-guest-add="${esc(u.id)}" aria-label="Share a board with ${esc(u.name)}"><option value="">+ Share a board…</option>${boardOpts(guestBoards(u).map(x => x.id))}</select></div>` : ''}</div>
+          <select class="field-input" data-role-for="${esc(u.id)}" aria-label="Role for ${esc(u.name)}" ${u.id === S.uid ? 'disabled' : ''}>${['admin', 'member', 'viewer', 'guest'].map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r[0].toUpperCase() + r.slice(1)}</option>`).join('')}</select>
           <input class="field-input" id="pw-${esc(u.id)}" type="password" placeholder="New password" aria-label="New password for ${esc(u.name)}" style="width:150px" autocomplete="new-password">
           <button class="icon-btn" data-act="reset-pw" data-id="${esc(u.id)}">Set password</button>
-          <select class="field-input" data-home-for="${esc(u.id)}" aria-label="Board ${esc(u.name)} opens to"><option value="">Opens to: Home</option>${S.boards.map(x => `<option value="${esc(x.id)}" ${x.id === u.home_board ? 'selected' : ''}>Opens to: ${esc(x.name)}</option>`).join('')}</select>
+          ${u.totp_on ? `<button class="icon-btn" data-act="reset-2fa" data-id="${esc(u.id)}" data-name="${esc(u.name)}">${S.confirmDelete === 'tf:' + u.id ? 'Click again to reset' : 'Reset two-factor'}</button>` : ''}
+          ${u.role === 'guest' ? '' : `<select class="field-input" data-home-for="${esc(u.id)}" aria-label="Board ${esc(u.name)} opens to"><option value="">Opens to: Home</option>${S.boards.map(x => `<option value="${esc(x.id)}" ${x.id === u.home_board ? 'selected' : ''}>Opens to: ${esc(x.name)}</option>`).join('')}</select>`}
           ${u.id === S.uid ? '' : `<button class="icon-btn" data-act="toggle-person" data-id="${esc(u.id)}" data-off="${u.disabled ? 1 : 0}">${u.disabled ? 'Turn on' : 'Turn off'}</button>`}</div>`).join('');
+      const sec = m.security;
+      const secHtml = !sec ? '<p>Loading.</p>' : `
+        <div class="rule"><div class="rule-text"><b>Require two-factor for everyone</b><div class="card-meta">People without it must set it up right after they sign in, before anything else works.</div></div><button class="toggle" data-act="sec-set" data-k="require2fa" aria-pressed="${!!sec.require2fa}">${sec.require2fa ? 'On' : 'Off'}</button></div>
+        <div class="rule"><div class="rule-text"><b>Google sign-in counts as two-factor</b><div class="card-meta">${sec.google ? `Google sign-in is on${(sec.googleDomains || []).length ? ' for ' + esc(sec.googleDomains.join(', ')) : ''}. When this is on, signing in with Google skips the code.` : 'Google sign-in isn’t set up on this server (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET).'}</div></div><button class="toggle" data-act="sec-set" data-k="googleCounts2fa" aria-pressed="${!!sec.googleCounts2fa}">${sec.googleCounts2fa ? 'On' : 'Off'}</button></div>
+        <div class="form-row"><button class="btn" data-act="security">Your two-factor</button></div>`;
       return `<h3>Team and settings</h3>
-        <p>Admins manage people and workspace settings. Members change boards. Viewers only look.</p>
+        <p>Admins manage people and workspace settings. Members change boards. Viewers only look. Guests (a lender, a lawyer) see only the boards shared with them, can read items and post updates, and can change only the columns you open to guests.</p>
         ${m.msg ? `<p style="color:var(--fg)"><b>${esc(m.msg)}</b></p>` : ''}
         ${m.list ? rows : '<p>Loading the team.</p>'}
+        <h3 style="font-size:16px">Sign-in security</h3>
+        ${secHtml}
         <h3 style="font-size:16px">Copy from Monday</h3>
         ${renderSync(m.sync)}
         <h3 style="font-size:16px">Add a person</h3>
         <div class="form-row"><input class="field-input" id="np-name" placeholder="Full name" aria-label="Full name" style="flex:1 1 160px"><input class="field-input" id="np-email" type="email" placeholder="Email" aria-label="Email" style="flex:1 1 200px"></div>
-        <div class="form-row"><select class="field-input" id="np-role" aria-label="Role"><option value="member">Member</option><option value="viewer">Viewer</option><option value="admin">Admin</option></select><input class="field-input" id="np-pw" type="password" placeholder="Starting password (8+ characters)" aria-label="Starting password" style="flex:1 1 200px" autocomplete="new-password"><button class="btn primary" data-act="add-person">Add person</button></div>
+        <div class="form-row"><select class="field-input" id="np-role" aria-label="Role">${[['member', 'Member'], ['viewer', 'Viewer'], ['admin', 'Admin'], ['guest', 'Guest (lender, lawyer…)']].map(([v, l]) => `<option value="${v}" ${m.newRole === v ? 'selected' : ''}>${l}</option>`).join('')}</select><input class="field-input" id="np-pw" type="password" placeholder="Starting password (8+ characters)" aria-label="Starting password" style="flex:1 1 200px" autocomplete="new-password"><button class="btn primary" data-act="add-person">Add person</button></div>
+        ${m.newRole === 'guest' ? `<div class="form-row np-boards"><span class="rail-note">Boards this guest can see:</span>${S.boards.map(x => `<label class="pop-check" style="padding:2px 6px"><input type="checkbox" class="np-board" value="${esc(x.id)}">${esc(x.name)}</label>`).join('')}</div>` : ''}
         <div><button class="btn" data-act="close-modal-btn">Done</button></div>`;
     }
     if (m.type === 'add-column') {
@@ -1328,6 +1422,24 @@ td.currency::before, td.percent::after { color: var(--muted); }
     return '';
   }
 
+  // Admins: column locks, "only items assigned to them", guest-editable columns (shown in the Access window).
+  function renderPermsEditor(b) {
+    const pm = permsOf(b), locks = pm.locks || {}, assigned = pm.assignedOnly || [], ge = pm.guestEdit || [];
+    const cols = b.columns.filter(c => !['formula', 'button', 'item_id', 'created'].includes(c.type));
+    const person = b.columns.filter(c => c.type === 'person');
+    const rows = cols.map(c => { const lk = Object.prototype.hasOwnProperty.call(locks, c.id);
+      return `<div class="rule perm-row"><div class="rule-text"><b>${lk ? IC.lock : ''}${esc(c.title)}</b>${lk ? `<input class="field-input" data-lock-emails="${esc(c.id)}" value="${esc((locks[c.id] || []).join(', '))}" placeholder="Also editable by (emails, comma-separated)" aria-label="People who can still edit ${esc(c.title)}" style="width:100%;margin-top:6px">` : ''}</div>
+        <button class="toggle" data-act="perm-lock" data-col="${esc(c.id)}" aria-pressed="${lk}" title="Only admins${lk ? ' and the people listed' : ''} can change a locked column">${lk ? 'Locked' : 'Lock'}</button>
+        <button class="toggle" data-act="perm-guest" data-col="${esc(c.id)}" aria-pressed="${ge.includes(c.id)}" title="Guests can change this column">Guests edit</button></div>`; }).join('');
+    return `<h3 style="font-size:16px">Members see only items assigned to them</h3>
+      <p>Pick person columns. Members, viewers and guests then only see the items with their name in one of them (their Solver.ca name, or a first name nobody else on the team has). Admins always see everything.</p>
+      <div class="form-row">${person.map(c => `<button class="toggle" data-act="perm-assigned" data-col="${esc(c.id)}" aria-pressed="${assigned.includes(c.id)}">${esc(c.title)}</button>`).join('') || '<span class="rail-note">This board has no person columns.</span>'}</div>
+      <h3 style="font-size:16px">Column permissions</h3>
+      <p>A locked column can only be changed by admins and the people you list; everyone else sees it read-only, in the app, through the API and in imports. Guests can change only the columns marked “Guests edit”.</p>
+      <div class="perm-list">${rows}</div>`;
+  }
+  function savePerms(next) { const b = board(); if (!b) return; const perms = { locks: {}, assignedOnly: [], guestEdit: [], ...permsOf(b), ...next }; patchBoard({ perms }); localBoard({ perms }); }
+
   async function fillNames() {
     if (!S.user) return;
     const els = [...document.querySelectorAll('[data-uid]')];
@@ -1343,12 +1455,12 @@ td.currency::before, td.percent::after { color: var(--muted); }
   // ---------- events ----------
   document.addEventListener('click', e => {
     const t = e.target.closest('[data-act]');
-    const OPENERS = ['status', 'person', 'col-menu', 'hidden-cols', 'bulk-status', 'group-color', 'dropdown', 'sub-status'];
+    const OPENERS = ['status', 'person', 'col-menu', 'hidden-cols', 'bulk-status', 'group-color', 'dropdown', 'sub-status', 'export-menu'];
     if (S.pop && !e.target.closest('[data-pop]') && !(t && OPENERS.includes(t.dataset.act))) { S.pop = null; if (!t) { renderLayer(); return; } }
     if (!t) return;
     const a = t.dataset.act, b = board();
     if (a === 'close-modal' && e.target !== t) return; // clicks inside the modal box
-    if (!['delete-item', 'delete-group', 'delete-column', 'bulk-del', 'delete-view'].includes(a)) S.confirmDelete = null;
+    if (!['delete-item', 'delete-group', 'delete-column', 'bulk-del', 'delete-view', 'reset-2fa'].includes(a)) S.confirmDelete = null;
     switch (a) {
       case 'board': S.page = 'board'; savePage(); S.modal = null; selectBoard(t.dataset.id); render(); break;
       case 'go-home': S.page = 'home'; savePage(); S.modal = null; loadSummary(true); render(); break;
@@ -1415,7 +1527,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
       case 'collapse': { const g = t.dataset.group; S.collapsed.has(g) ? S.collapsed.delete(g) : S.collapsed.add(g); renderContent(); break; }
       case 'new-item': if (b && b.groups[0]) addItem(b.groups[0].id, 'New lead', true); else toast('Add a group first.'); break;
       case 'status': {
-        if (!S.canWrite) return;
+        if (!colEditable(b && b.columns.find(c => c.id === t.dataset.col))) return;
         const r = t.getBoundingClientRect();
         S.pop = { type: 'status', item: t.dataset.item, col: t.dataset.col, x: r.left, y: r.bottom + 4 };
         renderLayer(); const ni = $('#new-label'); break;
@@ -1443,7 +1555,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
         const updates = [...(i.updates || []), u].slice(-100);
         const activity = act(i, u.files ? `Posted an update with ${u.files.length} file${u.files.length === 1 ? '' : 's'}` : 'Posted an update');
         ta.value = ''; S.draftFiles = []; i.updates = updates; i.activity = activity;
-        patchItem(i.id, { updates, activity }); renderLayer(); renderContent(); fillNames(); break;
+        patchItem(i.id, { updates, activity }, { guest: true }); renderLayer(); renderContent(); fillNames(); break;
       }
       case 'automations': S.modal = { type: 'automations', draft: {} }; renderLayer(); break;
       case 'add-column': S.modal = { type: 'add-column' }; renderLayer(); setTimeout(() => $('#c-title') && $('#c-title').focus(), 0); break;
@@ -1455,8 +1567,8 @@ td.currency::before, td.percent::after { color: var(--muted); }
       case 'hide-col': S.hidden.add(t.dataset.col); saveHidden(); S.pop = null; render(); break;
       case 'hidden-cols': { const r = t.getBoundingClientRect(); S.pop = { type: 'hidden', x: r.left, y: r.bottom + 4 }; renderLayer(); break; }
       case 'show-all-cols': S.hidden = new Set(); saveHidden(); S.pop = null; render(); break;
-      case 'person': { if (!S.canWrite) return; const r = t.getBoundingClientRect(); S.pop = { type: 'person', item: t.dataset.item, col: t.dataset.col, x: r.left, y: r.bottom + 4, q: '' }; renderLayer(); setTimeout(() => $('#person-q') && $('#person-q').focus(), 0); break; }
-      case 'dropdown': { if (!S.canWrite) return; const r = t.getBoundingClientRect(); S.pop = { type: 'dropdown', item: t.dataset.item, col: t.dataset.col, x: r.left, y: r.bottom + 4 }; renderLayer(); break; }
+      case 'person': { if (!colEditable(b && b.columns.find(c => c.id === t.dataset.col))) return; const r = t.getBoundingClientRect(); S.pop = { type: 'person', item: t.dataset.item, col: t.dataset.col, x: r.left, y: r.bottom + 4, q: '' }; renderLayer(); setTimeout(() => $('#person-q') && $('#person-q').focus(), 0); break; }
+      case 'dropdown': { if (!colEditable(b && b.columns.find(c => c.id === t.dataset.col))) return; const r = t.getBoundingClientRect(); S.pop = { type: 'dropdown', item: t.dataset.item, col: t.dataset.col, x: r.left, y: r.bottom + 4 }; renderLayer(); break; }
       case 'col-button': runButton(t.dataset.item, t.dataset.col); break;
       case 'dtab': S.drawerTab = t.dataset.tab; renderLayer(); fillNames(); break;
       case 'dup-item': { const i = itemById(t.dataset.item); if (i) { duplicateItem(i, true); } break; }
@@ -1475,6 +1587,40 @@ td.currency::before, td.percent::after { color: var(--muted); }
         S.items = S.items.filter(i => !S.selected.has(i.id)); S.selected = new Set(); toast(`Deleted ${ids.length} items`); render(); break;
       }
       case 'close-modal': case 'close-modal-btn': S.modal = null; renderLayer(); break;
+      // ---- security: two-factor ----
+      case 'security': S.pop = null; S.modal = { type: 'security', status: null, msg: '' }; renderLayer(); loadTwoFactor(); break;
+      case 'tf-setup': KS.api('POST', '/api/2fa/setup', {}).then(r => { S.modal.setup = r; S.modal.msg = ''; renderLayer(); setTimeout(() => $('#tf-code') && $('#tf-code').focus(), 0); }).catch(e => { S.modal.msg = e.message; renderLayer(); }); break;
+      case 'tf-enable': { const code = ($('#tf-code').value || '').trim(); KS.api('POST', '/api/2fa/enable', { code }).then(r => { S.modal.setup = null; S.modal.codes = r.backupCodes; S.modal.msg = 'Two-factor is on.'; if (S.me) S.me.twofa = true; renderLayer(); }).catch(e => { S.modal.msg = e.message; renderLayer(); }); break; }
+      case 'tf-codes': { const code = ($('#tf-code').value || '').trim(); KS.api('POST', '/api/2fa/backup-codes', { code }).then(r => { S.modal.codes = r.backupCodes; S.modal.msg = 'New backup codes made. The old ones no longer work.'; renderLayer(); }).catch(e => { S.modal.msg = e.message; renderLayer(); }); break; }
+      case 'tf-off': { const code = ($('#tf-code').value || '').trim(); KS.api('POST', '/api/2fa/disable', { code }).then(() => { S.modal.msg = 'Two-factor is off.'; if (S.me) S.me.twofa = false; loadTwoFactor(); }).catch(e => { S.modal.msg = e.message; renderLayer(); }); break; }
+      case 'tf-copy': { const txt = (S.modal.codes || []).join('\n'); (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(() => toast('Codes copied')).catch(() => toast('Select the codes and copy them')); break; }
+      case 'tf-saved': S.modal.codes = null; S.modal.msg = ''; loadTwoFactor(); break;
+      case 'sec-set': { const k = t.dataset.k, sec = S.modal.security || {}; KS.api('PUT', '/api/admin/security', { [k]: !sec[k] }).then(v => { S.modal.security = { ...sec, ...v }; S.modal.msg = k === 'require2fa' && v.require2fa ? 'Two-factor is now required. People without it set it up the next time they open Solver.ca.' : ''; renderLayer(); }).catch(e => { S.modal.msg = e.message; renderLayer(); }); break; }
+      case 'reset-2fa': { const id = t.dataset.id; if (S.confirmDelete !== 'tf:' + id) { S.confirmDelete = 'tf:' + id; renderLayer(); return; } S.confirmDelete = null; KS.updateUser(id, { reset2fa: true }).then(() => { S.modal.msg = `Two-factor reset for ${t.dataset.name}. They sign in with just their password${S.modal.security && S.modal.security.require2fa ? ', then set it up again' : ''}.`; loadTeam(); }).catch(e => { S.modal.msg = e.message; renderLayer(); }); break; }
+      case 'guest-board-remove': { const u = (S.modal.list || []).find(x => x.id === t.dataset.id); if (!u) return; const keep = S.boards.filter(x => x.id !== t.dataset.board && ((x.access || {}).members || []).map(e => String(e).toLowerCase()).includes(String(u.email).toLowerCase())).map(x => x.id); setGuestBoards(u, keep); break; }
+      // ---- permissions (Access window, admins) ----
+      case 'perm-lock': { const locks = { ...(permsOf(b).locks || {}) }; if (Object.prototype.hasOwnProperty.call(locks, t.dataset.col)) delete locks[t.dataset.col]; else locks[t.dataset.col] = []; savePerms({ locks }); break; }
+      case 'perm-guest': { const cur = new Set(permsOf(b).guestEdit || []); cur.has(t.dataset.col) ? cur.delete(t.dataset.col) : cur.add(t.dataset.col); savePerms({ guestEdit: [...cur] }); break; }
+      case 'perm-assigned': { const cur = new Set(permsOf(b).assignedOnly || []); cur.has(t.dataset.col) ? cur.delete(t.dataset.col) : cur.add(t.dataset.col); savePerms({ assignedOnly: [...cur] }); break; }
+      // ---- export and import ----
+      case 'export-menu': { const r = t.getBoundingClientRect(); S.pop = { type: 'export', x: r.left, y: r.bottom + 4 }; renderLayer(); break; }
+      case 'export': {
+        S.pop = null; renderLayer(); if (!b) return;
+        const vis = visibleItems(), ids = [...b.groups.flatMap(g => vis.filter(i => i.group === g.id)), ...vis.filter(i => !b.groups.some(g => g.id === i.group))].map(i => i.id);
+        const fmt = t.dataset.fmt;
+        KS.download('/api/export', { board: b.id, format: fmt, items: ids, columns: visCols(b).map(c => c.id) }, `${b.name}.${fmt}`).then(r => toast(`Downloaded ${r.rows.toLocaleString('en-CA')} item${r.rows === 1 ? '' : 's'}`)).catch(e => toast(e.message || 'The export failed.'));
+        break;
+      }
+      case 'import': S.pop = null; S.modal = { type: 'import', data: null, mapping: [], group: '', msg: '' }; renderLayer(); break;
+      case 'imp-pick': pickFiles(false).then(files => { const f = files[0]; if (!f || !S.modal || S.modal.type !== 'import') return; S.modal.busy = true; S.modal.msg = ''; renderLayer();
+        KS.importPreview(f, S.boardId).then(d => { S.modal.busy = false; S.modal.data = d; S.modal.mapping = d.mapping.slice(); S.modal.group = (d.groups[0] || {}).id || ''; renderLayer(); }).catch(e => { S.modal.busy = false; S.modal.msg = e.message; renderLayer(); }); }); break;
+      case 'imp-go': {
+        const m = S.modal; if (!m || !m.data) return;
+        if (!m.mapping.includes('name')) { m.msg = 'Pick which column holds each item’s name.'; renderLayer(); return; }
+        m.busy = true; m.msg = ''; renderLayer();
+        KS.api('POST', '/api/import/commit', { token: m.data.token, mapping: m.mapping, group: m.group }).then(r => { m.busy = false; m.result = r; renderLayer(); if (r.created) toast(`Imported ${r.created.toLocaleString('en-CA')} items`); }).catch(e => { m.busy = false; m.msg = e.message; renderLayer(); });
+        break;
+      }
       case 'save-rule': {
         const d = readRuleForm(); if (!d.label) { toast('Pick the status that starts it.'); return; }
         const r = { id: rid('a'), col: d.col, label: d.label, action: d.action, on: true };
@@ -1514,13 +1660,13 @@ td.currency::before, td.percent::after { color: var(--muted); }
   function saveAccess(ac) { patchBoard({ access: ac }); localBoard({ access: ac }); }
 
   // ---------- files ----------
-  function pickFiles() {
-    return new Promise(resolve => { const inp = document.createElement('input'); inp.type = 'file'; inp.multiple = true; inp.style.display = 'none';
+  function pickFiles(multiple = true) {
+    return new Promise(resolve => { const inp = document.createElement('input'); inp.type = 'file'; inp.multiple = multiple; if (!multiple) inp.accept = '.csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'; inp.style.display = 'none';
       inp.addEventListener('change', () => { resolve([...inp.files]); inp.remove(); }); document.body.appendChild(inp); inp.click(); });
   }
   async function uploadFiles(files, itemId) {
     if (!files.length || !window.KS) return [];
-    if (!S.canWrite) { toast('You can view this board but not change it.'); return []; }
+    if (!S.canWrite && !S.isGuest) { toast('You can view this board but not change it.'); return []; }
     const out = []; S.uploading = true; renderLayer();
     for (const f of files) {
       if (f.size > 25 * 1024 * 1024) { toast(`${f.name} is over 25 MB.`); continue; }
@@ -1572,6 +1718,11 @@ td.currency::before, td.percent::after { color: var(--muted); }
       [...S.selected].map(itemById).filter(Boolean).forEach(i => moveToGroup(b, i, g.id));
       toast(`Moved ${S.selected.size} items to ${g.name}`); S.selected = new Set(); render(); return;
     }
+    if (t.dataset && t.dataset.lockEmails !== undefined) { const locks = { ...(permsOf(b).locks || {}) }; locks[t.dataset.lockEmails] = t.value.split(/[,;\s]+/).map(x => x.trim().toLowerCase()).filter(x => /^[^@\s]+@[^@\s]+$/.test(x)); savePerms({ locks }); return; }
+    if (t.dataset && t.dataset.impMap !== undefined && S.modal && S.modal.type === 'import') { S.modal.mapping[Number(t.dataset.impMap)] = t.value; return; }
+    if (t.id === 'imp-group' && S.modal) { S.modal.group = t.value; return; }
+    if (t.id === 'np-role' && S.modal && S.modal.type === 'team') { S.modal.newRole = t.value; const keep = { name: $('#np-name').value, email: $('#np-email').value, pw: $('#np-pw').value }; renderLayer(); $('#np-name').value = keep.name; $('#np-email').value = keep.email; $('#np-pw').value = keep.pw; return; }
+    if (t.dataset && t.dataset.guestAdd) { const u = (S.modal.list || []).find(x => x.id === t.dataset.guestAdd); if (!u || !t.value) return; const cur = S.boards.filter(x => ((x.access || {}).members || []).map(e => String(e).toLowerCase()).includes(String(u.email).toLowerCase())).map(x => x.id); setGuestBoards(u, [...cur, t.value]); return; }
     if (t.dataset && t.dataset.homeFor) { KS.updateUser(t.dataset.homeFor, { homeBoard: t.value }).then(() => { S.modal.msg = 'Saved. They land there next time they sign in.'; loadTeam(); }).catch(err => { S.modal.msg = err.message; renderLayer(); }); return; }
     if (t.dataset && t.dataset.roleFor) { KS.updateUser(t.dataset.roleFor, { role: t.value }).then(loadTeam).catch(err => { S.modal.msg = err.message; renderLayer(); }); return; }
     if (t.id === 'person-filter') { S.person = t.value; S.shown = {}; return render(); }
@@ -1793,6 +1944,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
   async function checkImport() {
     try { S.isOwner = !!(S.user && await S.user.isOwner()); } catch (e) {}
     try { if (S.user) S.me = await S.user.me(); } catch (e) {}
+    if (S.me) { S.role = S.me.role; S.isGuest = S.role === 'guest'; }
     tryLand();
     render();
     if (!S.isOwner) return;
@@ -1823,12 +1975,21 @@ td.currency::before, td.percent::after { color: var(--muted); }
     catch (e) { if (S.modal) { S.modal.msg = esc(e.message); renderLayer(); } }
   }
   async function loadTeam() {
-    try { const list = await KS.users(); if (S.modal && S.modal.type === 'team') { S.modal.list = list; renderLayer(); } }
+    try { const [list, security] = await Promise.all([KS.users(), KS.api('GET', '/api/admin/security').catch(() => null)]); S.team = list; if (S.modal && S.modal.type === 'team') { S.modal.list = list; S.modal.security = security; renderLayer(); } }
     catch (e) { if (S.modal) { S.modal.msg = e.message; renderLayer(); } }
+  }
+  async function loadTwoFactor() {
+    try { const st = await KS.api('GET', '/api/2fa/status'); if (S.modal && S.modal.type === 'security') { S.modal.status = st; renderLayer(); } }
+    catch (e) { if (S.modal) { S.modal.msg = e.message; renderLayer(); } }
+  }
+  // A guest sees exactly the boards that list their email (Team & settings → Share a board).
+  function setGuestBoards(u, ids) {
+    KS.updateUser(u.id, { boards: ids }).then(() => { S.modal.msg = `${u.name} now sees ${ids.length} board${ids.length === 1 ? '' : 's'}.`; loadTeam(); }).catch(e => { S.modal.msg = e.message; renderLayer(); });
   }
   async function addPerson() {
     const body = { name: $('#np-name').value, email: $('#np-email').value, role: $('#np-role').value, password: $('#np-pw').value };
-    try { await KS.addUser(body); S.modal.msg = `Added ${body.name.trim()}. Send them the site link, their email and the starting password.`; loadTeam(); }
+    if (body.role === 'guest') body.boards = [...document.querySelectorAll('.np-board:checked')].map(x => x.value);
+    try { await KS.addUser(body); S.modal.msg = `Added ${body.name.trim()}${body.role === 'guest' ? ` as a guest on ${body.boards.length} board${body.boards.length === 1 ? '' : 's'}` : ''}. Send them the site link, their email and the starting password.`; S.modal.newRole = ''; loadTeam(); }
     catch (e) { S.modal.msg = e.message; renderLayer(); }
   }
 
@@ -1923,7 +2084,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     const name = first && !/^your$/i.test(first) ? first : '';
     const wsName = (workspaces().find(w => w.id === S.ws) || {}).name || 'your workspace';
     const sm = S.summary && S.summary.ws === S.ws ? S.summary : null;
-    const top = `<div class="home-top"><div><p class="eyebrow">${esc(new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' }))}</p><h1>${greeting()}${name ? ', ' + esc(name) : ''}</h1></div><button class="icon-round" data-act="sheet-profile" aria-label="Menu">${IC.menu}</button></div>`;
+    const top = `<div class="home-top"><div><p class="eyebrow">${esc(new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' }))}</p><h1>${greeting()}${name ? ', ' + esc(name) : ''}</h1>${S.isGuest ? '<span class="pill guest-badge">Guest</span>' : ''}</div><button class="icon-round" data-act="sheet-profile" aria-label="Menu">${IC.menu}</button></div>`;
     if (!sm) return `<div class="home">${top}<div class="glass hero"><p class="home-skel">Adding up ${esc(wsName)}…</p></div></div>`;
     const f = sm.followups, dueAll = f.overdue + f.dueToday + f.upcoming;
     const onTrack = dueAll ? (f.dueToday + f.upcoming) / dueAll : 1;

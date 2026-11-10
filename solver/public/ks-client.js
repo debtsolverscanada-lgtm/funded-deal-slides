@@ -11,7 +11,9 @@
     if (r.status === 401) { location.href = '/login'; throw { code: 'revoked', message: 'Signed out.' }; }
     let data = null; try { data = await r.json(); } catch (e) {}
     if (!r.ok) {
-      const code = r.status === 403 ? 'invalid_argument' : r.status === 413 ? 'quota_exceeded' : r.status === 400 ? 'invalid_argument' : 'unavailable';
+      if (data && data.code === 'twofa_setup') { location.href = '/login?setup=1'; throw { code: 'revoked', message: data.error }; }
+      // 'locked': a column only admins (or listed people) can change. The rest keep their old meaning.
+      const code = data && data.code === 'locked' ? 'locked' : r.status === 403 ? 'invalid_argument' : r.status === 413 ? 'quota_exceeded' : r.status === 400 ? 'invalid_argument' : 'unavailable';
       throw { code, message: (data && data.error) || 'Request failed.' };
     }
     return data;
@@ -63,7 +65,7 @@
     return {
       id, path,
       async get() { const r = await call('GET', url); return docSnap(id, r.exists ? r.data : undefined); },
-      async set(data) { await call('PUT', url, data); local(JSON.parse(JSON.stringify(data))); },
+      async set(data) { const r = await call('PUT', url, data); local(JSON.parse(JSON.stringify(data))); return r; },
       async update(data) { await call('PATCH', url, data); },
       async delete() { await call('DELETE', url); local(undefined); },
       collection(sub) { return colRef(path + '/' + sub); },
@@ -95,10 +97,10 @@
   const me = () => (mePromise = mePromise || call('GET', '/api/me'));
   const user = {
     async id() { return (await me()).id; },
-    async me() { const m = await me(); return { id: m.id, name: m.name, email: m.email, role: m.role, homeBoard: m.homeBoard || '' }; },
+    async me() { const m = await me(); return { id: m.id, name: m.name, email: m.email, role: m.role, homeBoard: m.homeBoard || '', twofa: !!m.twofa }; },
     async isOwner() { return (await me()).role === 'admin'; },
     async canEdit() { return (await me()).role === 'admin'; },
-    async can(name) { const r = (await me()).role; return name === 'data.write' ? r !== 'viewer' : r === 'admin'; },
+    async can(name) { const r = (await me()).role; return name === 'data.write' ? (r === 'admin' || r === 'member') : r === 'admin'; },
     async profiles(ids) {
       team = team || call('GET', '/api/users').catch(() => []);
       const list = await team, out = {};
@@ -132,6 +134,29 @@
       return data;
     },
     updateUser: (id, body) => call('PATCH', '/api/users/' + encodeURIComponent(id), body).then(r => { team = null; return r; }),
+    // Fetches a collection again from the server (e.g. after the server refused a change) and tells its listeners.
+    reload: path => { const e = cols.get(path); return e ? load(path, e) : Promise.resolve(); },
+    // Downloads what the server sends back as a file (exports).
+    async download(url, body, fallbackName) {
+      let r;
+      try { r = await fetch(url, { method: 'POST', headers: HEADERS, body: JSON.stringify(body), credentials: 'same-origin' }); }
+      catch (e) { throw { code: 'unavailable', message: 'Can’t reach the server.' }; }
+      if (!r.ok) { let d = null; try { d = await r.json(); } catch (e) {} throw { code: 'unavailable', message: (d && d.error) || 'The export failed.' }; }
+      const blob = await r.blob(), cd = r.headers.get('Content-Disposition') || '';
+      let name = fallbackName; const m = /filename\*=UTF-8''([^;]+)/.exec(cd); if (m) { try { name = decodeURIComponent(m[1]); } catch (e) {} }
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+      return { rows: Number(r.headers.get('X-Row-Count') || 0), name };
+    },
+    // Sends a spreadsheet to the server to read its columns (import, step 1).
+    async importPreview(file, board) {
+      let r;
+      try { r = await fetch('/api/import/preview?board=' + encodeURIComponent(board), { method: 'POST', credentials: 'same-origin', body: file, headers: { 'X-Solver': '1', 'X-Filename': encodeURIComponent(file.name || 'file'), 'Content-Type': 'application/octet-stream' } }); }
+      catch (e) { throw { code: 'unavailable', message: 'Can’t reach the server.' }; }
+      let d = null; try { d = await r.json(); } catch (e) {}
+      if (!r.ok) throw { code: 'unavailable', message: (d && d.error) || 'That file couldn’t be read.' };
+      return d;
+    },
   };
   window.claude = { use: async name => (name === 'db' ? db : name === 'user' ? user : null) };
 })();
