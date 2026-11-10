@@ -106,6 +106,8 @@ function convValues(cvs, cols) {
       else if (c.type === 'number') { const t = String(cv.text || '').replace(/,/g, ''); val = t ? Number(t) : null; if (Number.isNaN(val)) val = null; }
       else if (c.type === 'checkbox') val = cv.value ? (JSON.parse(cv.value).checked === true || JSON.parse(cv.value).checked === 'true') : null;
       else if (c.type === 'file' || c.source === 'file') { val = parseFiles(cv.text); if (!val.length) val = null; }
+      // connected boards and mirrors: Monday leaves text empty and puts the shown names/values in display_value
+      else if (c.source === 'board_relation' || c.source === 'mirror') val = (cv.display_value != null && cv.display_value !== '' ? cv.display_value : cv.text) || null;
       else if (c.type === 'link') val = cv.text || null; // Monday's own format: "name - https://…"
       else if (['formula', 'button', 'item_id', 'created'].includes(c.type)) val = null;
       else val = cv.text || null;
@@ -120,8 +122,9 @@ function itemDoc(i, cols, subCols, extra = {}) {
   const doc = {
     name: i.name, group: (i.group || {}).id, values: convValues(i.column_values, cols),
     updates: [...(i.updates || [])].reverse().map(u => ({ at: u.created_at, by: '', byName: (u.creator || {}).name || 'Monday user', text: String(u.text_body || '').slice(0, 6000),
+      ...(u.id ? { mid: String(u.id) } : {}),
       ...((u.assets || []).length ? { files: u.assets.map(a => ({ name: a.name, url: a.public_url })) } : {}),
-      ...((u.replies || []).length ? { replies: u.replies.map(rp => ({ at: rp.created_at, byName: (rp.creator || {}).name || 'Monday user', text: String(rp.text_body || '').slice(0, 3000) })) } : {}) })),
+      ...((u.replies || []).length ? { replies: u.replies.map(rp => ({ at: rp.created_at, byName: (rp.creator || {}).name || 'Monday user', text: String(rp.text_body || '').slice(0, 3000), ...(rp.id ? { mid: String(rp.id) } : {}) })) } : {}) })),
     subitems: (i.subitems || []).map(x => ({ id: x.id, name: x.name, values: convValues(x.column_values, subCols) })),
     mondayId: i.id, createdAt: i.created_at, ...extra,
   };
@@ -129,14 +132,155 @@ function itemDoc(i, cols, subCols, extra = {}) {
   return doc;
 }
 
+const CV_FIELDS = 'column_values { id type text value ... on BoardRelationValue { display_value linked_item_ids } ... on MirrorValue { display_value } }';
+const UPDATES_LIMIT = 100;
 const ITEM_FIELDS = `id name group { id } created_at
-  column_values { id type text value }
-  updates(limit: 100) { id text_body created_at creator { name } assets { name public_url } replies { text_body created_at creator { name } } }
-  subitems { id name column_values { id type text value } }`;
+  ${CV_FIELDS}
+  updates(limit: ${UPDATES_LIMIT}) { id text_body created_at creator { name } assets { name public_url } replies { id text_body created_at creator { name } } }
+  subitems { id name ${CV_FIELDS} }`;
 
-// Copies every board in the given workspaces. `save(path, col, id, data)` writes one record.
-// `onProgress({ msg, boards, items })` reports progress. Returns totals.
-async function syncFromMonday({ token, workspaceIds, save, removeStale, onProgress = () => {} }) {
+// ---------- merging a fresh Monday copy into what Solver.ca already has ----------
+// Monday owns its own columns, labels, groups, comments and subitems. Everything made in Solver.ca stays:
+// Solver-only columns and their values, Solver comments and replies, Solver subitems, files uploaded here,
+// time tracking, docs, activity, history, permissions, access edits, automations and views made here.
+const NO_VALUE = new Set(['formula', 'button', 'item_id', 'created']);
+const tms = v => { const t = Date.parse(v); return Number.isFinite(t) ? t : 0; };
+const byAt = (a, b) => tms(a.at) - tms(b.at);
+const solverFiles = v => (Array.isArray(v) ? v.filter(f => f && typeof f.url === 'string' && f.url.startsWith('/api/files/')) : []);
+// The subitems board of a Monday board: its subitems column names it in settings_str.boardIds.
+function subBoardId(columns) {
+  for (const c of columns || []) {
+    if (c.type !== 'subtasks') continue;
+    try { const s = JSON.parse(c.settings_str || '{}') || {}; if (Array.isArray(s.boardIds) && s.boardIds.length) return String(s.boardIds[0]); } catch (e) {}
+  }
+  return null;
+}
+// Labels/options: Monday's list first, then the ones added in Solver.ca (so items using them still show them).
+function mergeLabels(oldL, newL) {
+  const ids = new Set(newL.map(l => String(l.id)));
+  return [...newL, ...(Array.isArray(oldL) ? oldL.filter(l => l && !ids.has(String(l.id))) : [])];
+}
+function mergeColumns(oldCols, newCols) {
+  oldCols = Array.isArray(oldCols) ? oldCols : []; newCols = Array.isArray(newCols) ? newCols : [];
+  const fresh = new Map(newCols.map(c => [c.id, c]));
+  const out = oldCols.map(c => {
+    const m = fresh.get(c.id); if (!m) return c; // added in Solver.ca, or gone from Monday: kept
+    if (c.type !== m.type) return m; // Monday changed the column's type
+    const x = { ...c, ...m };
+    if (m.labels) x.labels = mergeLabels(c.labels, m.labels);
+    if (m.options) x.options = [...m.options, ...(Array.isArray(c.options) ? c.options.filter(o => !m.options.includes(o)) : [])];
+    return x;
+  });
+  // columns new in Monday go right after the Monday column before them
+  let prev = null;
+  for (const m of newCols) {
+    if (!oldCols.some(c => c.id === m.id)) { const at = prev ? out.findIndex(c => c.id === prev) + 1 : 0; out.splice(at, 0, m); }
+    prev = m.id;
+  }
+  return out;
+}
+function mergeGroups(oldG, newG) {
+  oldG = Array.isArray(oldG) ? oldG : []; newG = Array.isArray(newG) ? newG : [];
+  const fresh = new Map(newG.map(g => [g.id, g]));
+  const out = oldG.map(g => (fresh.has(g.id) ? { ...g, ...fresh.get(g.id) } : g));
+  for (const g of newG) if (!oldG.some(o => o.id === g.id)) out.push(g);
+  return out;
+}
+// A board doc. Returns null for a board that wasn't copied from Monday: those are never touched.
+function mergeBoardDoc(old, fresh) {
+  if (!old) return fresh;
+  if (old.source !== 'monday') return null;
+  const oldViews = Array.isArray(old.views) ? old.views : [];
+  // Monday's views are replaced by their current version (keeping settings saved on them here); views made here stay
+  const views = !Array.isArray(fresh.views) ? oldViews : [...fresh.views.map(v => { const o = oldViews.find(x => x.id === v.id); return o && o.settings !== undefined ? { ...v, settings: o.settings } : v; }),
+    ...oldViews.filter(v => v.source !== 'monday')];
+  const out = { ...old };
+  // fields the fresh copy doesn't carry (an older export) keep their stored value
+  for (const k of ['name', 'workspace', 'folder', 'mondayId', 'syncedAt', 'form']) if (fresh[k] !== undefined) out[k] = fresh[k];
+  return Object.assign(out, {
+    source: 'monday',
+    groups: mergeGroups(old.groups, fresh.groups), columns: mergeColumns(old.columns, fresh.columns), subColumns: mergeColumns(old.subColumns, fresh.subColumns),
+    // access changed by an admin in Solver.ca no longer says source: 'monday'; it then stays as the admin set it
+    access: (old.access && old.access.source !== 'monday') || !fresh.access ? old.access : fresh.access,
+    automations: old.automations !== undefined ? old.automations : fresh.automations,
+    views,
+  });
+}
+function mergeValues(oldV, freshV, cols) {
+  const v = { ...(oldV || {}) }; freshV = freshV || {};
+  // Monday's columns unknown (null): only the columns the fresh copy carries are replaced
+  if (cols == null) cols = Object.keys(freshV).filter(k => !/__dt$/.test(k)).map(id => ({ id }));
+  for (const c of cols) {
+    if (NO_VALUE.has(c.type)) continue;
+    const keep = c.type === 'file' || c.source === 'file' ? solverFiles(v[c.id]) : []; // files uploaded in Solver.ca
+    delete v[c.id]; delete v[c.id + '__dt'];
+    if (freshV[c.id] !== undefined) v[c.id] = freshV[c.id];
+    if (freshV[c.id + '__dt'] !== undefined) v[c.id + '__dt'] = freshV[c.id + '__dt'];
+    if (keep.length) v[c.id] = [...(Array.isArray(v[c.id]) ? v[c.id] : []), ...keep];
+  }
+  return v;
+}
+// Replies: Monday's, plus the ones written in Solver.ca (they carry `by` and no Monday id).
+function mergeReplies(oldR, freshR) {
+  const fr = Array.isArray(freshR) ? freshR : [];
+  const mine = (Array.isArray(oldR) ? oldR : []).filter(r => r && !r.mid && r.by);
+  return [...fr, ...mine].sort(byAt);
+}
+// Comments: matched by Monday id (older copies without one: by Monday's created_at). Comments made in Solver.ca stay.
+// A Monday comment that Monday no longer lists was deleted there, unless it's older than the last `limit` Monday returned.
+function mergeUpdates(oldU, freshU, limit = UPDATES_LIMIT) {
+  oldU = Array.isArray(oldU) ? oldU : []; freshU = Array.isArray(freshU) ? freshU : [];
+  const byMid = new Map(freshU.filter(u => u.mid).map(u => [u.mid, u])), byTime = new Map(freshU.map(u => [u.at, u]));
+  // an export made without Monday ids can't say what was deleted in Monday: then nothing stored is dropped
+  const noIds = freshU.some(u => !u.mid), full = freshU.length >= limit, oldest = freshU.length ? Math.min(...freshU.map(u => tms(u.at))) : Infinity;
+  const used = new Set(), out = [];
+  for (const u of oldU) {
+    if (!u || typeof u !== 'object') continue;
+    let f = u.mid ? byMid.get(u.mid) : null;
+    if (!f && !u.by) { const x = byTime.get(u.at); if (x && (!x.mid || !u.mid)) f = x; } // a copy without ids: same Monday time
+    if (f && !used.has(f)) {
+      used.add(f);
+      const x = { ...u, ...f }; const r = mergeReplies(u.replies, f.replies); if (r.length) x.replies = r; else delete x.replies;
+      out.push(x); continue;
+    }
+    if (u.mid) { if (noIds || (full && tms(u.at) < oldest)) out.push(u); continue; } // deleted in Monday, unless older than what Monday returned
+    out.push(u); // made in Solver.ca (or an older copy that can't be matched): kept
+  }
+  for (const f of freshU) if (!used.has(f)) out.push(f);
+  return out.map((u, i) => [u, i]).sort((a, b) => byAt(a[0], b[0]) || a[1] - b[1]).map(x => x[0]);
+}
+const isMondaySub = s => /^\d+$/.test(String((s && s.id) || ''));
+function mergeSubitems(oldS, freshS, subCols) {
+  oldS = Array.isArray(oldS) ? oldS : []; freshS = Array.isArray(freshS) ? freshS : [];
+  const fresh = new Map(freshS.map(s => [String(s.id), s])), out = [];
+  for (const s of oldS) {
+    const f = fresh.get(String(s && s.id));
+    if (f) { out.push({ ...s, ...f, values: mergeValues(s.values, f.values, subCols) }); fresh.delete(String(s.id)); }
+    else if (!isMondaySub(s)) out.push(s); // made in Solver.ca
+  }
+  for (const f of fresh.values()) out.push(f);
+  return out;
+}
+// An item doc: fresh (from itemDoc) merged into the stored one. cols/subCols: the board's columns as Monday has them.
+function mergeItemDoc(old, fresh, cols, subCols) {
+  if (!old) return fresh;
+  return {
+    ...old,
+    name: fresh.name, group: fresh.group, mondayId: fresh.mondayId, createdAt: old.createdAt || fresh.createdAt,
+    values: mergeValues(old.values, fresh.values, cols),
+    updates: mergeUpdates(old.updates, fresh.updates),
+    subitems: mergeSubitems(old.subitems, fresh.subitems, subCols),
+  };
+}
+const ITEM_KEYS = ['name', 'group', 'values', 'updates', 'subitems'];
+// key order doesn't matter (a merge re-adds Monday's values after the ones kept from Solver.ca)
+const stable = v => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map(key => [key, x[key]])) : x));
+const sameItem = (a, b) => !!a && !!b && ITEM_KEYS.every(f => stable(a[f] ?? null) === stable(b[f] ?? null));
+
+// Copies every board in the given workspaces. `save(path, col, id, data)` writes one record; `load(path)` reads one
+// (or null). What's already in Solver.ca is merged, not overwritten (see mergeBoardDoc / mergeItemDoc), and boards
+// whose source isn't Monday are skipped. `onProgress({ msg, boards, items })` reports progress. Returns totals.
+async function syncFromMonday({ token, workspaceIds, save, load = () => null, removeStale, onProgress = () => {} }) {
   if (!token) throw new Error('Set MONDAY_API_TOKEN on the server first.');
   if (!workspaceIds.length) throw new Error('Set MONDAY_WORKSPACE_IDS on the server first.');
   const at = new Date().toISOString();
@@ -150,28 +294,43 @@ async function syncFromMonday({ token, workspaceIds, save, removeStale, onProgre
     const folderOf = new Map(); folders.forEach(f => (f.children || []).forEach(ch => folderOf.set(String(ch.id), f.name)));
     // Monday user id -> name, so saved views filtered by a person keep working (views stay readable without it)
     const people = {}; try { for (const u of (await gql(token, '{ users(limit: 500) { id name } }')).users || []) people[String(u.id)] = u.name; } catch (e) { /* views keep the raw person ids */ }
-    const subBoards = new Map(boards.filter(b => b.type === 'sub_items_board').map(b => [b.name, b]));
+    const subById = new Map(boards.filter(b => b.type === 'sub_items_board').map(b => [String(b.id), b]));
+    const subByName = new Map(boards.filter(b => b.type === 'sub_items_board').map(b => [b.name, b]));
     for (const b of boards) {
       if (b.type !== 'board') continue;
       onProgress({ msg: `Copying ${workspace.name} / ${b.name}`, boards: boardsDone, items: itemsDone });
       const cols = convColumns(b.columns);
-      const sb = subBoards.get('Subitems of ' + b.name);
+      // the subitems board is named in the subitems column's settings (boards can share a name)
+      const sid = subBoardId(b.columns);
+      const sb = (sid && subById.get(sid)) || (!sid ? subByName.get('Subitems of ' + b.name) : null);
       const subCols = convColumns(sb ? sb.columns : []);
       const groups = [...b.groups].sort((x, y) => Number(x.position || 0) - Number(y.position || 0));
-      const bid = 'm' + b.id;
-      save('boards/' + bid, 'boards', bid, {
+      const bid = 'm' + b.id, bpath = 'boards/' + bid;
+      const fresh = {
         name: b.name, order: ++order, workspace, folder: folderOf.get(String(b.id)) || '', source: 'monday', mondayId: b.id, syncedAt: at,
         groups: groups.map(g => ({ id: g.id, name: g.title, color: g.color || '#579bfc' })), columns: cols, subColumns: subCols, automations: [],
         form: convForm(b.views, cols), access: boardAccess(b), views: convViews(b.views, cols, { people }),
-      }, { keep: ['automations'], mergeViews: true });
+      };
+      const merged = mergeBoardDoc(load(bpath), fresh);
+      if (!merged) { boardsDone++; continue; } // a Solver.ca board sits at that id: never touched
+      save(bpath, 'boards', bid, merged);
       const seen = new Set();
       let pos = 0, cursor = null;
       if (b.items_count) {
         let page = (await gql(token, `query($id: [ID!]) { boards(ids: $id) { items_page(limit: 40) { cursor items { ${ITEM_FIELDS} } } } }`, { id: [b.id] })).boards[0].items_page;
         for (;;) {
           for (const i of page.items) {
-            const doc = itemDoc(i, cols, subCols, { pos: pos++, activity: [{ at, by: 'import', text: 'Copied from Monday' }] });
-            save(`boards/${bid}/items/${i.id}`, `boards/${bid}/items`, String(i.id), doc);
+            const ipath = `boards/${bid}/items/${i.id}`, old = load(ipath);
+            const p = pos++;
+            const freshItem = itemDoc(i, cols, subCols, { pos: p, activity: [{ at, by: 'import', text: 'Copied from Monday' }] });
+            let doc = freshItem;
+            if (old) {
+              doc = mergeItemDoc(old, freshItem, cols, subCols);
+              if (old.pos == null) doc.pos = p;
+              if (!sameItem(old, doc)) doc.activity = [{ at, by: 'import', text: 'Updated from Monday' }, ...(old.activity || [])].slice(0, 40);
+              else doc.activity = old.activity;
+            }
+            if (!old || stable(old) !== stable(doc)) save(ipath, `boards/${bid}/items`, String(i.id), doc);
             seen.add(String(i.id));
             itemsDone++;
           }
@@ -203,15 +362,22 @@ function convForm(views, cols) {
 
 // ---------- live pull: only what changed in Monday since the last pull (reads Monday, never writes) ----------
 // boards: [{ bid, mondayId, columns, subColumns, groups }] — boards already copied into Solver.ca.
-// store: { getItem(bid, iid), saveItem(bid, iid, doc, isNew), removeItem(bid, iid), saveGroups(bid, groups), newPos(bid) }
+// store: { getItem(bid, iid), saveItem(bid, iid, doc, isNew), removeItem(bid, iid), saveBoardParts(bid, { groups, columns, subColumns }), newPos(bid) }
+// Items are merged (mergeItemDoc), so values of Solver-only columns, Solver comments and subitems stay.
+// Returns gap: true when the last pull is more than 7 days old (Monday's log is read for 7 days): run a full copy.
 // Changes are found with each board's activity log (column changes, new, moved, deleted and archived items)
 // plus its newest updates (comments don't show up in the activity log). Changed items are then fetched in full.
 const SKIP_EVENTS = new Set(['subscribe', 'unsubscribe', 'add_owner', 'remove_owner']);
 async function pullFromMonday({ token, boards, since, store, onProgress = () => {} }) {
   if (!token) throw new Error('Set MONDAY_API_TOKEN on the server first.');
   const startedAt = new Date().toISOString();
-  const from = new Date(Math.max(Date.parse(since) || 0, Date.now() - 7 * 864e5) - 2 * 60000).toISOString(); // two minutes of overlap
+  const weekAgo = Date.now() - 7 * 864e5;
+  // Monday's activity log is read for the last 7 days at most: a longer gap needs a full copy to catch up
+  const gap = !(Date.parse(since) >= weekAgo);
+  const from = new Date(Math.max(Date.parse(since) || 0, weekAgo) - 2 * 60000).toISOString(); // two minutes of overlap
   const byMonday = new Map(boards.map(b => [String(b.mondayId), b]));
+  const subIds = new Map(); // Monday subitems board id -> board
+  for (const b of boards) b.stored = { groups: b.groups, columns: b.columns, subColumns: b.subColumns };
   const touched = new Map(); // Monday item id -> Set of Solver.ca board ids where it changed
   const touch = (id, bid) => { if (!id) return; id = String(id); if (!touched.has(id)) touched.set(id, new Set()); touched.get(id).add(bid); };
   const readLogs = (b, logs) => {
@@ -229,7 +395,7 @@ async function pullFromMonday({ token, boards, since, store, onProgress = () => 
   for (let k = 0; k < boards.length; k += 10) {
     const chunk = boards.slice(k, k + 10);
     onProgress({ msg: `Checking ${chunk.length} boards for changes` });
-    const data = await gql(token, `query($ids: [ID!]) { boards(ids: $ids, limit: 10) { id groups { id title color position }
+    const data = await gql(token, `query($ids: [ID!]) { boards(ids: $ids, limit: 10) { id groups { id title color position } columns { id title type settings_str }
       activity_logs(from: "${from}", limit: ${LOGS}) { event data } updates(limit: ${UPS}) { item_id created_at } } }`, { ids: chunk.map(b => String(b.mondayId)) });
     for (const mb of data.boards || []) {
       const b = byMonday.get(String(mb.id)); if (!b) continue;
@@ -242,11 +408,25 @@ async function pullFromMonday({ token, boards, since, store, onProgress = () => 
         const more = (await gql(token, `query($id: [ID!]) { boards(ids: $id) { updates(limit: ${UPS}, page: ${page}) { item_id created_at } } }`, { id: [String(mb.id)] })).boards[0];
         fresh = readUpdates(b, more.updates);
       }
-      // groups added in Monday since the copy
-      const known = new Set((b.groups || []).map(g => g.id));
-      const added = [...(mb.groups || [])].sort((x, y) => Number(x.position || 0) - Number(y.position || 0)).filter(g => !known.has(g.id));
-      if (added.length) { b.groups = [...(b.groups || []), ...added.map(g => ({ id: g.id, name: g.title, color: g.color || '#579bfc' }))]; store.saveGroups(b.bid, b.groups); }
+      // groups, columns and labels as Monday has them now (merged: what was added in Solver.ca stays)
+      const mg = [...(mb.groups || [])].sort((x, y) => Number(x.position || 0) - Number(y.position || 0)).map(g => ({ id: g.id, name: g.title, color: g.color || '#579bfc' }));
+      b.groups = mergeGroups(b.groups, mg);
+      if (Array.isArray(mb.columns) && mb.columns.length) {
+        b.mondayCols = convColumns(mb.columns);
+        b.columns = mergeColumns(b.columns, b.mondayCols);
+        const sid = subBoardId(mb.columns); if (sid) subIds.set(sid, b);
+      }
     }
+  }
+  // the subitems boards' columns
+  const sids = [...subIds.keys()];
+  for (let k = 0; k < sids.length; k += 10) {
+    const subs = (await gql(token, `query($ids: [ID!]) { boards(ids: $ids, limit: 10) { id columns { id title type settings_str } } }`, { ids: sids.slice(k, k + 10) })).boards || [];
+    for (const sb of subs) { const b = subIds.get(String(sb.id)); if (!b || !Array.isArray(sb.columns)) continue; b.mondaySubCols = convColumns(sb.columns); b.subColumns = mergeColumns(b.subColumns, b.mondaySubCols); }
+  }
+  for (const b of boards) {
+    const patch = { groups: b.groups, columns: b.columns, subColumns: b.subColumns };
+    if (stable(patch) !== stable(b.stored)) store.saveBoardParts(b.bid, patch);
   }
   const ids = [...touched.keys()];
   let saved = 0, removed = 0;
@@ -260,21 +440,24 @@ async function pullFromMonday({ token, boards, since, store, onProgress = () => 
       const i = got.get(id), origins = touched.get(id);
       const alive = i && i.state === 'active';
       const target = alive ? byMonday.get(String((i.board || {}).id)) : null;
-      for (const bid of origins) if (!target || target.bid !== bid) { if (store.removeItem(bid, id)) removed++; }
+      // moved to another board in Monday: the Solver.ca comments, files and time go along with it
+      let carried = null;
+      for (const bid of origins) if (!target || target.bid !== bid) { const o = store.getItem(bid, id); if (o && target) carried = o; if (store.removeItem(bid, id)) removed++; }
       if (!target) continue;
-      const old = store.getItem(target.bid, id);
-      const doc = itemDoc(i, target.columns || [], target.subColumns || []);
-      const same = old && ['name', 'group', 'values', 'updates', 'subitems'].every(f => JSON.stringify(old[f] ?? null) === JSON.stringify(doc[f] ?? null));
-      if (same) continue;
+      const here = store.getItem(target.bid, id), old = here || carried;
+      const cols = target.mondayCols || target.columns || [], subCols = target.mondaySubCols || target.subColumns || [];
+      const doc = mergeItemDoc(old, itemDoc(i, cols, subCols), cols, subCols);
+      if (here && sameItem(here, doc)) continue;
       let activity = (old && old.activity) || [];
       if (old && activity[0] && activity[0].text === 'Updated from Monday') activity = activity.slice(1);
-      const next = { ...(old || {}), ...doc, pos: old && old.pos != null ? old.pos : store.newPos(target.bid),
+      const next = { ...doc, pos: here && here.pos != null ? here.pos : store.newPos(target.bid),
         activity: [{ at, by: 'import', text: old ? 'Updated from Monday' : 'Copied from Monday' }, ...activity].slice(0, 40) };
-      store.saveItem(target.bid, id, next, !old);
+      store.saveItem(target.bid, id, next, !here);
       saved++;
     }
   }
-  return { at: startedAt, boards: boards.length, checked: ids.length, saved, removed };
+  return { at: startedAt, boards: boards.length, checked: ids.length, saved, removed, gap };
 }
 
-module.exports = { syncFromMonday, pullFromMonday, convForm, convViews, convColumns, convValues, parseFiles, boardAccess, gql };
+module.exports = { syncFromMonday, pullFromMonday, convForm, convViews, convColumns, convValues, parseFiles, boardAccess, gql,
+  mergeBoardDoc, mergeItemDoc, mergeColumns, mergeGroups, mergeUpdates, mergeSubitems, mergeValues, subBoardId, itemDoc };

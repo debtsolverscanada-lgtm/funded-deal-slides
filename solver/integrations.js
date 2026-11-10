@@ -51,8 +51,38 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     return { id, name: b.name, workspace: b.workspace || null, folder: b.folder || '', groups: (b.groups || []).map(g => ({ id: g.id, name: g.name })),
       columns: (b.columns || []).map(c => ({ id: c.id, title: c.title, type: c.type, ...(c.labels ? { labels: c.labels.filter(l => !l.hidden).map(l => ({ id: l.id, label: l.label })) } : {}), ...(c.options ? { options: c.options } : {}) })) };
   }
+  // "2026-11-20", "11/20/2026", "20/11/2026", "Nov 20, 2026" -> "2026-11-20" (a calendar date, never shifted by a
+  // time zone). Only a value with a time AND a zone ("…T03:00:00Z") is an instant, shown as the company's local day.
+  const ymdOk = (y, m, d) => { const t = new Date(Date.UTC(y, m - 1, d)); return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d; };
+  const ymdStr = (y, m, d) => `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  function parseDay(raw) {
+    const s = String(raw).trim();
+    const instant = /\d[T\s]\d{1,2}:\d{2}.*(Z|[+-]\d{2}:?\d{2})$/i.test(s);
+    if (instant) { const d = new Date(s); return isNaN(d) ? null : new Intl.DateTimeFormat('en-CA', { timeZone: process.env.KS_TIMEZONE || 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d); }
+    let m = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:$|[T\s])/.exec(s);
+    if (m) { const [y, mo, d] = [+m[1], +m[2], +m[3]]; return ymdOk(y, mo, d) ? ymdStr(y, mo, d) : null; }
+    m = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})(?:$|\s)/.exec(s);
+    if (m) {
+      let [a, c, y] = [+m[1], +m[2], +m[3]]; if (y < 100) y += 2000;
+      const [mo, d] = a > 12 ? [c, a] : [a, c]; // month first (North American), unless the first number can't be a month
+      return ymdOk(y, mo, d) ? ymdStr(y, mo, d) : null;
+    }
+    const d = new Date(s); if (isNaN(d)) return null;
+    return ymdStr(d.getFullYear(), d.getMonth() + 1, d.getDate()); // parsed as a local calendar date: read it back the same way
+  }
+  // "$1,200.50", "(300)" (accounting negative), "-300", "300-", "−300" -> numbers
+  function parseNum(raw) {
+    let s = String(raw).trim().replace(/[−‒–]/g, '-'); let neg = false;
+    if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1, -1); }
+    if (/-\s*$/.test(s) && !/^-/.test(s)) { neg = true; s = s.replace(/-\s*$/, ''); }
+    s = s.replace(/[^0-9.\-]/g, '');
+    if (!/^-?(\d+\.?\d*|\.\d+)$/.test(s)) return NaN;
+    const n = Number(s); return neg ? -Math.abs(n) : n;
+  }
+  const YES = new Set(['true', '1', 'yes', 'y', 'x', '✓', '✔', '☑', 'checked', 'on', 'done']);
   // Accepts values keyed by column id OR title; status by label name or id.
-  function toValues(b, input, errors) {
+  // opts.lenient (spreadsheet import): an unknown status label leaves that cell empty and is reported in `warnings`, the row stays.
+  function toValues(b, input, errors, opts = {}) {
     const out = {};
     for (const [k, raw] of Object.entries(input || {})) {
       const c = (b.columns || []).find(x => x.id === k) || (b.columns || []).find(x => x.title.toLowerCase() === String(k).toLowerCase());
@@ -60,10 +90,14 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
       if (['formula', 'button', 'item_id', 'created'].includes(c.type) || (c.readonly && c.source !== 'file')) { errors.push(`“${c.title}” is calculated and can’t be set.`); continue; }
       let v = raw;
       if (v === null || v === '') { out[c.id] = ''; continue; }
-      if (c.type === 'status') { const l = (c.labels || []).find(x => x.id === String(v) || x.label.toLowerCase() === String(v).toLowerCase()); if (!l) { errors.push(`“${v}” isn’t a label in ${c.title}.`); continue; } v = l.id; }
-      else if (c.type === 'number') { v = Number(String(v).replace(/[^0-9.\-]/g, '')); if (!Number.isFinite(v)) { errors.push(`${c.title} needs a number.`); continue; } }
-      else if (c.type === 'date') { if (/^\d{4}-\d{2}-\d{2}$/.test(String(v))) v = String(v); else { const d = new Date(v); if (isNaN(d)) { errors.push(`${c.title} needs a date like 2026-11-20.`); continue; } v = new Intl.DateTimeFormat('en-CA', { timeZone: process.env.KS_TIMEZONE || 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d); } }
-      else if (c.type === 'checkbox') v = v === true || v === 'true' || v === 1 || v === '1';
+      if (c.type === 'status') {
+        const l = (c.labels || []).find(x => x.id === String(v) || String(x.label).trim().toLowerCase() === String(v).trim().toLowerCase());
+        if (!l) { const msg = `“${v}” isn’t a label in ${c.title}.`; if (opts.lenient && opts.warnings) { opts.warnings.push({ col: c.id, title: c.title, value: String(v), msg }); continue; } errors.push(msg); continue; }
+        v = l.id;
+      }
+      else if (c.type === 'number') { v = typeof v === 'number' ? v : parseNum(v); if (!Number.isFinite(v)) { errors.push(`${c.title} needs a number.`); continue; } }
+      else if (c.type === 'date') { const d = parseDay(v); if (!d) { errors.push(`${c.title} needs a date like 2026-11-20.`); continue; } v = d; }
+      else if (c.type === 'checkbox') v = v === true || v === 1 || YES.has(String(v).trim().toLowerCase());
       else if (c.type === 'file' || c.source === 'file') { v = Array.isArray(v) ? v.filter(f => f && f.url).map(f => ({ name: String(f.name || f.url), url: String(f.url) })) : String(v); if (Array.isArray(v) && v.some(f => !netguard.urlOk(f.url))) { errors.push(`${c.title}: files must be https:// links.`); continue; } }
       else if (c.type === 'link' && netguard.badLink(null, { values: { l: String(v) } }, ['l'])) { errors.push(`${c.title} needs an https:// link.`); continue; }
       else if (Array.isArray(v)) v = v.join(', ');
@@ -234,7 +268,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
   // Columns the writer may not set: API keys and lead links get the board's locks, people their own; forms (made by an admin) none.
   const lockedFor = (b, actor) => { const id = String((actor && actor.id) || ''); if (id.startsWith('form:')) return new Set(); return lockedCols(id.startsWith('key:') || id.startsWith('link:') || !actor || !actor.role ? null : actor, b); };
   function createItem(b, body, actor, opts = {}) {
-    const errors = []; const values = toValues(b, { ...(body.values || {}), ...(body.fields || {}) }, errors);
+    const errors = [], warnings = []; const values = toValues(b, { ...(body.values || {}), ...(body.fields || {}) }, errors, { lenient: !!opts.lenient, warnings });
     const locked = opts.locked || lockedFor(b, actor), stripped = [];
     for (const k of Object.keys(values)) if (locked.has(String(k).replace(/__d?t$/, ''))) { delete values[k]; stripped.push(k); }
     const name = String(body.name || '').trim(); if (!name) errors.push('Give the item a name.');
@@ -242,12 +276,13 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     if (errors.length) throw new HttpError(400, errors.join(' '));
     const iid = rid('i'); const item = { name, group: grp, pos: Date.now(), values, updates: [], subitems: [], createdAt: now(),
       activity: [{ at: now(), by: actor.id, text: `Created by ${actor.name}` }] };
-    if (body.update) item.updates.push({ at: now(), by: '', byName: actor.name, text: String(body.update).slice(0, 4000) });
+    // a cell the import couldn't fill is flagged on the item itself
+    for (const w of warnings) item.activity.unshift({ at: now(), by: actor.id, text: `Import: ${w.title} left empty, “${w.value.slice(0, 80)}” isn’t one of its labels` });    if (body.update) item.updates.push({ at: now(), by: '', byName: actor.name, text: String(body.update).slice(0, 4000) });
     const notes = [];
     runRules(b, item, { type: 'created', group: grp }, actor, notes, iid);
     saveItem(b.id, iid, item, actor, opts);
     sendNotes(b, iid, item, notes);
-    return { id: iid, item, stripped };
+    return { id: iid, item, stripped, warnings };
   }
 
   // ---------- API keys ----------

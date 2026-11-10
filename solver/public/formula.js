@@ -66,25 +66,74 @@
     for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) { const w = d.getDay(); if (w !== 0 && w !== 6) n++; }
     return sign * n;
   }
+  // Decimal-safe rounding like Excel/Monday: 15 significant digits first, then shift the decimal point in the
+  // number's text (so ROUND(1.005, 2) is 1.01, not 1.00), halves away from zero.
+  const shift = (n, e) => { const [m, x] = String(n).split('e'); return Number(m + 'e' + (Number(x || 0) + e)); };
+  function roundWith(v, d, how) {
+    let x = num(v); const k = Math.trunc(num(d)); if (!Number.isFinite(x) || !Number.isFinite(k)) return NaN;
+    x = Number(x.toPrecision(15));
+    const s = Math.sign(x), a = shift(Math.abs(x), k);
+    const r = how === 'up' ? Math.ceil(Number(a.toPrecision(15))) : how === 'down' ? Math.floor(Number(a.toPrecision(15))) : Math.round(a);
+    return s * shift(r, -k) || 0;
+  }
+  // "14:30", "2:30 PM", "14:30:15" -> minutes of the day; anything else -> null
+  function timeOnly(v) {
+    const m = /^\s*(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])?\s*$/.exec(String(v ?? ''));
+    if (!m) return null;
+    let h = Number(m[1]); const ap = (m[4] || '').toLowerCase();
+    if (ap === 'pm' && h < 12) h += 12; if (ap === 'am' && h === 12) h = 0;
+    return h * 60 + Number(m[2]);
+  }
+  // TEXT(value, format): number formats like "$#,##0.00", "0.0%", "000"; date formats like "YYYY-MM-DD", "MM/DD/YYYY"
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function textFmt(v, f) {
+    if (f === undefined || f === '') return String(v ?? '');
+    f = String(f);
+    if (isDate(v) && /[YyDd]/.test(f)) {
+      const d = toDate(v), p = n => String(n).padStart(2, '0');
+      return f.replace(/YYYY|yyyy|YY|yy|MMMM|MMM|MM|M|DD|dd|D|d/g, t => {
+        switch (t.toUpperCase()) {
+          case 'YYYY': return String(d.getFullYear()); case 'YY': return p(d.getFullYear() % 100);
+          case 'MMMM': return d.toLocaleString('en-US', { month: 'long' }); case 'MMM': return MONTHS[d.getMonth()];
+          case 'MM': return p(d.getMonth() + 1); case 'M': return String(d.getMonth() + 1);
+          case 'DD': return p(d.getDate()); default: return String(d.getDate());
+        }
+      });
+    }
+    const n = num(v); if (v === '' || !Number.isFinite(n)) return String(v ?? '');
+    const m = /^([^#0.,]*)([#0,]*)(?:\.([0#]+))?([^#0.,]*)$/.exec(f);
+    if (!m || !m[2]) return String(v);
+    const pct = /%/.test(m[1] + m[4]), x = pct ? n * 100 : n;
+    const dec = (m[3] || '').length, minDec = (m[3] || '').replace(/#+$/, '').length;
+    let [ip, fp = ''] = Math.abs(roundWith(x, dec)).toFixed(dec).split('.');
+    fp = fp.replace(new RegExp(`0{0,${dec - minDec}}$`), '');
+    ip = ip.padStart((m[2].replace(/[#,]/g, '').length) || 0, '0'); if (/^0+$/.test(ip) && !/0/.test(m[2])) ip = '';
+    if (m[2].includes(',')) ip = ip.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return (x < 0 && roundWith(x, dec) !== 0 ? '-' : '') + m[1] + ip + (fp ? '.' + fp : '') + m[4];
+  }
   const FN = {
     IF: (c, a = '', b = false) => (truthy(c) ? a : b),
+    SWITCH: (v, ...a) => { for (let i = 0; i + 1 < a.length; i += 2) if (String(v).toLowerCase() === String(a[i]).toLowerCase()) return a[i + 1]; return a.length % 2 ? a[a.length - 1] : ''; },
+    XOR: (...a) => a.filter(truthy).length % 2 === 1,
     AND: (...a) => a.every(truthy), OR: (...a) => a.some(truthy), NOT: a => !truthy(a),
     TODAY: () => ymd(new Date()), NOW: () => new Date().toISOString(),
     DAYS: (end, start) => { const a = toDate(start), b = toDate(end); return a && b ? Math.round((b - a) / 864e5) : ''; },
     WORKDAYS: workdays,
-    HOURS_DIFF: (a, b) => { const mins = v => { const t = Date.parse(v); return t ? Math.floor(t / 60000) : NaN; }; const x = mins(a), y = mins(b); if (!Number.isFinite(x) || !Number.isFinite(y)) return ''; const d = x - y, m = Math.abs(d); return `${d < 0 ? '-' : ''}${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; },
+    // date-times are compared as instants; time-only values ("14:30", "2:30 PM") as times of the same day
+    HOURS_DIFF: (a, b) => { const mins = v => { const t0 = timeOnly(v); if (t0 != null) return t0; const t = Date.parse(v); return Number.isFinite(t) ? Math.floor(t / 60000) : NaN; }; const x = mins(a), y = mins(b); if (!Number.isFinite(x) || !Number.isFinite(y)) return ''; const d = x - y, m = Math.abs(d); return `${d < 0 ? '-' : ''}${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; },
     MIN: (...a) => { const n = a.filter(v => v !== '').map(num).filter(Number.isFinite); return n.length ? Math.min(...n) : ''; },
     MAX: (...a) => { const n = a.filter(v => v !== '').map(num).filter(Number.isFinite); return n.length ? Math.max(...n) : ''; },
     SUM: (...a) => a.reduce((s, v) => s + num(v), 0),
     AVERAGE: (...a) => { const n = a.filter(v => v !== '').map(num); return n.length ? n.reduce((s, v) => s + v, 0) / n.length : ''; },
-    ROUND: (v, d = 0) => { const f = 10 ** num(d); return Math.round(num(v) * f) / f; },
-    ROUNDUP: (v, d = 0) => { const f = 10 ** num(d); return Math.ceil(num(v) * f) / f; },
-    ROUNDDOWN: (v, d = 0) => { const f = 10 ** num(d); return Math.floor(num(v) * f) / f; },
-    ABS: v => Math.abs(num(v)), MOD: (a, b) => num(a) % num(b), POWER: (a, b) => num(a) ** num(b), SQRT: v => Math.sqrt(num(v)),
+    ROUND: (v, d = 0) => roundWith(v, d, 'half'),
+    ROUNDUP: (v, d = 0) => roundWith(v, d, 'up'), // away from zero, like Excel
+    ROUNDDOWN: (v, d = 0) => roundWith(v, d, 'down'), // toward zero
+    // MOD takes the divisor's sign, like Excel: MOD(-3, 2) = 1, MOD(3, -2) = -1
+    ABS: v => Math.abs(num(v)), MOD: (a, b) => { const x = num(a), y = num(b); if (y === 0) return ''; const r = x - y * Math.floor(x / y); return Number(r.toPrecision(15)); }, POWER: (a, b) => num(a) ** num(b), SQRT: v => Math.sqrt(num(v)),
     CONCATENATE: (...a) => a.map(v => (v === null || v === undefined ? '' : String(v))).join(''),
     LEN: v => String(v ?? '').length, LEFT: (v, n = 1) => String(v ?? '').slice(0, num(n)), RIGHT: (v, n = 1) => { const s = String(v ?? ''); return s.slice(Math.max(0, s.length - num(n))); },
     UPPER: v => String(v ?? '').toUpperCase(), LOWER: v => String(v ?? '').toLowerCase(), TRIM: v => String(v ?? '').trim(),
-    TEXT: v => String(v ?? ''), YEAR: v => { const d = toDate(v); return d ? d.getFullYear() : ''; }, MONTH: v => { const d = toDate(v); return d ? d.getMonth() + 1 : ''; }, DAY: v => { const d = toDate(v); return d ? d.getDate() : ''; },
+    TEXT: textFmt, YEAR: v => { const d = toDate(v); return d ? d.getFullYear() : ''; }, MONTH: v => { const d = toDate(v); return d ? d.getMonth() + 1 : ''; }, DAY: v => { const d = toDate(v); return d ? d.getDate() : ''; },
     ADD_DAYS: (v, n) => { const d = toDate(v); if (!d) return ''; d.setDate(d.getDate() + num(n)); return ymd(d); },
     SUBTRACT_DAYS: (v, n) => { const d = toDate(v); if (!d) return ''; d.setDate(d.getDate() - num(n)); return ymd(d); },
   };
@@ -146,6 +195,24 @@
     }
     return String(v);
   }
-  root.KSFormula = { evaluate, format, parse, BLANK_REF: { formulaBlank: true }, EMPTY_NUMBER: { emptyNumber: true } };
+  // A date column with a time (Monday keeps the instant in "<col>__dt"): the shown day plus the local time and its
+  // UTC offset, e.g. "2026-03-01T21:30:00-05:00". Day functions (DAYS, WORKDAYS, YEAR…) read the first 10 characters,
+  // so they use the local day people see; HOURS_DIFF reads the exact instant. tz: an IANA zone, or the runtime's own.
+  function dateRef(day, iso, tz) {
+    if (!iso) return day || '';
+    const d = new Date(iso); if (isNaN(d)) return day || '';
+    let parts;
+    try { parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz || undefined, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(d).map(p => [p.type, p.value])); }
+    catch (e) { return day || ''; }
+    const wall = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour % 24, +parts.minute, +parts.second);
+    const off = Math.round((wall - Math.floor(d.getTime() / 1000) * 1000) / 60000), a = Math.abs(off), p2 = n => String(n).padStart(2, '0');
+    return `${parts.year}-${parts.month}-${parts.day}T${p2(+parts.hour % 24)}:${parts.minute}:${parts.second}${off < 0 ? '-' : '+'}${p2(Math.floor(a / 60))}:${p2(a % 60)}`;
+  }
+  // {ref} in a formula: a column id, or else a column title (any case)
+  function findCol(cols, ref) {
+    cols = cols || []; const r = String(ref || '').trim();
+    return cols.find(c => c.id === r) || cols.find(c => String(c.title || '').trim().toLowerCase() === r.toLowerCase()) || null;
+  }
+  root.KSFormula = { evaluate, format, parse, dateRef, findCol, BLANK_REF: { formulaBlank: true }, EMPTY_NUMBER: { emptyNumber: true } };
   if (typeof module !== 'undefined') module.exports = root.KSFormula;
 })(typeof window !== 'undefined' ? window : globalThis);
