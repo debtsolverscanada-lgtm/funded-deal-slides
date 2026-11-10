@@ -111,12 +111,21 @@
   }
 
   // ---------- the draft (edit form state) ----------
+  // what a rule does, with empty parts (null, undefined, '') treated alike, so an unedited rule compares equal
+  const blank = v => v === null || v === undefined || v === '';
+  function structOf(r) {
+    const k = { trigger: r.trigger, col: r.col, value: r.value, group: r.group, when: r.when };
+    for (const x of Object.keys(k)) if (blank(k[x])) delete k[x];
+    return JSON.stringify({ ...k, conditions: r.conditions || [], actions: r.actions || [] });
+  }
   function toDraft(r, b) {
+    const orig = r;
     r = JSON.parse(JSON.stringify(A().normRule(r)));
     if (!r.trigger) r.trigger = 'status';
     const d = { ...r, conditions: r.conditions || [], actions: r.actions || [] };
     if (d.trigger === 'date_arrives') Object.assign(d, { _when: parseWhen(d.when) });
-    d._orig = JSON.stringify({ trigger: r.trigger, col: r.col, value: r.value, group: r.group, when: r.when, conditions: r.conditions || [], actions: r.actions || [] });
+    d._orig = structOf(r);
+    d._was = JSON.stringify(orig); // the rule as stored: saving it unedited keeps it exactly so
     delete d.label; delete d.action; delete d.target; delete d.targetCol; delete d.targetLabel; // old-style rules become the new shape
     return d;
   }
@@ -162,7 +171,7 @@
     if (!['created', 'moved_group'].includes(r.trigger) || !r.group) delete r.group;
     r.conditions = (d.conditions || []).map(c => { const x = { ...c }; delete x._kind; return x; });
     r.actions = (d.actions || []).map(a => ({ ...a }));
-    const struct = JSON.stringify({ trigger: r.trigger, col: r.col, value: r.value, group: r.group, when: r.when, conditions: r.conditions, actions: r.actions });
+    const struct = structOf(r);
     if (d._titleTouched && String(d.title || '').trim()) r.title = String(d.title).trim();
     else if (d._new || struct !== d._orig || !r.title) r.title = plain(sentence(b, { ...r, title: '' })).replace(/^When /, 'When ').replace(/\.$/, '').slice(0, 280);
     return r;
@@ -353,7 +362,7 @@
         case 'rx-show-all': m.showAll = true; break;
         case 'rx-runs': m.view = 'runs'; m.ruleId = t.dataset.id; m.runs = null; loadRuns(m, b); break;
         case 'rx-open-item': { const id = t.dataset.item; if (!A().itemById(id)) { A().toast('That item isn’t on this board any more.'); return true; } S.modal = null; S.openItem = id; S.drawerTab = 'activity'; A().renderLayer(); return true; }
-        case 'rx-toggle': { const automations = list.map(r => r.id === t.dataset.id ? { ...r, on: r.on === false } : r); saveList(b, automations, m); return true; }
+        case 'rx-toggle': { const automations = list.map(r => { if (r.id !== t.dataset.id) return r; const x = { ...r, on: r.on === false }; if (x.on && x.mondayActive === false) delete x.mondayActive; return x; }); saveList(b, automations, m); return true; } // switched on here: it runs here, even if it was off in Monday
         case 'rx-dup': { const r = find(t.dataset.id); if (!r) break; const c = JSON.parse(JSON.stringify(r)); c.id = rid('a'); c.on = false; c.title = String(r.title || 'Automation').slice(0, 280) + ' (copy)'; delete c.mondayActive; const ix = list.indexOf(r);
           const automations = [...list.slice(0, ix + 1), c, ...list.slice(ix + 1)]; saveList(b, automations, m, () => A().toast('Duplicated. The copy starts off.')); return true; }
         case 'rx-del': { const id = t.dataset.id; if (m.confirm !== id) { m.confirm = id; break; } m.confirm = null; saveList(b, list.filter(r => r.id !== id), m, () => A().toast('Automation deleted')); return true; }
@@ -362,7 +371,9 @@
         case 'rx-act-add': m.edit.actions.push(defaultAction(b, m.edit.trigger === 'sub_status' ? 'set_status' : 'set_status', m.edit.trigger === 'sub_status')); break;
         case 'rx-act-del': m.edit.actions.splice(Number(t.dataset.k), 1); break;
         case 'rx-save': {
-          const d = m.edit; const r = fromDraft(d, b);
+          const d = m.edit; let r = fromDraft(d, b);
+          // nothing changed (what it does, its name, on/off): the stored rule stays exactly as it was
+          if (d._was) { const w = JSON.parse(d._was); if (structOf(r) === structOf(A().normRule(w)) && (!d._titleTouched || String(r.title || '') === String(w.title || '')) && (r.on !== false) === (w.on !== false)) r = w; }
           if (!r.actions.length) { m.err = 'Add at least one action.'; break; }
           const exists = list.some(x => x.id === r.id);
           const automations = exists ? list.map(x => x.id === r.id ? r : x) : [...list, r];

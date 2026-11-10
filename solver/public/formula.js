@@ -60,6 +60,10 @@
   const num = v => { if (v === '' || v === null || v === undefined) return 0; if (typeof v === 'boolean') return v ? 1 : 0; const n = Number(v); return Number.isFinite(n) ? n : NaN; };
   const truthy = v => v === true || (typeof v === 'number' && v !== 0) || (typeof v === 'string' && v !== '' && v !== '0' && v.toLowerCase() !== 'false');
   const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  // the workspace's time zone (KS_TIMEZONE): TODAY() and dates with a time are read in it, on the server and in the page
+  let ZONE = '';
+  const today = () => { if (ZONE) { try { return new Intl.DateTimeFormat('en-CA', { timeZone: ZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); } catch (e) { /* unknown zone: the device's day */ } } return ymd(new Date()); };
+  const setTimeZone = z => { try { if (z) new Intl.DateTimeFormat('en-CA', { timeZone: z }); ZONE = String(z || ''); } catch (e) { ZONE = ''; } };
   function workdays(end, start) {
     const a = toDate(start), b = toDate(end); if (!a || !b) return '';
     const sign = b >= a ? 1 : -1; let from = sign > 0 ? a : b, to = sign > 0 ? b : a, n = 0;
@@ -116,7 +120,7 @@
     SWITCH: (v, ...a) => { for (let i = 0; i + 1 < a.length; i += 2) if (String(v).toLowerCase() === String(a[i]).toLowerCase()) return a[i + 1]; return a.length % 2 ? a[a.length - 1] : ''; },
     XOR: (...a) => a.filter(truthy).length % 2 === 1,
     AND: (...a) => a.every(truthy), OR: (...a) => a.some(truthy), NOT: a => !truthy(a),
-    TODAY: () => ymd(new Date()), NOW: () => new Date().toISOString(),
+    TODAY: () => today(), NOW: () => new Date().toISOString(),
     DAYS: (end, start) => { const a = toDate(start), b = toDate(end); return a && b ? Math.round((b - a) / 864e5) : ''; },
     WORKDAYS: workdays,
     // date-times are compared as instants; time-only values ("14:30", "2:30 PM") as times of the same day
@@ -202,7 +206,7 @@
     if (!iso) return day || '';
     const d = new Date(iso); if (isNaN(d)) return day || '';
     let parts;
-    try { parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz || undefined, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(d).map(p => [p.type, p.value])); }
+    try { parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz || ZONE || undefined, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(d).map(p => [p.type, p.value])); }
     catch (e) { return day || ''; }
     const wall = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour % 24, +parts.minute, +parts.second);
     const off = Math.round((wall - Math.floor(d.getTime() / 1000) * 1000) / 60000), a = Math.abs(off), p2 = n => String(n).padStart(2, '0');
@@ -213,6 +217,6 @@
     cols = cols || []; const r = String(ref || '').trim();
     return cols.find(c => c.id === r) || cols.find(c => String(c.title || '').trim().toLowerCase() === r.toLowerCase()) || null;
   }
-  root.KSFormula = { evaluate, format, parse, dateRef, findCol, BLANK_REF: { formulaBlank: true }, EMPTY_NUMBER: { emptyNumber: true } };
+  root.KSFormula = { evaluate, format, parse, dateRef, findCol, setTimeZone, timeZone: () => ZONE, today, BLANK_REF: { formulaBlank: true }, EMPTY_NUMBER: { emptyNumber: true } };
   if (typeof module !== 'undefined') module.exports = root.KSFormula;
 })(typeof window !== 'undefined' ? window : globalThis);

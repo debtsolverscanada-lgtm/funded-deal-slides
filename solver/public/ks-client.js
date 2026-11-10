@@ -111,7 +111,7 @@
   const me = () => (mePromise = mePromise || call('GET', '/api/me'));
   const user = {
     async id() { return (await me()).id; },
-    async me() { const m = await me(); return { id: m.id, name: m.name, email: m.email, role: m.role, homeBoard: m.homeBoard || '', twofa: !!m.twofa }; },
+    async me() { const m = await me(); return { id: m.id, name: m.name, email: m.email, role: m.role, homeBoard: m.homeBoard || '', twofa: !!m.twofa, timeZone: m.timeZone || '' }; },
     async isOwner() { return (await me()).role === 'admin'; },
     async canEdit() { return (await me()).role === 'admin'; },
     async can(name) { const r = (await me()).role; return name === 'data.write' ? (r === 'admin' || r === 'member') : r === 'admin'; },

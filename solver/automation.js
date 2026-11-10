@@ -109,13 +109,15 @@ function validateAutomations(list, board, before, boardExists) {
   if (list.length > MAX_RULES) throw new Error(`A board can have up to ${MAX_RULES} automations.`);
   const old = new Map(((before && before.automations) || []).map(r => [r && r.id, JSON.stringify(r)]));
   const seen = new Set();
-  return list.map(r => {
-    const id = r && String(r.id);
+  return list.map(r0 => {
+    let r = r0; const id = r && String(r.id);
     if (seen.has(id)) throw new Error('Two automations share an id.');
     seen.add(id);
     const unchanged = old.get(id) === JSON.stringify(r);
     // toggling On/Off alone is not an edit
     const sameButSwitch = old.has(id) && (() => { try { const a = JSON.parse(old.get(id)); delete a.on; const c = { ...r }; delete c.on; return JSON.stringify(a) === JSON.stringify(c); } catch (e) { return false; } })();
+    // a rule copied from Monday as "off in Monday" that someone switches on here: it now runs here (reminders included)
+    if (r && typeof r === 'object' && r.mondayActive === false && r.on !== false) { const was = old.has(id) ? JSON.parse(old.get(id)) : null; if (!was || was.on === false) { r = { ...r }; delete r.mondayActive; } }
     try { return cleanRule(r, board, { strict: !unchanged && !sameButSwitch, boardExists }); }
     catch (e) {
       const msg = typeof e === 'string' ? e : e.message;

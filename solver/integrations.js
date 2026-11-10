@@ -57,6 +57,8 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
   const ymdStr = (y, m, d) => `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
   function parseDay(raw) {
     const s = String(raw).trim();
+    // midnight UTC exactly ("2026-11-20T00:00:00Z", ".000Z"): what spreadsheets and JSON send for a plain date, so the calendar date
+    { const mz = /^(\d{4})-(\d{2})-(\d{2})T00:00(?::00(?:\.0+)?)?(?:Z|[+-]00:?00)$/i.exec(s); if (mz) { const [y, mo, d] = [+mz[1], +mz[2], +mz[3]]; return ymdOk(y, mo, d) ? ymdStr(y, mo, d) : null; } }
     const instant = /\d[T\s]\d{1,2}:\d{2}.*(Z|[+-]\d{2}:?\d{2})$/i.test(s);
     if (instant) { const d = new Date(s); return isNaN(d) ? null : new Intl.DateTimeFormat('en-CA', { timeZone: process.env.KS_TIMEZONE || 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d); }
     let m = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:$|[T\s])/.exec(s);
@@ -73,6 +75,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
   // "$1,200.50", "(300)" (accounting negative), "-300", "300-", "−300" -> numbers
   function parseNum(raw) {
     let s = String(raw).trim().replace(/[−‒–]/g, '-'); let neg = false;
+    if (/^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(s) && Number.isFinite(Number(s))) return Number(s); // plain numbers, including 1.5e6 and -2E-3
     if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1, -1); }
     if (/-\s*$/.test(s) && !/^-/.test(s)) { neg = true; s = s.replace(/-\s*$/, ''); }
     s = s.replace(/[^0-9.\-]/g, '');
@@ -146,7 +149,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
   // ev: { type: 'created'|'moved_group'|'value', col, value, group }. actor: the user, API key, lead link or form that made the change.
   // Side effects (notify, webhook, run log) go into `notes`; sendNotes sends them once the item is saved.
   function runRules(b, item, ev, actor, notes = [], iid = null, depth = 0) {
-    const actorName = (actor && actor.name) || 'someone', locked = lockedCols(actor && actor.role ? actor : null, b);
+    const actorName = (actor && actor.name) || 'someone', locked = lockedCols(actor && actor.role ? actor : null, b), guest = !!actor && actor.role === 'guest';
     const rules = (b.automations || []).filter(r => r.on !== false && r.trigger && (
       (ev.type === 'created' && r.trigger === 'created' && (!r.group || r.group === ev.group)) ||
       (ev.type === 'moved_group' && r.trigger === 'moved_group' && (!r.group || r.group === ev.group || (r.group === '__top__' && (b.groups[0] || {}).id === ev.group))) ||
@@ -166,18 +169,24 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
         else if (a.type === 'set_date') { if (canSet(a.col)) { item.values[a.col] = a.offset ? plus(a.offset) : today; did.push('set ' + title(a.col)); } }
         else if (a.type === 'clear') { if (canSet(a.col)) { item.values[a.col] = ''; did.push('cleared ' + title(a.col)); } }
         else if (a.type === 'assign') { if (canSet(a.col)) { item.values[a.col] = [...new Set([...String(item.values[a.col] || '').split(',').map(s => s.trim()).filter(Boolean), a.value])].join(', '); did.push('assigned ' + a.value); } }
-        else if (a.type === 'move_group') { const g = a.group === '__top__' ? b.groups[0] : b.groups.find(x => x.id === a.group); if (g) { item.group = g.id; did.push('moved it to ' + g.name); } }
+        else if (a.type === 'move_group') {
+          if (guest) { skipped.push(`skipped: moving it to a group (${actorName} is a guest)`); continue; }
+          const g = a.group === '__top__' ? b.groups[0] : b.groups.find(x => x.id === a.group);
+          if (g && item.group !== g.id) { item.group = g.id; did.push('moved it to ' + g.name); } // already there: nothing to say
+        }
         else if (a.type === 'notify') { notes.push({ to: a.to, message: a.message, title: r.title }); did.push('notified ' + (a.to || 'someone')); }
-        else if (a.type === 'webhook') notes.push({ webhook: true, rule: r });
+        else if (a.type === 'webhook') { if (!notes.some(n => n.webhook && n.rule.id === r.id)) notes.push({ webhook: true, rule: r, via: guest ? 'guest' : undefined }); }
         else if (a.type === 'create_update') { item.updates = [...(item.updates || []), { at: now(), by: 'automation', byName: 'Automation', text: String(a.value || '') }]; did.push('posted an update'); }
         // moving, copying and duplicating need the app open: say so instead of skipping quietly
-        else if (a.type === 'move_board' || a.type === 'copy_to_board' || a.type === 'duplicate') skipped.push(`skipped: ${a.type === 'move_board' ? 'moving it to another board' : a.type === 'copy_to_board' ? 'copying it to another board' : 'duplicating it'} only runs for changes made in the app, not through ${actorName}`);
+        else if (a.type === 'move_board' || a.type === 'copy_to_board' || a.type === 'duplicate') { const what = a.type === 'move_board' ? 'moving it to another board' : a.type === 'copy_to_board' ? 'copying it to another board' : 'duplicating it'; skipped.push(guest ? `skipped: ${what} (${actorName} is a guest)` : `skipped: ${what} only runs for changes made in the app, not through ${actorName}`); }
         else skipped.push(`skipped: ${a.label || String(a.type || 'this action').replace(/_/g, ' ')} isn’t run in Solver.ca`);
       }
       log.push({ at: now(), by: 'automation', text: `${name} ran (via ${actorName})` });
       skipped.forEach(s => log.push({ at: now(), by: 'automation', text: `${name} ${s}` }));
+      // a rule that only sends to a connected tool gets its line in the run log from the send itself
+      const hookOnly = !did.length && !skipped.length && (r.actions || []).some(a => a.type === 'webhook');
       const result = [did.length ? 'Ran: ' + did.join(', ') : skipped.length ? '' : 'Ran (nothing to change here)', ...skipped].filter(Boolean).join('; ');
-      notes.push({ ran: { rule: r.id, result, via: 'api · ' + actorName } });
+      if (!hookOnly) notes.push({ ran: { rule: r.id, result, via: (guest ? 'guest' : 'api') + ' · ' + actorName } });
     }
     if (log.length) item.activity = [...log, ...(item.activity || [])].slice(0, 40);
     // changes the rules made set off further rules, like the app (4 deep at most)
@@ -185,6 +194,17 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
       for (const [cid, v] of Object.entries(item.values)) if (JSON.stringify(beforeVals[cid] ?? '') !== JSON.stringify(v ?? '')) runRules(b, item, { type: 'value', col: cid, value: v }, actor, notes, iid, depth + 1);
       if (item.group !== beforeGroup) runRules(b, item, { type: 'moved_group', group: item.group }, actor, notes, iid, depth + 1);
     }
+  }
+
+  // A guest's change saved through /api/doc: the board's rules run here, on the server (a guest's page doesn't run them,
+  // and its notifications, webhooks and run log would be refused). Rules set only the columns the guest may change,
+  // never move or copy the item, and sign their activity lines as the automation. Returns what sendNotes sends once saved.
+  function guestRules(bid, before, after, user) {
+    const d = boardDoc(bid); if (!d || !before) return null;
+    const b = { id: bid, ...d }, notes = [], bv = before.values || {}, av = (after.values = after.values || {});
+    const changed = (b.columns || []).filter(c => JSON.stringify(bv[c.id] ?? '') !== JSON.stringify(av[c.id] ?? ''));
+    for (const c of changed) runRules(b, after, { type: 'value', col: c.id, value: av[c.id] }, user, notes);
+    return notes.length ? { b, notes } : null;
   }
 
   // ---------- outgoing webhooks ----------
@@ -277,7 +297,9 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     const iid = rid('i'); const item = { name, group: grp, pos: Date.now(), values, updates: [], subitems: [], createdAt: now(),
       activity: [{ at: now(), by: actor.id, text: `Created by ${actor.name}` }] };
     // a cell the import couldn't fill is flagged on the item itself
-    for (const w of warnings) item.activity.unshift({ at: now(), by: actor.id, text: `Import: ${w.title} left empty, “${w.value.slice(0, 80)}” isn’t one of its labels` });    if (body.update) item.updates.push({ at: now(), by: '', byName: actor.name, text: String(body.update).slice(0, 4000) });
+    for (const w of warnings) item.activity.unshift({ at: now(), by: actor.id, text: `Import: ${w.title} left empty, “${w.value.slice(0, 80)}” isn’t one of its labels` });
+    // and the value itself is kept whole, as a comment on the item, so nothing in the sheet is lost
+    if (warnings.length) item.updates.push({ at: now(), by: '', byName: actor.name, text: ('Import: these values weren’t one of their column’s labels, so the cells were left empty:\n' + warnings.map(w => `${w.title}: ${w.value}`).join('\n')).slice(0, 20000) });    if (body.update) item.updates.push({ at: now(), by: '', byName: actor.name, text: String(body.update).slice(0, 4000) });
     const notes = [];
     runRules(b, item, { type: 'created', group: grp }, actor, notes, iid);
     saveItem(b.id, iid, item, actor, opts);
@@ -384,13 +406,17 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     }
     const path = `boards/${b.id}/items/${iid}`; const row = q.doc.get(path);
     if (!row) throw new HttpError(404, 'No such item on this board.');
-    const item = JSON.parse(row.data);
+    let item = JSON.parse(row.data);
+    // a write reads the item again once the body is in: a change saved while the body was arriving is kept
+    const fresh = () => { const r2 = q.doc.get(path); if (!r2) throw new HttpError(404, 'No such item on this board.'); item = JSON.parse(r2.data); };
     if (upd && method === 'POST') { needWrite(); const body = await readBody(req); if (!body.text) throw new HttpError(400, 'Send {"text": "…"}');
+      fresh();
       item.updates = [...(item.updates || []), { at: now(), by: '', byName: body.author || user.name, text: String(body.text).slice(0, 20000) }];
       saveItem(b.id, iid, item, user); return send(res, 201, { ok: true }); }
     if (method === 'GET') return send(res, 200, { ...itemOut(b, iid, item), updates_list: item.updates || [], subitems: item.subitems || [] });
     if (method === 'PATCH') {
       needWrite(); const body = await readBody(req); const errors = [];
+      fresh();
       const values = toValues(b, { ...(body.values || {}), ...(body.fields || {}) }, errors);
       let grp = item.group; if (body.group) { grp = groupId(b, body.group); if (!grp) errors.push(`No group called “${body.group}”.`); }
       if (errors.length) throw new HttpError(400, errors.join(' '));
@@ -483,7 +509,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
   function checkReminders(at = new Date()) {
     for (const br of q.docsInCol.all('boards')) {
       const b = { id: br.id, ...JSON.parse(br.data) };
-      const due = (b.automations || []).filter(r => r.on !== false && r.trigger === 'date_arrives' && r.col && r.mondayActive !== false).map(r => ruleDue(r, at)).filter(Boolean);
+      const due = (b.automations || []).filter(r => r.on !== false && r.trigger === 'date_arrives' && r.col && (r.mondayActive !== false || b.source !== 'monday')).map(r => ruleDue(r, at)).filter(Boolean);
       if (!due.length) continue;
       const quoted = [...new Set(due.map(x => JSON.stringify(x.target)))];
       for (const ir of q.docsInCol.all(`boards/${b.id}/items`)) { // the board's items are read once for all its rules
@@ -510,5 +536,5 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
   }
   if (process.env.KS_REMINDERS !== 'off') { setInterval(() => { try { checkReminders(); } catch (e) { console.error('reminders:', e.message); } }, 10 * 60 * 1000).unref(); setTimeout(() => { try { checkReminders(); } catch (e) {} }, 30000).unref(); }
 
-  return { handleV1, handleAdmin, itemChanged, EVENTS, checkReminders, createItem, pressButton, emit, safeUrl };
+  return { handleV1, handleAdmin, itemChanged, EVENTS, checkReminders, createItem, pressButton, emit, safeUrl, guestRules, sendNotes, parseNum, parseDay };
 };

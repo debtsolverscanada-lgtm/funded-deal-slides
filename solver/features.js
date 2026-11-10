@@ -33,6 +33,7 @@ module.exports = function features(ctx) {
     CREATE INDEX IF NOT EXISTS item_history_item ON item_history(board, item, id);
     CREATE INDEX IF NOT EXISTS item_history_board ON item_history(board, id);
     CREATE INDEX IF NOT EXISTS item_history_by ON item_history(by_id, id);
+    CREATE INDEX IF NOT EXISTS item_history_at ON item_history(at);
     CREATE TABLE IF NOT EXISTS recycle_bin (
       id TEXT PRIMARY KEY, kind TEXT NOT NULL, board TEXT NOT NULL, board_name TEXT, item TEXT, grp TEXT, name TEXT, data TEXT NOT NULL,
       access TEXT, deleted_at TEXT NOT NULL, deleted_by TEXT, deleted_by_name TEXT, restored_at TEXT, restored_by TEXT
@@ -56,9 +57,12 @@ module.exports = function features(ctx) {
   if (db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'search_fts'").get()) {
     const t = Date.now();
     db.exec('DROP TABLE IF EXISTS search_fts'); db.exec('DROP TABLE IF EXISTS search_map');
-    try { const free = db.prepare('PRAGMA freelist_count').get().freelist_count, pages = db.prepare('PRAGMA page_count').get().page_count;
-      if (free > pages / 4) { db.exec('VACUUM'); console.log(`Search index: replaced the old index and gave back ${Math.round(free * 4096 / 1048576)} MB of disk (${Date.now() - t} ms)`); } }
-    catch (e) { console.error('search index vacuum:', e.message); }
+    // giving the disk back (VACUUM) can take a while on a big database: it runs once the server is up, not before it listens
+    setTimeout(() => {
+      try { const free = db.prepare('PRAGMA freelist_count').get().freelist_count, pages = db.prepare('PRAGMA page_count').get().page_count;
+        if (free > pages / 4) { const t2 = Date.now(); db.exec('VACUUM'); console.log(`Search index: replaced the old index and gave back ${Math.round(free * 4096 / 1048576)} MB of disk (${Date.now() - t2} ms; old index dropped in ${t2 - t} ms)`); } }
+      catch (e) { console.error('search index vacuum:', e.message); }
+    }, 20000).unref();
   }
   db.exec(`CREATE TABLE IF NOT EXISTS search_items (rowid INTEGER PRIMARY KEY, path TEXT UNIQUE NOT NULL, board TEXT NOT NULL, item TEXT NOT NULL, name TEXT NOT NULL DEFAULT '');
     CREATE INDEX IF NOT EXISTS search_items_board ON search_items(board);`);
@@ -70,14 +74,21 @@ module.exports = function features(ctx) {
     db.exec('CREATE TABLE IF NOT EXISTS search_tri (rowid INTEGER PRIMARY KEY, name TEXT, fields TEXT); CREATE TABLE IF NOT EXISTS search_words (rowid INTEGER PRIMARY KEY, body TEXT)');
   }
 
-  // history keeps each before/after value up to 16 KB; bigger ones keep their first 2,000 characters (and can't be undone)
+  // history keeps each before/after value up to 16 KB in the row; a bigger before-value (a long note) shows its first
+  // 2,000 characters there and is kept whole in item_history_big, so undo still puts all of it back
   const HIST_MAX = 16 * 1024;
   const histJson = v => { if (v === undefined) return null; const s = JSON.stringify(v); return s.length <= HIST_MAX ? s : JSON.stringify({ __truncated: s.slice(0, 2000) }); };
+  db.exec('CREATE TABLE IF NOT EXISTS item_history_big (id INTEGER PRIMARY KEY, before TEXT NOT NULL)');
   const H = {
     insert: db.prepare('INSERT INTO item_history (at, board, item, item_name, kind, col, before, after, by_id, by_name, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
     byId: db.prepare('SELECT * FROM item_history WHERE id = ?'),
     markUndone: db.prepare('UPDATE item_history SET undone = 1 WHERE id = ?'),
+    bigAdd: db.prepare('INSERT OR REPLACE INTO item_history_big (id, before) VALUES (?, ?)'),
+    bigGet: db.prepare('SELECT before FROM item_history_big WHERE id = ?'),
   };
+  const truncated = raw => String(raw || '').startsWith('{"__truncated"');
+  // a history row's before-value, whole (from the side table when the row only kept the start of it); null: not kept
+  const fullBefore = (id, raw) => { if (!truncated(raw)) return raw; const r = id ? H.bigGet.get(Number(id)) : null; return r ? r.before : null; };
   const userNames = new Map();
   function nameOfUser(id) {
     if (!userNames.has(id) || Date.now() - userNames.get(id).t > 60000) { const r = db.prepare('SELECT name FROM users WHERE id = ?').get(id); userNames.set(id, { t: Date.now(), n: r ? r.name : 'Someone' }); }
@@ -103,7 +114,10 @@ module.exports = function features(ctx) {
     const a = actor(by), at = now(), st = store();
     if (st.quiet) return;
     const name = String((after || before || {}).name || '').slice(0, 200);
-    const add = (kind, col, b4, af) => H.insert.run(at, bid, iid, name, kind, col, histJson(b4), histJson(af), a.id, a.name, a.source);
+    const add = (kind, col, b4, af) => {
+      const bj = histJson(b4), r = H.insert.run(at, bid, iid, name, kind, col, bj, histJson(af), a.id, a.name, a.source);
+      if (truncated(bj)) H.bigAdd.run(Number(r.lastInsertRowid), JSON.stringify(b4));
+    };
     if (!before && after) { add(st.source === 'restore' ? 'restored' : 'created', null); return; }
     if (before && !after) { add('deleted', null); return; }
     if (before.name !== after.name) add('change', '__name', before.name || '', after.name || '');
@@ -117,7 +131,14 @@ module.exports = function features(ctx) {
     }
     const seen = new Set((before.updates || []).map(u => (u && u.at) + '|' + (u && u.text)));
     for (const u of after.updates || []) if (u && !seen.has(u.at + '|' + u.text)) add('update', '__update', undefined, String(u.text || (u.files ? `${u.files.length} file(s)` : '')).slice(0, 500));
-    if (js(before.subitems || []) !== js(after.subitems || [])) add('change', '__subitems', (before.subitems || []).length, (after.subitems || []).length);
+    // subitems: the ones removed are kept whole (with where they were), so undo can put them back
+    const bs = Array.isArray(before.subitems) ? before.subitems : [], as = Array.isArray(after.subitems) ? after.subitems : [];
+    if (js(bs) !== js(as)) {
+      const ids = new Set(as.map(s => String(s && s.id)));
+      const gone = bs.map((sub, index) => ({ index, sub })).filter(x => x.sub && typeof x.sub === 'object' && !ids.has(String(x.sub.id)));
+      if (gone.length) add('change', '__subdel', gone, null);
+      if (js(bs.filter(s => s && ids.has(String(s.id)))) !== js(as)) add('change', '__subitems', bs.length, as.length);
+    }
   }
   function recordBoard(bid, before, after, by) {
     if (!before || !after || store().quiet) return;
@@ -235,6 +256,20 @@ module.exports = function features(ctx) {
     if (st.api) return { id: 'api', name: 'API key' };
     return { id: 'monday', name: 'From Monday' };
   }
+  // A column taken off a board (its values stay on the items): kept with its place, its lock settings and the rules that
+  // went with it, so the recycle bin can put it back.
+  const refsCol = (r, cid) => !!r && typeof r === 'object' && (r.col === cid || r.targetCol === cid || (Array.isArray(r.conditions) && r.conditions.some(x => x && x.col === cid)) || (Array.isArray(r.actions) && r.actions.some(a => a && a.col === cid)));
+  function keepColumns(bid, before, after) {
+    const st = store(); if (!before || !after || st.quiet || st.source === 'restore') return;
+    const now2 = new Set((after.columns || []).map(c => c && c.id)), rulesNow = new Set((after.automations || []).map(r => r && r.id));
+    (before.columns || []).forEach((c, index) => {
+      if (!c || !c.id || now2.has(c.id)) return;
+      const rules = (before.automations || []).map((r, i) => [r, i]).filter(([r]) => r && !rulesNow.has(r.id) && refsCol(r, c.id));
+      const pm = before.perms || {}, perms = { lock: (pm.locks || {})[c.id], guestEdit: (pm.guestEdit || []).includes(c.id), assignedOnly: (pm.assignedOnly || []).includes(c.id) };
+      const who = deleter();
+      binAdd.run(rid('t_'), 'column', bid, after.name || '', null, null, String(c.title || 'Column').slice(0, 200), JSON.stringify({ column: c, index, rules, perms }), JSON.stringify(after.access || null), now(), who.id, who.name);
+    });
+  }
   function keepItem(bid, iid, data) {
     const who = deleter(), info = boardInfo(bid) || {};
     binAdd.run(rid('t_'), 'item', bid, info.name || '', iid, data.group || null, String(data.name || 'Item').slice(0, 200), JSON.stringify(data), JSON.stringify(info.access || null), now(), who.id, who.name);
@@ -251,7 +286,7 @@ module.exports = function features(ctx) {
         try {
           const before = prev ? J(prev.data) : null, after = J(json);
           if (im) { if (!prev || prev.data !== json) { recordItem(im[1], im[2], before, after, by); indexItem(im[1], im[2], after); } }
-          else { recordBoard(bm[1], before, after, by); if (before && after && colSig(before) !== colSig(after)) { boardCache.delete(bm[1]); setImmediate(() => { try { const cur = boardDoc(bm[1]); if (cur) reindexBoard(bm[1], cur); } catch (e) { console.error('search:', e.message); } }); } }
+          else { recordBoard(bm[1], before, after, by); keepColumns(bm[1], before, after); if (before && after && colSig(before) !== colSig(after)) { boardCache.delete(bm[1]); setImmediate(() => { try { const cur = boardDoc(bm[1]); if (cur) reindexBoard(bm[1], cur); } catch (e) { console.error('search:', e.message); } }); } }
         } catch (e) { console.error('history:', e.message); }
       }
       return res;
@@ -291,15 +326,24 @@ module.exports = function features(ctx) {
   }
   // Daily: item history older than 180 days, notifications older than 90 days, and expired sign-ins are removed.
   const HISTORY_DAYS = 180, NOTIFY_DAYS = 90;
-  function purgeOld() {
+  // old history goes 5,000 rows at a time, letting requests through in between (a first purge can be millions of rows)
+  const HIST_BATCH = 5000;
+  async function purgeHistory(cut) {
+    const del = db.prepare('DELETE FROM item_history WHERE id IN (SELECT id FROM item_history WHERE at < ? LIMIT ?)');
+    let n = 0;
+    for (;;) { const c = del.run(cut, HIST_BATCH).changes; n += c; if (c < HIST_BATCH) break; await new Promise(r => setImmediate(r)); }
+    try { db.exec('DELETE FROM item_history_big WHERE id NOT IN (SELECT id FROM item_history)'); } catch (e) {}
+    return n;
+  }
+  async function purgeOld() {
     const ago = d => new Date(Date.now() - d * 864e5).toISOString(), out = {};
-    out.history = db.prepare('DELETE FROM item_history WHERE at < ?').run(ago(HISTORY_DAYS)).changes;
+    out.history = await purgeHistory(ago(HISTORY_DAYS));
     try { out.notifications = db.prepare('DELETE FROM notifications WHERE at < ?').run(ago(NOTIFY_DAYS)).changes; } catch (e) {}
     try { out.sessions = db.prepare('DELETE FROM sessions WHERE expires < ?').run(now()).changes; } catch (e) {}
     if (out.history || out.notifications || out.sessions) console.log(`Clean-up: ${out.history || 0} history rows (>${HISTORY_DAYS} days), ${out.notifications || 0} notifications (>${NOTIFY_DAYS} days), ${out.sessions || 0} expired sign-ins removed`);
     return out;
   }
-  const daily = () => { try { purgeBin(); } catch (e) { console.error('purge:', e.message); } try { purgeOld(); } catch (e) { console.error('purge:', e.message); } };
+  const daily = () => { try { purgeBin(); } catch (e) { console.error('purge:', e.message); } purgeOld().catch(e => console.error('purge:', e.message)); };
   setTimeout(daily, 15000).unref();
   setInterval(daily, 24 * 3600 * 1000).unref();
 
@@ -342,8 +386,9 @@ module.exports = function features(ctx) {
     return String(v).length > 300 ? String(v).slice(0, 298) + '…' : String(v);
   }
   // the readable value of one history before/after map ({ key: value })
-  const histVal = (b, col, raw) => { const v = J(raw); if (v && typeof v === 'object' && v.__truncated !== undefined) return String(v.__truncated).slice(0, 300) + '…'; if (v && typeof v === 'object' && !Array.isArray(v) && col && !col.startsWith('__')) return describeValue(b, col, v[col]); return describeValue(b, col, v); };
-  const colName = (b, col) => col === '__name' ? 'Name' : col === '__group' ? 'Group' : col === '__update' ? 'Update' : col === '__subitems' ? 'Subitems' : col === '__board' ? 'Board' : ((((b && b.columns) || []).find(c => c.id === col) || {}).title || col || '');
+  const histVal = (b, col, raw) => { const v = J(raw);
+    if (col === '__subdel') return Array.isArray(v) ? v.map(x => '“' + String((x && x.sub && x.sub.name) || 'Subitem').slice(0, 120) + '”').join(', ') : ''; if (v && typeof v === 'object' && v.__truncated !== undefined) return String(v.__truncated).slice(0, 300) + '…'; if (v && typeof v === 'object' && !Array.isArray(v) && col && !col.startsWith('__')) return describeValue(b, col, v[col]); return describeValue(b, col, v); };
+  const colName = (b, col) => col === '__name' ? 'Name' : col === '__group' ? 'Group' : col === '__update' ? 'Update' : col === '__subitems' || col === '__subdel' ? 'Subitems' : col === '__board' ? 'Board' : ((((b && b.columns) || []).find(c => c.id === col) || {}).title || col || '');
 
   // ---------- history: read ----------
   function historyRows(user, { board, item, by, col, from, to, before, limit }) {
@@ -360,11 +405,12 @@ module.exports = function features(ctx) {
     let rows = db.prepare(`SELECT * FROM item_history WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ${lim}`).all(...args);
     if (restricted(user, info)) { const vis = new Map(); rows = rows.filter(r => { if (!r.item) return true; if (!vis.has(r.item)) { const d = itemDoc(board, r.item); vis.set(r.item, !!d && itemVisible(user, info, d)); } return vis.get(r.item); }); }
     const more = rows.length > n; rows = rows.slice(0, n);
+    const big = new Set(db.prepare('SELECT id FROM item_history_big WHERE id IN (SELECT value FROM json_each(?))').all(JSON.stringify(rows.filter(r => truncated(r.before)).map(r => r.id))).map(r => r.id));
     return { more, next: more ? rows[rows.length - 1].id : null, rows: rows.map(r => ({
       id: r.id, at: r.at, item: r.item, itemName: r.item_name, kind: r.kind, col: r.col, colName: colName(b, r.col), by: r.by_id, byName: r.by_name, source: r.source, undone: !!r.undone,
       before: r.kind === 'change' ? histVal(b, r.col, r.before) : null,
       after: r.kind === 'change' ? histVal(b, r.col, r.after) : r.after ? J(r.after) : null,
-      canUndo: r.kind === 'change' && !r.undone && !['__subitems'].includes(r.col) && !!r.item && !String(r.before || '').startsWith('{"__truncated"'),
+      canUndo: r.kind === 'change' && !r.undone && !['__subitems'].includes(r.col) && !!r.item && (!truncated(r.before) || big.has(r.id)),
     })) };
   }
 
@@ -379,9 +425,17 @@ module.exports = function features(ctx) {
       if (!itemVisible(user, info, cur)) continue;
       const next = JSON.parse(JSON.stringify(cur)); next.values = next.values || {};
       for (const x of xs) {
-        const b4 = J(x.before);
-        if (b4 && typeof b4 === 'object' && b4.__truncated !== undefined) { skipped.push('a value too large to undo'); continue; }
+        const raw = fullBefore(x.id, x.before);
+        if (raw === null) { skipped.push('a value too large to undo'); continue; }
+        const b4 = J(raw);
         if (x.col === '__name') { if (b4) next.name = b4; }
+        else if (x.col === '__subdel') { // deleted subitems go back where they were (unless they're back already)
+          const subs = Array.isArray(next.subitems) ? [...next.subitems] : [], have = new Set(subs.map(s => String(s && s.id)));
+          let n = 0;
+          for (const g of (Array.isArray(b4) ? b4 : []).filter(g => g && g.sub && typeof g.sub === 'object').sort((p, q2) => p.index - q2.index)) if (!have.has(String(g.sub.id))) { subs.splice(Math.min(Number(g.index) || 0, subs.length), 0, g.sub); n++; }
+          if (!n) continue;
+          next.subitems = subs;
+        }
         else if (x.col === '__group') { if (b4 && (info.groups || []).some(g => g.id === b4)) next.group = b4; else { skipped.push('a group that no longer exists'); continue; } }
         else if (x.col.startsWith('__')) continue;
         else {
@@ -407,7 +461,7 @@ module.exports = function features(ctx) {
     if (r.deleted_by === user.id) return r.kind !== 'item' || !live || !restricted(user, live) || itemVisible(user, live, J(r.data));
     if (r.kind === 'board') return false; // a whole board: admins and the person who deleted it
     if (r.kind === 'item' && live && restricted(user, live)) return itemVisible(user, live, J(r.data));
-    if (r.kind === 'group' && live && restricted(user, live)) return false;
+    if ((r.kind === 'group' || r.kind === 'column') && live && restricted(user, live)) return false;
     return true;
   }
   function restoreEntry(user, r) {
@@ -428,6 +482,25 @@ module.exports = function features(ctx) {
       if (!(b.groups || []).some(g => g.id === group.id)) { const groups = [...(b.groups || [])]; groups.splice(Math.min(index ?? groups.length, groups.length), 0, group); const prev = b.access || null; b.groups = groups; saveBoard(r.board, b, user.id, prev); }
       for (const [iid, data] of items) if (!q.doc.get(`boards/${r.board}/items/${iid}`)) saveItem(r.board, iid, data, user, 'restore');
       out = { board: r.board };
+    } else if (r.kind === 'column') {
+      const b = boardDoc(r.board); if (!b) throw bad(409, `Its board “${r.board_name}” was deleted. Restore the board first.`);
+      const { column, index, rules, perms } = J(r.data) || {};
+      if (!column || !column.id) throw bad(409, 'That column can’t be restored.');
+      if ((b.columns || []).some(c => c && c.id === column.id)) throw bad(409, 'That column is already on the board.');
+      const prev = b.access || null, cols = [...(b.columns || [])];
+      cols.splice(Math.min(Number.isFinite(index) ? index : cols.length, cols.length), 0, column); b.columns = cols;
+      // the automations that were removed with it come back too (unless one with the same id is there again)
+      const autos = [...(b.automations || [])], have = new Set(autos.map(x => x && x.id));
+      for (const [rule, i] of Array.isArray(rules) ? rules : []) if (rule && !have.has(rule.id)) autos.splice(Math.min(Number(i) || 0, autos.length), 0, rule);
+      b.automations = autos;
+      if (perms) {
+        const pm = { ...(b.perms || {}) };
+        if (perms.lock) pm.locks = { ...(pm.locks || {}), [column.id]: perms.lock };
+        if (perms.assignedOnly) pm.assignedOnly = [...new Set([...(pm.assignedOnly || []), column.id])];
+        if (perms.guestEdit && user.role === 'admin') pm.guestEdit = [...new Set([...(pm.guestEdit || []), column.id])];
+        b.perms = pm;
+      }
+      saveBoard(r.board, b, user.id, prev); out = { board: r.board };
     } else if (r.kind === 'board') {
       if (q.doc.get('boards/' + r.board)) throw bad(409, 'A board with the same id already exists.');
       const { board, items } = J(r.data); boardCache.delete(r.board);
@@ -635,7 +708,7 @@ module.exports = function features(ctx) {
       writer(user);
       const r = H.byId.get(Number(body.id)); if (!r || r.kind !== 'change' || !r.item) throw bad(404, 'That change can’t be undone.');
       mustSee(user, r.board);
-      const out = applyReverts(user, r.board, [{ item: r.item, col: r.col, before: r.before }]);
+      const out = applyReverts(user, r.board, [{ id: r.id, item: r.item, col: r.col, before: r.before }]);
       if (out.cells) H.markUndone.run(r.id);
       return send(res, 200, out);
     }
@@ -649,7 +722,7 @@ module.exports = function features(ctx) {
       const rows = db.prepare("SELECT * FROM item_history WHERE board = ? AND by_id = ? AND at >= ? AND kind = 'change' AND undone = 0 ORDER BY id ASC").all(bid, user.id, since)
         .filter(r => r.item && (!items || items.has(r.item)) && (!cols || cols.has(r.col)) && !['__subitems'].includes(r.col));
       const first = new Map(); for (const r of rows) { const k = r.item + '|' + r.col; if (!first.has(k)) first.set(k, r); }
-      const out = applyReverts(user, bid, [...first.values()].map(r => ({ item: r.item, col: r.col, before: r.before })));
+      const out = applyReverts(user, bid, [...first.values()].map(r => ({ id: r.id, item: r.item, col: r.col, before: r.before })));
       for (const r of rows) H.markUndone.run(r.id);
       return send(res, 200, out);
     }
@@ -662,7 +735,7 @@ module.exports = function features(ctx) {
       if (!r) return send(res, 200, { cells: 0, none: true });
       // everything that same save changed (an automation may have set more cells), undone together
       const same = db.prepare("SELECT * FROM item_history WHERE board = ? AND item = ? AND at = ? AND by_id = ? AND kind = 'change' AND undone = 0").all(bid, r.item, r.at, user.id);
-      const out = applyReverts(user, bid, same.map(x => ({ item: x.item, col: x.col, before: x.before })));
+      const out = applyReverts(user, bid, same.map(x => ({ id: x.id, item: x.item, col: x.col, before: x.before })));
       same.forEach(x => H.markUndone.run(x.id));
       const b = boardInfo(bid);
       return send(res, 200, { ...out, what: `${colName(b, r.col)} on “${r.item_name}”` });
@@ -718,6 +791,58 @@ module.exports = function features(ctx) {
       for (const [iid, d] of items) { broadcast({ op: 'delete', col: `boards/${bid}/items`, id: iid }); integ.itemChanged(`boards/${bid}/items/${iid}`, d, null, user.id); }
       broadcast({ op: 'set', col: 'boards', id: bid, data: b, prevAccess: b.access || null });
       return send(res, 200, { ok: true, items: items.length, bin: binId });
+    }
+
+    // An automation moves an item to another board. The page works out the moved item (its values mapped to the new
+    // board's columns, the new board's rules applied); the server saves it there and takes it off the old board in one go:
+    // the old copy, with every value (also those the new board has no column for), goes to the recycle bin and the old
+    // board's history, and the item's docs and uploaded files go along to the new board.
+    if (p === '/api/x/item/move' && method === 'POST') {
+      writer(user);
+      const bid = String(body.board || ''), iid = String(body.item || ''), tid = String(body.to || '');
+      if (!okId(bid) || !okId(iid) || !okId(tid) || !boardInfo(bid) || !boardInfo(tid)) throw bad(404, 'No such board.');
+      if (bid === tid) throw bad(400, 'That item is already on this board.');
+      const info = mustSee(user, bid), tinfo = mustSee(user, tid), tb = boardDoc(tid) || {};
+      const src = itemDoc(bid, iid); if (!src || !itemVisible(user, info, src)) throw bad(404, 'That item isn’t on the board any more.');
+      if (itemDoc(tid, iid)) throw bad(409, 'An item with the same id is already on that board.');
+      const d = body.data && typeof body.data === 'object' && !Array.isArray(body.data) ? body.data : null; if (!d) throw bad(400, 'Send the moved item.');
+      const BADK = new Set(['__proto__', 'constructor', 'prototype']), values = {}, stripped = [];
+      for (const [k, v] of Object.entries(d.values && typeof d.values === 'object' && !Array.isArray(d.values) ? d.values : {})) if (!BADK.has(k)) values[k] = v;
+      const locked = lockedCols(user, { ...tinfo, id: tid });
+      for (const k of Object.keys(values)) if (locked.has(baseKey(k)) && values[k] !== '' && values[k] != null) { delete values[k]; if (!stripped.includes(baseKey(k))) stripped.push(baseKey(k)); }
+      // comments, subitems and the rest come from what's stored now, not from the page's copy
+      const next = { ...src, name: String(d.name || src.name || 'Item').slice(0, 500), values, pos: Number.isFinite(Number(d.pos)) ? Number(d.pos) : Date.now(),
+        group: (tb.groups || []).some(g => g.id === d.group) ? d.group : ((tb.groups || [])[0] || {}).id,
+        activity: Array.isArray(d.activity) ? d.activity.filter(x => x && typeof x === 'object').slice(0, 40).map(x => ({ at: String(x.at || now()), by: x.by === 'automation' ? 'automation' : user.id, text: String(x.text || '').slice(0, 300) })) : (src.activity || []) };
+      delete next.id; delete next.reminded;
+      // a Monday item moved here isn't Monday's copy any more: the Monday copy and pull leave it alone (see movedAway)
+      if (src.mondayId != null && src.mondayId !== '') { next.movedFromMondayId = String(src.mondayId); delete next.mondayId; }
+      const dst = `boards/${tid}/items/${iid}`, from = `boards/${bid}/items/${iid}`, st = store(), was = st.source, binId = rid('t_');
+      db.exec('BEGIN');
+      try {
+        st.source = 'move';
+        q.upsertDoc.run(dst, `boards/${tid}/items`, iid, JSON.stringify(next), now(), user.id);
+        binAdd.run(binId, 'item', bid, info.name || '', iid, src.group || null, `${String(src.name || 'Item').slice(0, 150)} (moved to “${String(tinfo.name || '').slice(0, 40)}”)`, JSON.stringify(src), JSON.stringify(info.access || null), now(), user.id, user.name);
+        { const bj = histJson(src), r = H.insert.run(now(), bid, iid, String(src.name || '').slice(0, 200), 'moved', '__item', bj, JSON.stringify(tinfo.name || ''), user.id, user.name, 'app'); if (truncated(bj)) H.bigAdd.run(Number(r.lastInsertRowid), JSON.stringify(src)); }
+        st.noBin = true; q.deleteDoc.run(from);
+        // docs written in the item: a doc column of the same id, else of the same name, on the new board (else the same id, kept)
+        try {
+          const scols = info.columns || [], tcols = (tb.columns || []).filter(c => c.type === 'doc' || c.source === 'doc' || c.source === 'direct_doc');
+          for (const row of db.prepare('SELECT DISTINCT col FROM item_docs WHERE board = ? AND item = ? UNION SELECT DISTINCT col FROM item_doc_versions WHERE board = ? AND item = ?').all(bid, iid, bid, iid)) {
+            const sc = scols.find(c => c.id === row.col), tc = tcols.find(c => c.id === row.col) || (sc && tcols.find(c => String(c.title).toLowerCase() === String(sc.title).toLowerCase()));
+            const to = row.col === '_notes' ? '_notes' : tc ? tc.id : row.col;
+            db.prepare('UPDATE OR IGNORE item_docs SET board = ?, col = ? WHERE board = ? AND item = ? AND col = ?').run(tid, to, bid, iid, row.col);
+            db.prepare('UPDATE item_doc_versions SET board = ?, col = ? WHERE board = ? AND item = ? AND col = ?').run(tid, to, bid, iid, row.col);
+          }
+        } catch (e) { if (!/no such table/.test(e.message)) throw e; }
+        db.prepare('UPDATE files SET board = ? WHERE board = ? AND item = ?').run(tid, bid, iid);
+        db.exec('COMMIT');
+      } catch (e) { try { db.exec('ROLLBACK'); } catch (x) {} throw e; } finally { st.noBin = false; st.source = was; }
+      clearSummary();
+      broadcast({ op: 'delete', col: `boards/${bid}/items`, id: iid });
+      broadcast({ op: 'set', col: `boards/${tid}/items`, id: iid, data: next });
+      integ.itemChanged(from, src, null, user.id); integ.itemChanged(dst, null, next, user.id);
+      return send(res, 200, { ok: true, id: iid, data: next, stripped, bin: binId });
     }
 
     if (p === '/api/x/board/duplicate' && method === 'POST') {

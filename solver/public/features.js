@@ -216,7 +216,7 @@
   function histRow(r, opts = {}) {
     const what = r.kind === 'created' ? 'Created the item' : r.kind === 'deleted' ? 'Deleted the item' : r.kind === 'restored' ? 'Restored from the recycle bin' : r.kind === 'moved' ? `Moved to ${esc(r.after || 'another board')}`
       : r.kind === 'update' ? `Posted an update: <span class="fx-mute">“${esc(String(r.after || '').slice(0, 160))}”</span>` : r.kind === 'board' ? esc(r.after || '')
-      : r.col === '__subitems' ? 'Changed subitems'
+      : r.col === '__subitems' ? 'Changed subitems' : r.col === '__subdel' ? `Deleted subitem${String(r.before || '').includes('”, “') ? 's' : ''} ${esc(r.before || '')}`
       : `<b>${esc(r.colName)}</b>: ${r.before ? `<span class="was">${esc(r.before)}</span>` : '<span class="fx-mute">empty</span>'}<span class="arrow">→</span>${r.after ? esc(r.after) : '<span class="fx-mute">empty</span>'}`;
     const src = r.source === 'monday' ? '<span class="src">From Monday</span>' : r.source === 'undo' ? '<span class="src">Via undo</span>' : r.source === 'restore' ? '' : ['api', 'link', 'form', 'automation'].includes(r.source) ? `<span class="src">${esc(r.source === 'form' ? 'Form' : r.source === 'link' ? 'Lead link' : r.source === 'api' ? 'API' : 'Automation')}</span>` : '';
     const item = opts.board && r.item ? `<button class="icon-btn" style="padding:0;color:#fff" data-fx="open-link" data-b="${esc(opts.board)}" data-i="${esc(r.item)}">${esc(r.itemName || 'Item')}</button> · ` : '';
@@ -267,6 +267,12 @@
     toastAction(msg, 'Undo', () => api('POST', '/api/x/undo', { board: b.id, items: ids, withinMs: Date.now() - t0 + 3000 }).then(r => toast(r.cells ? `Undone (${r.cells} change${r.cells === 1 ? '' : 's'})` : 'Nothing to undo')).catch(e => toast(e.message)));
     return true;
   }
+  // a subitem was deleted: the item's history keeps it, so Undo puts it back
+  function subDeleted(b, item) {
+    if (!b || !canWrite()) return true;
+    toastAction('Subitem deleted', 'Undo', () => api('POST', '/api/x/undo-last', { board: b.id }).then(r => toast(r.cells ? 'Subitem restored' : 'Nothing to undo')).catch(e => toast(e.message)));
+    return true;
+  }
   function deleteGroup(b, gid) {
     const g = (b.groups || []).find(x => x.id === gid);
     api('POST', '/api/x/group/delete', { board: b.id, group: gid }).then(r => {
@@ -304,7 +310,7 @@
     },
     bin: m => {
       const days = d => Math.max(0, Math.ceil((Date.parse(d) - Date.now()) / 864e5));
-      const rows = (m.items || []).map(x => `<div class="rule"><div class="rule-text"><b>${esc(x.name)}</b> <span class="pill">${x.kind === 'board' ? 'Board' : x.kind === 'group' ? 'Group' : 'Item'}</span>${x.count != null ? ` <span class="fx-mute">${x.count} item${x.count === 1 ? '' : 's'}</span>` : ''}
+      const rows = (m.items || []).map(x => `<div class="rule"><div class="rule-text"><b>${esc(x.name)}</b> <span class="pill">${x.kind === 'board' ? 'Board' : x.kind === 'group' ? 'Group' : x.kind === 'column' ? 'Column' : 'Item'}</span>${x.count != null ? ` <span class="fx-mute">${x.count} item${x.count === 1 ? '' : 's'}</span>` : ''}
           <div class="card-meta"><span>${x.kind === 'board' ? '' : esc(x.boardName) + (x.boardGone ? ' (deleted)' : '')}</span><span>Deleted ${esc(fmtWhen(x.at))} by ${esc(x.mine ? 'you' : x.by || 'someone')}</span><span>Gone for good in ${days(x.expires)} day${days(x.expires) === 1 ? '' : 's'}</span></div></div>
           <button class="btn primary" data-fx="restore" data-id="${esc(x.id)}">Restore</button>${isAdmin() ? `<button class="icon-btn" data-fx="forget" data-id="${esc(x.id)}">${m.confirm === x.id ? 'Click again to delete forever' : 'Delete forever'}</button>` : ''}</div>`).join('');
       return `<h3>Recycle bin</h3><p>Deleted items, groups and boards stay here for ${m.days || 30} days, then they’re removed for good. Restore puts them back exactly as they were.${isAdmin() ? ' As an admin you see everything.' : ' You see what you deleted and what was deleted on boards you can open.'}</p>
@@ -577,7 +583,7 @@
   function addTypes() { const T = A() && A().TYPES; if (!T) return setTimeout(addTypes, 200); T.board_relation = 'Connect boards'; T.mirror = 'Mirror'; T.time_tracking = 'Time tracking'; }
   addTypes();
 
-  window.SolverFeatures = { cell, describe, head, railTop, railBottom, homeTop, historyTab, deleted, bulkEdited, deleteGroup, openSearch };
+  window.SolverFeatures = { cell, describe, head, railTop, railBottom, homeTop, historyTab, deleted, bulkEdited, deleteGroup, openSearch, subDeleted };
   // the page rendered before this file loaded: render again so the hooks show up
   setTimeout(() => { try { A() && A().render(); } catch (e) {} }, 0);
 })();

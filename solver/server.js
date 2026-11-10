@@ -97,6 +97,7 @@ for (const sql of ['ALTER TABLE users ADD COLUMN totp_secret TEXT', 'ALTER TABLE
 
 // ---------- helpers ----------
 const now = () => new Date().toISOString();
+const TIME_ZONE = (() => { const z = process.env.KS_TIMEZONE || 'America/Toronto'; try { new Intl.DateTimeFormat('en-CA', { timeZone: z }); return z; } catch (e) { return 'America/Toronto'; } })();
 const newId = (p = '') => p + crypto.randomBytes(9).toString('base64url');
 
 function hashPassword(pw) {
@@ -399,16 +400,23 @@ function send(res, status, body, headers = {}) {
 }
 // JSON that is already a string (stored documents are sent as stored, without parsing them again)
 const sendJson = (res, status, json, headers) => sendData(res, status, json, 'application/json', headers);
+// Gzip at most 3 at a time: a stampede of big answers queues instead of holding dozens of buffers at once.
+let gzActive = 0; const gzQueue = [];
+function gzipLimited(data) {
+  return new Promise((resolve, reject) => {
+    const run = () => { gzActive++; zlib.gzip(data, { level: 5 }, (err, gz) => { gzActive--; const nx = gzQueue.shift(); if (nx) nx(); if (err) reject(err); else resolve(gz); }); };
+    if (gzActive < 3) run(); else gzQueue.push(run);
+  });
+}
 // Bigger answers are gzipped for browsers that accept it (boards with thousands of items shrink ~8x).
 function sendData(res, status, data, type, headers = {}) {
   const h = { 'Content-Type': type, 'Cache-Control': 'no-store', ...headers };
   const ae = String((res.req && res.req.headers['accept-encoding']) || '');
   if (data.length > 8192 && /\bgzip\b/i.test(ae) && !h['Content-Encoding']) {
-    zlib.gzip(data, { level: 5 }, (err, gz) => {
+    gzipLimited(data).then(gz => {
       if (res.headersSent || res.destroyed) return;
-      if (err) { res.writeHead(status, h); return res.end(data); }
       res.writeHead(status, { ...h, 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding', 'Content-Length': gz.length }); res.end(gz);
-    });
+    }, () => { if (res.headersSent || res.destroyed) return; res.writeHead(status, h); res.end(data); });
     return;
   }
   res.writeHead(status, h); res.end(data);
@@ -516,14 +524,25 @@ function clientIp(req) {
   const ip = xff.length ? xff[Math.max(0, xff.length - hops)] : '';
   return net.isIP(ip.replace(/^::ffff:/, '')) ? ip.replace(/^::ffff:/, '') : sock;
 }
-// Sign-in throttle: 10 wrong tries from one address, or 15 for one account, in 15 minutes pause sign-in there for 15 minutes.
+// Sign-in throttle. Per address: 10 wrong tries in 15 minutes pause sign-in from there for 15 minutes.
+// Per account: after 3 wrong tries each further try waits longer (1 s, 2 s, 4 s … at most 60 s), so guessing is slowed
+// to a crawl but the account is never shut, and an address the person signed in from before skips that wait (someone
+// hammering the account from elsewhere can't keep its owner out).
 const loginFails = new Map(); // 'ip:…' or 'acct:…' -> { n, at }
-const LOGIN_LIMIT = { ip: 10, acct: 15 };
+const LOGIN_LIMIT = { ip: 10 };
 function throttled(key) {
   const r = loginFails.get(key); if (!r) return false;
   if (Date.now() - r.at > 15 * 60 * 1000) { loginFails.delete(key); return false; }
   return r.n >= LOGIN_LIMIT[key.split(':')[0]];
 }
+// seconds this account still waits before its next try (0: go ahead)
+function acctWait(key) {
+  const r = loginFails.get(key); if (!r || r.n <= 3) return 0;
+  const left = r.at + Math.min(60, 2 ** (r.n - 4)) * 1000 - Date.now();
+  return left > 0 ? Math.ceil(left / 1000) : 0;
+}
+db.exec('CREATE TABLE IF NOT EXISTS login_known (email TEXT NOT NULL, ip TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (email, ip))');
+const knownAddr = { has: db.prepare('SELECT 1 AS k FROM login_known WHERE email = ? AND ip = ?'), add: db.prepare('INSERT INTO login_known (email, ip, at) VALUES (?, ?, ?) ON CONFLICT(email, ip) DO UPDATE SET at = excluded.at') };
 function loginFailed(...keys) { for (const k of keys) { const r = loginFails.get(k) || { n: 0, at: Date.now() }; r.n++; r.at = Date.now(); loginFails.set(k, r); } }
 setInterval(() => { const t = Date.now(); for (const [k, r] of loginFails) if (t - r.at > 15 * 60 * 1000) loginFails.delete(k); }, 10 * 60 * 1000).unref();
 // An unknown email takes as long to refuse as a wrong password (no telling which emails have accounts).
@@ -539,6 +558,34 @@ const features = require('./features.js')({ db, q, now, broadcast, HttpError, re
   canWrite, integ, cleanAccess, itemNotifications, publicDir: PUBLIC_DIR, clearSummary: () => summaryCache.clear(), startIndex: require.main === module, clientIp,
   formulaText: (b, c, item) => { const r = formulaResult(b, item, c); return r.error ? '' : KSFormula.format(r.value); } });
 module.exports.features = features;
+// ---- a board's items as sent to everyone who sees all of them: built and gzipped once, kept until the next write ----
+// (30 people reconnecting at once used to build and gzip the same 20 MB answer 30 times over)
+const colCache = new Map(); // col -> { json, gz: Promise<Buffer> | null, bytes }
+const COL_CACHE_MAX = 96 * 1024 * 1024;
+const colDirty = col => { if (col) colCache.delete(col); };
+{ const up = q.upsertDoc, del = q.deleteDoc, dc = q.deleteCol;
+  q.upsertDoc = { run(p, col, ...r) { colDirty(col); try { return up.run(p, col, ...r); } finally { colDirty(col); } } };
+  q.deleteDoc = { run(p) { const col = String(p).slice(0, String(p).lastIndexOf('/')); colDirty(col); try { return del.run(p); } finally { colDirty(col); } } };
+  q.deleteCol = { run(c) { colDirty(c); try { return dc.run(c); } finally { colDirty(c); } } }; }
+function colEntry(col) {
+  let e = colCache.get(col);
+  if (e) { colCache.delete(col); colCache.set(col, e); return e; } // most recently used last
+  const rows = q.docsInCol.all(col);
+  e = { json: '[' + rows.map(r => '{"id":' + JSON.stringify(r.id) + ',"data":' + r.data + '}').join(',') + ']', gz: null };
+  e.bytes = e.json.length * 2;
+  colCache.set(col, e);
+  let total = 0; for (const x of colCache.values()) total += x.bytes;
+  for (const [k, x] of colCache) { if (total <= COL_CACHE_MAX || x === e) break; total -= x.bytes; colCache.delete(k); }
+  return e;
+}
+function sendCol(res, col) {
+  const e = colEntry(col), ae = String((res.req && res.req.headers['accept-encoding']) || '');
+  const h = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
+  if (e.json.length <= 8192 || !/\bgzip\b/i.test(ae)) { res.writeHead(200, h); return res.end(e.json); }
+  if (!e.gz) { e.gz = gzipLimited(e.json); e.gz.then(b => { e.bytes += b.length; }, () => { e.gz = null; }); }
+  e.gz.then(gz => { if (res.headersSent || res.destroyed) return; res.writeHead(200, { ...h, 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding', 'Content-Length': gz.length }); res.end(gz); },
+    () => { if (res.headersSent || res.destroyed) return; res.writeHead(200, h); res.end(e.json); });
+}
 module.exports.setGuestBoards = (...a) => setGuestBoards(...a);
 
 async function api(req, res, url) {
@@ -552,7 +599,8 @@ async function api(req, res, url) {
     if (throttled(ipKey)) throw new HttpError(429, 'Too many tries. Wait 15 minutes and try again.');
     const { email, password } = await readBody(req, 16 * 1024);
     const em = String(email || '').trim().toLowerCase().slice(0, 320), acctKey = 'acct:' + em;
-    if (throttled(acctKey)) throw new HttpError(429, 'Too many tries for this account. Wait 15 minutes and try again.');
+    const ip = clientIp(req), known = !!knownAddr.has.get(em, ip);
+    { const w = known ? 0 : acctWait(acctKey); if (w) throw new HttpError(429, `Too many wrong tries for this account. Wait ${w} second${w === 1 ? '' : 's'} and try again.`); }
     const u = q.userByEmail.get(em);
     const pwOk = checkPassword(String(password || ''), u ? u.pw : DUMMY_HASH);
     if (!u || u.disabled || !pwOk) {
@@ -562,6 +610,7 @@ async function api(req, res, url) {
     loginFails.delete(ipKey); loginFails.delete(acctKey);
     // two-factor on: the password alone doesn't sign in; the next step asks for a code
     if (u.totp_on) return send(res, 200, { twofa: true, ticket: newTicket(u.id, 'pw') });
+    try { knownAddr.add.run(em, ip, now()); } catch (e) {} // a full sign-in: this address is now known for the account
     return send(res, 200, { ...publicUser(u), setup2fa: needsTwoFactor(u, 'pw') }, { 'Set-Cookie': startSession(u, 'pw') });
   }
   if (p === '/api/login/2fa' && method === 'POST') {
@@ -581,6 +630,7 @@ async function api(req, res, url) {
     tickets.delete(String(ticket)); codeFails.delete(t.uid);
     const u = q.userById.get(t.uid); if (!u || u.disabled) throw new HttpError(401, 'Sign in to continue.');
     const left = JSON.parse(u.backup_codes || '[]').length;
+    try { knownAddr.add.run(String(u.email || '').toLowerCase(), clientIp(req), now()); } catch (e) {}
     return send(res, 200, { ...publicUser(u), usedBackup: kind === 'backup', backupLeft: left }, { 'Set-Cookie': startSession(u, t.method) });
   }
   // ---- Sign in with Google (only when GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set). Never creates accounts. ----
@@ -619,7 +669,7 @@ async function api(req, res, url) {
   if (method !== 'GET' && req.headers['x-solver'] !== '1') throw new HttpError(403, 'Request refused.');
 
   if (p === '/api/logout' && method === 'POST') { q.deleteSession.run(user.token); return send(res, 200, { ok: true }, { 'Set-Cookie': 'ks_session=; Path=/; Max-Age=0' }); }
-  if (p === '/api/me') return send(res, 200, { ...publicUser(user), twofa: user.totpOn, mustSetup2fa: user.needs2fa, signedInWith: user.method });
+  if (p === '/api/me') return send(res, 200, { ...publicUser(user), twofa: user.totpOn, mustSetup2fa: user.needs2fa, signedInWith: user.method, timeZone: TIME_ZONE });
 
   // ---- two-factor: set up, turn off, new backup codes ----
   if (p === '/api/2fa/status' && method === 'GET') {
@@ -959,6 +1009,7 @@ async function api(req, res, url) {
     if (col === 'meta' && user.role === 'guest') throw new HttpError(403, 'Guests can’t open workspace settings.');
     const bid = boardOfPath(col), info = bid ? mustSee(user, bid) : null;
     if (col === 'boards') return send(res, 200, q.docsInCol.all(col).map(r => ({ id: r.id, data: JSON.parse(r.data) })).filter(r => canSee(user, r.data.access)).map(r => ({ id: r.id, data: boardForUser(user, r.data) })));
+    if (!(bid && restricted(user, info))) return sendCol(res, col); // the same answer for everyone: built once (see colCache)
     let rows = q.docsInCol.all(col);
     if (bid && restricted(user, info)) rows = rows.filter(r => itemVisible(user, info, JSON.parse(r.data)));
     return sendJson(res, 200, '[' + rows.map(r => '{"id":' + JSON.stringify(r.id) + ',"data":' + r.data + '}').join(',') + ']');
@@ -979,7 +1030,7 @@ async function api(req, res, url) {
     if (method === 'PUT' || method === 'PATCH') {
       const body = await readBody(req);
       let data = body;
-      if (method === 'PUT') { delete body.$append; delete body.$remove; } // list operations only work on PATCH
+      if (method === 'PUT') { delete body.$append; delete body.$remove; delete body.$set; } // list operations only work on PATCH
       // Only admins decide who can see a board and who can change which columns.
       if (isBoard && user.role !== 'admin') {
         // where a board comes from (the Monday copy switch, which Monday board, which workspace) is admin-only too
@@ -1000,12 +1051,17 @@ async function api(req, res, url) {
         // new comments, replies and activity lines are always signed as the person sending them (no posting as someone else)
         if (add) {
           const stamp = x => (x && typeof x === 'object' ? { ...x, by: user.id, byName: user.name, at: now() } : x);
-          if (Array.isArray(add.updates)) add.updates = add.updates.map(u => ({ ...stamp(u), replies: Array.isArray(u && u.replies) ? u.replies.map(stamp) : u && u.replies }));
+          // an update an automation posts ("post an update" rule) is signed "Automation"; guests' rules run on the server
+          const autoPost = u => u && typeof u === 'object' && u.by === 'automation' && user.role !== 'guest';
+          if (Array.isArray(add.updates)) add.updates = add.updates.map(u => autoPost(u) ? { at: now(), by: 'automation', byName: 'Automation', text: String(u.text || '').slice(0, 4000) }
+            : ({ ...stamp(u), replies: Array.isArray(u && u.replies) ? u.replies.map(stamp) : u && u.replies }));
           if (Array.isArray(add.activity)) add.activity = add.activity.map(a2 => a2 && a2.by === 'automation' && user.role !== 'guest' ? { ...a2, at: now() } : stamp(a2));
         }
         const rem = isItem && body.$remove && typeof body.$remove === 'object' ? body.$remove : null; delete body.$remove;
+        // { $set: { subitems: [{ id, name?, values? }] } } changes just those subitems, matched by id, in what's stored now
+        const put = isItem && body.$set && typeof body.$set === 'object' ? body.$set : null; delete body.$set;
         data = merge(JSON.parse(prev.data), body);
-        if (add || rem) appendToItem(data, add || {}, rem || {});
+        if (add || rem || put) appendToItem(data, add || {}, rem || {}, put || {});
       }
       if (newPerms) data.perms = cleanPerms(newPerms, data); // replaced as a whole, so a lock can be removed
       if (isBoard && user.role !== 'admin' && Array.isArray(data.automations)) checkRuleLocks(user, before, data.automations);
@@ -1019,9 +1075,9 @@ async function api(req, res, url) {
         }
       }
       if (isBoard && (method === 'PUT' || 'automations' in body)) ext.checkBoard(data, before); // rules are checked on save
-      let stripped = [];
+      let stripped = [], guestNotes = null;
       if (isItem) {
-        if (user.role === 'guest') checkGuestEdit(before, data, user, info);
+        if (user.role === 'guest') { checkGuestEdit(before, data, user, info); guestNotes = integ.guestRules(bid, before, data, user); }
         const badUrl = netguard.badLink(before, data, ((info && info.columns) || []).filter(c => c.type === 'link').map(c => c.id));
         if (badUrl) throw new HttpError(400, 'Links must start with https:// (or be a file uploaded here).');
         const locked = lockedCols(user, info);
@@ -1039,6 +1095,7 @@ async function api(req, res, url) {
       integ.itemChanged(dp, before, data, user.id);
       try { itemNotifications(dp, before, data, user); } catch (e) { console.error('notifications:', e.message); }
       if (isItem) ext.itemSaved(dp, before, data, user);
+      if (guestNotes) integ.sendNotes(guestNotes.b, id, data, guestNotes.notes);
       return send(res, 200, stripped.length ? { ok: true, stripped: stripped.map(c => colTitle(info, c)) } : { ok: true });
     }
     if (method === 'DELETE') {
@@ -1152,14 +1209,21 @@ function checkGuestEdit(before, after, user, info) {
       for (const u of n.slice(kept)) { if (!u || typeof u !== 'object') throw no(); u.by = user.id; u.byName = user.name; u.text = String(u.text || '').slice(0, 4000); delete u.replies; }
       continue;
     }
-    // new activity lines: the guest's own, and the lines an automation their change set off wrote ("… set Status", "… skipped: … is locked")
-    // (what those rules change is still checked: values against the guest-editable columns, nothing else on the item)
-    if (k === 'activity') { const old = new Set((before.activity || []).map(js)); if ((Array.isArray(after.activity) ? after.activity : []).some(x => !old.has(js(x)) && !(x && (x.by === user.id || x.by === 'automation')))) throw no(); continue; }
+    // new activity lines: only the guest's own. Lines signed by an automation are written by the server when it runs the
+    // board's rules for the guest's change (see guestRules), so any a guest's page sends are dropped, never stored.
+    if (k === 'activity') {
+      const old = new Set((before.activity || []).map(js)), list = Array.isArray(after.activity) ? after.activity : [];
+      if (list.some(x => !old.has(js(x)) && !(x && (x.by === user.id || x.by === 'automation')))) throw no();
+      after.activity = list.filter(x => old.has(js(x)) || (x && x.by === user.id)).map(x => (old.has(js(x)) ? x : { at: now(), by: user.id, text: String(x.text || '').slice(0, 300) }));
+      continue;
+    }
     throw no();
   }
 }
 // What a cell shows in an export: labels for statuses, numbers as numbers, dates as YYYY-MM-DD.
 const KSFormula = require('./public/formula.js');
+// formulas, TODAY() and date rules read the workspace's day (KS_TIMEZONE), on the server and in the page alike
+KSFormula.setTimeZone(TIME_ZONE);
 function fileNames(v) { if (Array.isArray(v)) return v.filter(f => f && f.url).map(f => f.name || f.url).join(', '); return String(v || ''); }
 function refValue(b, item, id, depth) {
   if (id === 'name') return item.name || '';
@@ -1172,7 +1236,7 @@ function refValue(b, item, id, depth) {
     case 'status': return (((c.labels || []).find(l => l.id === String(v))) || {}).label || '';
     case 'checkbox': return !!v;
     // with a time: the local day people see (for DAYS etc.), and the exact instant for HOURS_DIFF
-    case 'date': { const dt = (item.values || {})[id + '__dt']; return v ? KSFormula.dateRef(String(v).slice(0, 10), dt, process.env.KS_TIMEZONE || 'America/Toronto') : ''; }
+    case 'date': { const dt = (item.values || {})[id + '__dt']; return v ? KSFormula.dateRef(String(v).slice(0, 10), dt, TIME_ZONE) : ''; }
     case 'item_id': return String(item.mondayId || item.id);
     case 'created': return String(item.createdAt || '').slice(0, 10);
     default: return v == null ? '' : Array.isArray(v) ? fileNames(v) : v;
@@ -1191,7 +1255,7 @@ function exportCell(b, c, item) {
   const fx = features.exportCell(b, c, item); if (fx !== undefined) return fx;
   const v = (item.values || {})[c.id];
   switch (c.type) {
-    case 'formula': { const r = formulaResult(b, item, c); if (r.error || r.value === '' || r.value == null) return ''; return typeof r.value === 'number' && Number.isFinite(r.value) ? r.value : KSFormula.format(r.value); }
+    case 'formula': { const r = formulaResult(b, item, c); if (r.error || r.value === '' || r.value == null) return ''; return typeof r.value === 'number' && Number.isFinite(r.value) ? Number(r.value.toPrecision(10)) : KSFormula.format(r.value); } // 311537.08333332936 -> 311537.0833
     case 'number': { if (v === '' || v == null) return ''; const n = Number(v); return Number.isFinite(n) ? n : String(v); }
     case 'status': return v == null || v === '' ? '' : (((c.labels || []).find(l => l.id === String(v))) || {}).label ?? '';
     case 'date': return v ? String(v).slice(0, 10) : '';
@@ -1203,7 +1267,7 @@ function exportCell(b, c, item) {
 }
 // Item lists changed one entry at a time on the server (PATCH { $append, $remove }), never replaced from a stale page.
 // updates/subitems: added at the end; activity: added at the top (newest first, 40 kept); $remove.subitems: ids.
-function appendToItem(data, add, rem) {
+function appendToItem(data, add, rem, put = {}) {
   const objs = a => (Array.isArray(a) ? a.filter(x => x && typeof x === 'object' && !Array.isArray(x)) : []);
   if (add.updates !== undefined) data.updates = [...(Array.isArray(data.updates) ? data.updates : []), ...objs(add.updates)];
   if (add.subitems !== undefined) {
@@ -1211,6 +1275,17 @@ function appendToItem(data, add, rem) {
     data.subitems = [...(Array.isArray(data.subitems) ? data.subitems : []), ...objs(add.subitems).filter(s => s.id != null && !have.has(String(s.id)))];
   }
   if (rem.subitems !== undefined) { const gone = new Set((Array.isArray(rem.subitems) ? rem.subitems : []).map(String)); data.subitems = (Array.isArray(data.subitems) ? data.subitems : []).filter(s => !gone.has(String(s && s.id))); }
+  if (put.subitems !== undefined) {
+    const subs = Array.isArray(data.subitems) ? data.subitems : [];
+    for (const x of objs(put.subitems)) {
+      const k = subs.findIndex(s => s && String(s.id) === String(x.id)); if (k < 0) continue; // deleted meanwhile: nothing to change
+      const next = { ...subs[k] };
+      if (typeof x.name === 'string' && x.name.trim()) next.name = x.name.slice(0, 500);
+      if (x.values && typeof x.values === 'object' && !Array.isArray(x.values)) { next.values = { ...(next.values || {}) }; for (const [ck, cv] of Object.entries(x.values)) if (!BAD_KEYS.has(ck)) next.values[ck] = cv; }
+      subs[k] = next;
+    }
+    data.subitems = subs;
+  }
   if (add.activity !== undefined) data.activity = [...objs(add.activity), ...(Array.isArray(data.activity) ? data.activity : [])].slice(0, 40);
 }
 const importUploads = new Map(); // token -> { uid, bid, rows, headers, exp }
@@ -1237,6 +1312,10 @@ function saveUpload(req, file) {
 
 // ---------- Monday sync job ----------
 const mondayWorkspaces = () => String(process.env.MONDAY_WORKSPACE_IDS || '').split(',').map(x => x.trim()).filter(Boolean);
+// A Monday item someone moved to another board in Solver.ca keeps its Monday id as movedFromMondayId (and drops mondayId),
+// so neither the full copy nor the live pull removes it there, or copies it back onto its old board.
+const movedStmt = db.prepare("SELECT 1 AS k FROM docs WHERE col LIKE 'boards/%/items' AND json_extract(data, '$.movedFromMondayId') = ? LIMIT 1");
+const movedAway = id => { try { return !!movedStmt.get(String(id)); } catch (e) { return false; } };
 let syncState = { running: false, msg: '', boards: 0, items: 0, startedAt: null, finishedAt: null, error: null };
 const lastSync = q.doc.get('meta/monday-sync');
 if (lastSync) { try { Object.assign(syncState, JSON.parse(lastSync.data), { running: false }); } catch (e) {} }
@@ -1255,7 +1334,7 @@ function startMondaySync(user) {
     }
   };
   syncFromMonday({
-    token: process.env.MONDAY_API_TOKEN, workspaceIds: mondayWorkspaces(), save, load, removeStale,
+    token: process.env.MONDAY_API_TOKEN, workspaceIds: mondayWorkspaces(), save, load, removeStale, movedAway,
     onProgress: ({ msg, boards, items }) => Object.assign(syncState, { msg, boards, items }),
   }).then(r => {
     Object.assign(syncState, { running: false, msg: 'Done', boards: r.boards, items: r.items, finishedAt: now() });
@@ -1312,6 +1391,7 @@ async function runMondayPull() {
         Object.assign(d, parts);
         q.upsertDoc.run('boards/' + bid, 'boards', bid, JSON.stringify(d), now(), 'monday-sync'); boardCache.delete(bid); broadcast({ op: 'set', col: 'boards', id: bid, data: d });
       },
+      movedAway,
       newPos: bid => { const r = db.prepare("SELECT MIN(json_extract(data, '$.pos')) AS p FROM docs WHERE col = ?").get(`boards/${bid}/items`); return (Number(r && r.p) || 0) - 1; },
     };
     const r = await pullFromMonday({ token: process.env.MONDAY_API_TOKEN, boards, since, store });

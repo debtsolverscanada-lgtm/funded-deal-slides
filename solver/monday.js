@@ -128,7 +128,11 @@ function itemDoc(i, cols, subCols, extra = {}) {
     subitems: (i.subitems || []).map(x => ({ id: x.id, name: x.name, values: convValues(x.column_values, subCols) })),
     mondayId: i.id, createdAt: i.created_at, ...extra,
   };
+  // Monday returned as many comments as asked for: older ones may exist there. Noted before any are trimmed to fit, so the
+  // merge keeps stored comments older than the ones returned (a non-enumerable mark: it's never saved)
+  const full = (i.updates || []).length >= UPDATES_LIMIT;
   while (JSON.stringify(doc).length > 900000 && doc.updates.length) doc.updates.shift();
+  if (full || doc.updates.length < (i.updates || []).length) Object.defineProperty(doc.updates, 'full', { value: true });
   return doc;
 }
 
@@ -232,7 +236,7 @@ function mergeUpdates(oldU, freshU, limit = UPDATES_LIMIT) {
   oldU = Array.isArray(oldU) ? oldU : []; freshU = Array.isArray(freshU) ? freshU : [];
   const byMid = new Map(freshU.filter(u => u.mid).map(u => [u.mid, u])), byTime = new Map(freshU.map(u => [u.at, u]));
   // an export made without Monday ids can't say what was deleted in Monday: then nothing stored is dropped
-  const noIds = freshU.some(u => !u.mid), full = freshU.length >= limit, oldest = freshU.length ? Math.min(...freshU.map(u => tms(u.at))) : Infinity;
+  const noIds = freshU.some(u => !u.mid), full = freshU.full === true || freshU.length >= limit, oldest = freshU.length ? Math.min(...freshU.map(u => tms(u.at))) : Infinity;
   const used = new Set(), out = [];
   for (const u of oldU) {
     if (!u || typeof u !== 'object') continue;
@@ -243,7 +247,7 @@ function mergeUpdates(oldU, freshU, limit = UPDATES_LIMIT) {
       const x = { ...u, ...f }; const r = mergeReplies(u.replies, f.replies); if (r.length) x.replies = r; else delete x.replies;
       out.push(x); continue;
     }
-    if (u.mid) { if (noIds || (full && tms(u.at) < oldest)) out.push(u); continue; } // deleted in Monday, unless older than what Monday returned
+    if (u.mid) { if (noIds || (full && tms(u.at) <= oldest)) out.push(u); continue; } // same second as the oldest returned: may be just past the limit // deleted in Monday, unless older than what Monday returned
     out.push(u); // made in Solver.ca (or an older copy that can't be matched): kept
   }
   for (const f of freshU) if (!used.has(f)) out.push(f);
@@ -262,6 +266,7 @@ function mergeSubitems(oldS, freshS, subCols) {
   return out;
 }
 // An item doc: fresh (from itemDoc) merged into the stored one. cols/subCols: the board's columns as Monday has them.
+// cols/subCols null: Monday's columns aren't known, so only the values the fresh copy carries are replaced.
 function mergeItemDoc(old, fresh, cols, subCols) {
   if (!old) return fresh;
   return {
@@ -280,7 +285,7 @@ const sameItem = (a, b) => !!a && !!b && ITEM_KEYS.every(f => stable(a[f] ?? nul
 // Copies every board in the given workspaces. `save(path, col, id, data)` writes one record; `load(path)` reads one
 // (or null). What's already in Solver.ca is merged, not overwritten (see mergeBoardDoc / mergeItemDoc), and boards
 // whose source isn't Monday are skipped. `onProgress({ msg, boards, items })` reports progress. Returns totals.
-async function syncFromMonday({ token, workspaceIds, save, load = () => null, removeStale, onProgress = () => {} }) {
+async function syncFromMonday({ token, workspaceIds, save, load = () => null, removeStale, movedAway = () => false, onProgress = () => {} }) {
   if (!token) throw new Error('Set MONDAY_API_TOKEN on the server first.');
   if (!workspaceIds.length) throw new Error('Set MONDAY_WORKSPACE_IDS on the server first.');
   const at = new Date().toISOString();
@@ -322,6 +327,7 @@ async function syncFromMonday({ token, workspaceIds, save, load = () => null, re
           for (const i of page.items) {
             const ipath = `boards/${bid}/items/${i.id}`, old = load(ipath);
             const p = pos++;
+            if (!old && movedAway(String(i.id))) { seen.add(String(i.id)); itemsDone++; continue; } // moved to another board in Solver.ca
             const freshItem = itemDoc(i, cols, subCols, { pos: p, activity: [{ at, by: 'import', text: 'Copied from Monday' }] });
             let doc = freshItem;
             if (old) {
@@ -445,8 +451,12 @@ async function pullFromMonday({ token, boards, since, store, onProgress = () => 
       for (const bid of origins) if (!target || target.bid !== bid) { const o = store.getItem(bid, id); if (o && target) carried = o; if (store.removeItem(bid, id)) removed++; }
       if (!target) continue;
       const here = store.getItem(target.bid, id), old = here || carried;
+      // moved to another board in Solver.ca: Monday still has it on its old board, but it isn't copied back there
+      if (!old && store.movedAway && store.movedAway(id)) continue;
+      // Monday's own columns, when this pull read them. If it didn't (Monday returned none), values are read with the
+      // stored columns but only the ones Monday sent are replaced: Solver.ca's own columns are never cleared.
       const cols = target.mondayCols || target.columns || [], subCols = target.mondaySubCols || target.subColumns || [];
-      const doc = mergeItemDoc(old, itemDoc(i, cols, subCols), cols, subCols);
+      const doc = mergeItemDoc(old, itemDoc(i, cols, subCols), target.mondayCols || null, target.mondaySubCols || null);
       if (here && sameItem(here, doc)) continue;
       let activity = (old && old.activity) || [];
       if (old && activity[0] && activity[0].text === 'Updated from Monday') activity = activity.slice(1);

@@ -777,7 +777,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
       case 'status': return (labelOf(c, v) || {}).label || '';
       case 'checkbox': return !!v;
       // with a time: the local day people see (for DAYS etc.), and the exact instant for HOURS_DIFF
-      case 'date': { const dt = (item.values || {})[id + '__dt']; return v ? KSFormula.dateRef(String(v).slice(0, 10), dt) : ''; }
+      case 'date': { const dt = (item.values || {})[id + '__dt']; return v ? KSFormula.dateRef(String(v).slice(0, 10), dt, KSFormula.timeZone()) : ''; }
       case 'item_id': return String(item.mondayId || item.id);
       case 'created': return String(item.createdAt || '').slice(0, 10);
       default: return v == null ? '' : Array.isArray(v) ? describe(c, v) : v;
@@ -847,6 +847,16 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     const lines = [{ text: `${col.title}: ${describe(col, old)} → ${describe(col, value)}` }], after = [];
     fireRules(b, item, { type: 'value', col: colId, value }, patch, lines, after); // also runs the rules its own changes set off
     commitAuto(b, item, patch, lines, after);
+    refreshRowFormulas(item);
+  }
+  // The table holds re-rendering while a cell has focus (Tab to the next cell): this row's formula cells are refreshed now
+  function refreshRowFormulas(item) {
+    try {
+      const tr = document.querySelector(`#content tr[data-row="${CSS.escape(item.id)}"]`); if (!tr || typeof tvCells !== 'function') return;
+      const fcols = tvCells().filter(c => c && c.type === 'formula'), tds = tr.querySelectorAll(':scope > td.c-formula');
+      if (fcols.length !== tds.length) return;
+      fcols.forEach((c, k) => { const html = cellEditor(c, item); if (tds[k].innerHTML !== html) tds[k].innerHTML = html; });
+    } catch (e) { /* the next full render shows them */ }
   }
 
   // ---------- automation engine ----------
@@ -870,7 +880,8 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
       case 'is_not_any': return !(Array.isArray(c.value) ? c.value.map(String) : [String(c.value)]).includes(String(v ?? ''));
     }
   }
-  function ymdPlus(days) { const d = new Date(); d.setDate(d.getDate() + Number(days || 0)); return ymd(d); }
+  // today (in the workspace's time zone, like the server's rules and formulas) plus N days
+  function ymdPlus(days) { const t = (window.KSFormula && KSFormula.today) ? KSFormula.today() : ymd(new Date()); const [y, m, d] = t.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d + Number(days || 0))).toISOString().slice(0, 10); }
   // Applies a rule's actions into `patch` (values/group) and `lines` (activity). Returns extra work to do after saving.
   // An automation never writes a column the person whose change set it off can't change (and a guest's rules never move or
   // copy the item): that action is skipped and the activity and run log say so, and the person's own change still saves.
@@ -891,8 +902,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
         case 'clear': { if (!col) break; patch.values[col.id] = ''; lines.push({ auto: true, text: `${name} cleared ${col.title}` }); break; }
         case 'assign': { if (!col) break; const cur = splitPeople(patch.values[col.id] ?? (item.values || {})[col.id]); const v = [...new Set([...cur, a.value])].join(', '); patch.values[col.id] = v; lines.push({ auto: true, text: `${name} assigned ${a.value}` }); break; }
         case 'create_update': lines.push({ auto: true, text: `${name} posted an update` }); after.push({ kind: 'update', text: a.value || a.message || '' }); break;
-        case 'move_board': after.push({ kind: 'move_board', board: a.board, group: a.group, name, map: a.map }); break;
-        case 'copy_to_board': after.push({ kind: 'copy_board', board: a.board, group: a.group, name, map: a.map }); break;
+        case 'move_board': case 'copy_to_board': { const tb = (S.boards || []).find(x => x.id === a.board); lines.push({ auto: true, text: `${name} ${a.type === 'move_board' ? 'moved' : 'copied'} this to “${tb ? tb.name : 'another board'}”` }); after.push({ kind: a.type === 'move_board' ? 'move_board' : 'copy_board', board: a.board, group: a.group, name, map: a.map }); break; }
         case 'duplicate': after.push({ kind: 'duplicate', name, withUpdates: !!a.withUpdates }); break;
         case 'external': lines.push({ auto: true, text: `${name} would ${a.label} in Monday. Not run in Solver.ca, so nothing was sent.` }); break;
         case 'notify': lines.push({ auto: true, text: `${name} notified ${fillTpl(b, { ...item, values: { ...(item.values || {}), ...patch.values } }, a.to || '') || 'someone'} in Solver.ca` }); after.push({ kind: 'notify', to: a.to, message: a.message, title: rule.title }); break;
@@ -904,6 +914,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
   }
   // Finds rules for an event and applies them. event: { type, col, value, group }
   function fireRules(b, item, ev, patch, lines, after) {
+    if (S.isGuest) return []; // a guest's change: the server runs the board's rules (and their notifications, webhooks, run log)
     const vals = { ...(item.values || {}), ...(patch.values || {}) };
     const hit = rulesOf(b).filter(r => {
       if (ev.type === 'value' && r.trigger === 'status' && r.col === ev.col) return r.value == null || r.value === '' ? true : String(r.value) === String(ev.value);
@@ -937,7 +948,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
       if (x.kind === 'ran') { if (window.SolverExt) SolverExt.ruleRan(b, item, x.rule, x.texts); continue; }
       // in-app notifications for the Solver.ca people the rule names (unknown names are skipped by the server)
       if (x.kind === 'notify' && window.KS) { const msg = fillTpl(b, item, x.message || '').replace(/\s+/g, ' ').trim(); KS.notify({ board: b.id, item: item.id, to: fillTpl(b, item, x.to || ''), text: `${item.name}: ${msg || String(x.title || 'Automation').replace(/\s*→.*$/, '')}`.slice(0, 400) }).catch(() => {}); }
-      if (x.kind === 'update' && x.text) { item.updates = [...(item.updates || []), { at: now(), by: 'automation', byName: 'Automation', text: x.text }]; const p = 'boards/' + b.id + '/items/' + item.id; write(p, () => S.db.doc(p).update({ updates: item.updates }), { guest: true }); }
+      if (x.kind === 'update' && x.text) { const u = { at: now(), by: 'automation', byName: 'Automation', text: x.text }; item.updates = [...(item.updates || []), u]; const p = 'boards/' + b.id + '/items/' + item.id; write(p, () => S.db.doc(p).update({ $append: { updates: [u] } })); } // added to what's stored, never the whole list
       if ((x.kind === 'move_board' || x.kind === 'copy_board') && hop < 4) moveItemToBoard(b, item, x.board, x.group, x.name, x.kind === 'move_board', x.map, hop + 1);
       if (x.kind === 'duplicate' && b.id === S.boardId) duplicateItem(item, false, x.withUpdates);
       if (window.SolverExt) SolverExt.after(x, b, item); // "Send to a connected tool" (automations.js)
@@ -974,11 +985,13 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     const dst = 'boards/' + tb.id + '/items/' + newId, src = 'boards/' + b.id + '/items/' + item.id;
     // once it's saved on the target board: remove it here, then the target board's rules' notifications, webhooks and run log
     let saved = false;
-    write(dst, () => S.db.doc(dst).set(data).then(r => { saved = true; return r; })).then(() => {
-      if (!saved) return;
-      if (removeHere) write(src, () => S.db.doc(src).delete());
-      finishAfter(tb, { id: newId, ...data }, tAfter, hop);
-    });
+    // a move goes through the server in one step: it saves the item on the new board, keeps the old copy (every value) in
+    // the recycle bin and moves the item's docs and files along
+    if (removeHere) KS.api('POST', '/api/x/item/move', { board: b.id, item: item.id, to: tb.id, data }).then(r => {
+      if (r && r.stripped && r.stripped.length) toast(`Locked columns on ${tb.name} weren’t filled in`);
+      finishAfter(tb, { id: newId, ...((r && r.data) || data) }, tAfter, hop);
+    }).catch(e => { toast(e.message || `The move to ${tb.name} didn’t save.`); if (window.KS) KS.reload(src.replace(/\/[^/]+$/, '')); });
+    else write(dst, () => S.db.doc(dst).set(data).then(r => { saved = true; return r; })).then(() => { if (saved) finishAfter(tb, { id: newId, ...data }, tAfter, hop); });
     if (removeHere) { S.items = S.items.filter(x => x.id !== item.id); if (S.openItem === item.id) S.openItem = null; }
     toast(`${removeHere ? 'Moved' : 'Copied'} to ${tb.name}`); scheduleRender();
   }
@@ -1962,7 +1975,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
       case 'open': S.draftFiles = []; S.openItem = t.dataset.item; S.drawerTab = (board() && board().form) ? 'fact' : 'updates'; renderLayer(); fillNames(); break;
       case 'close-item': S.openItem = null; S.draftFiles = []; renderLayer(); break;
       case 'sub-status': { if (!S.canWrite) return; const r = t.getBoundingClientRect(); S.pop = { type: 'status', item: t.dataset.item, sub: t.dataset.sub, col: t.dataset.col, x: r.left, y: r.bottom + 4 }; renderLayer(); break; }
-      case 'sub-del': { const item = itemById(t.dataset.item); if (!item) return; const subs = (item.subitems || []).filter(x => String(x.id) !== String(t.dataset.sub)); item.subitems = subs; patchItem(item.id, { $remove: { subitems: [String(t.dataset.sub)] } }); scheduleRender(); break; }
+      case 'sub-del': { const item = itemById(t.dataset.item); if (!item) return; const subs = (item.subitems || []).filter(x => String(x.id) !== String(t.dataset.sub)); item.subitems = subs; patchItem(item.id, { $remove: { subitems: [String(t.dataset.sub)] } }).then(() => fx('subDeleted', board(), item)); scheduleRender(); break; }
       case 'subs': { const id = t.dataset.item; S.expanded.has(id) ? S.expanded.delete(id) : S.expanded.add(id); renderContent(); break; }
       case 'more': { const g = t.dataset.group; S.shown[g] = (S.shown[g] || PAGE) + PAGE; renderContent(); break; }
       case 'run-import': runImport(); break;
@@ -2449,6 +2462,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
   async function checkImport() {
     try { S.isOwner = !!(S.user && await S.user.isOwner()); } catch (e) {}
     try { if (S.user) S.me = await S.user.me(); } catch (e) {}
+    if (S.me && S.me.timeZone && window.KSFormula && KSFormula.setTimeZone) KSFormula.setTimeZone(S.me.timeZone); // formulas and TODAY() read the workspace's day
     if (S.me) { S.role = S.me.role; S.isGuest = S.role === 'guest'; }
     tryLand();
     render();
@@ -2548,7 +2562,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     const b = board(), item = itemById(itemId); if (!b || !item) return;
     if (!S.canWrite) { toast(S.isGuest ? 'Guests can’t change subitems.' : 'You can view this board but not change it.'); scheduleRender(); return; }
     const subs = JSON.parse(JSON.stringify(item.subitems || [])); const sb = subs.find(x => String(x.id) === String(subId)); if (!sb) return;
-    const lines = [], ran = [];
+    const was = JSON.parse(JSON.stringify(sb)), lines = [], ran = [];
     if (colId === 'name') { if (!value || value === sb.name) return; sb.name = value; }
     else {
       const c = (b.subColumns || []).find(x => x.id === colId); if (!c) return;
@@ -2567,10 +2581,14 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
         ran.push({ rule: r, texts });
       });
     }
-    item.subitems = subs; let activity = item.activity || []; lines.forEach(t => { activity = [{ at: now(), by: t.startsWith('“') ? 'automation' : S.uid, text: t }, ...activity]; });
-    item.activity = activity.slice(0, 40);
+    item.subitems = subs; const added = lines.map(t => ({ at: now(), by: t.startsWith('“') ? 'automation' : S.uid, text: t })).reverse();
+    item.activity = [...added, ...(item.activity || [])].slice(0, 40);
+    // only this subitem's changed fields go to the server, merged by id into what's stored (a stale list never overwrites others)
+    const change = { id: sb.id }; if (sb.name !== was.name) change.name = sb.name;
+    const vals = {}; for (const [k, v] of Object.entries(sb.values || {})) if (JSON.stringify(v ?? '') !== JSON.stringify((was.values || {})[k] ?? '')) vals[k] = v;
+    if (Object.keys(vals).length) change.values = vals;
     let saved = false; const p = 'boards/' + b.id + '/items/' + item.id;
-    write(p, () => S.db.doc(p).update({ subitems: subs, activity: item.activity }).then(r => { saved = true; return r; })).then(() => { if (saved && window.SolverExt) ran.forEach(x => SolverExt.ruleRan(b, item, x.rule, x.texts)); });
+    write(p, () => S.db.doc(p).update({ $set: { subitems: [change] }, ...(added.length ? { $append: { activity: added } } : {}) }).then(r => { saved = true; return r; })).then(() => { if (saved && window.SolverExt) ran.forEach(x => SolverExt.ruleRan(b, item, x.rule, x.texts)); });
     scheduleRender();
   }
   function savePage() { try { localStorage.setItem('ks-page', S.page); localStorage.setItem('ks-view', S.view); } catch (e) {} }

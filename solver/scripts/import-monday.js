@@ -46,7 +46,7 @@ try {
         // a Monday board that's not in this export: only when nothing made in Solver.ca is on it
         const rows = q.docsInCol.all(`boards/${r.id}/items`);
         if (rows.some(x => { try { return !JSON.parse(x.data).mondayId; } catch (e) { return true; } })) { console.log(`Kept “${d.name}”: it has items made in Solver.ca.`); continue; }
-        q.deleteCol.run(`boards/${r.id}/items`); q.deleteDoc.run('boards/' + r.id); removed++;
+        q.deleteDoc.run('boards/' + r.id); q.deleteCol.run(`boards/${r.id}/items`); removed++; // board first: the recycle bin keeps it with its items
         continue;
       }
       const seen = itemsSeen.get(r.id) || new Set();
