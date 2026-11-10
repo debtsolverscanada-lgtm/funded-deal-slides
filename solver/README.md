@@ -84,6 +84,7 @@ docker run -p 3000:3000 -v solver-data:/data \
 
 - `ADMIN_*` creates the admin if missing and resets its password and admin role on every start (two-factor stays on; see `ADMIN_RESET_2FA`).
 - Serve it over HTTPS (every host above does this for you) and set `COOKIE_SECURE=1`.
+- Behind a proxy or load balancer, set `TRUST_PROXY=1` (automatic on Render) so sign-in and form limits count each visitor's own address (the last `X-Forwarded-For` entry; `TRUST_PROXY=2` for two proxies in a row) instead of the proxy's.
 - Back up `/data/solver.db` daily. That one file is the whole CRM.
 - Add the rest of the team from **Team** in the sidebar (admins only).
 

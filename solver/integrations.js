@@ -2,8 +2,9 @@
 // Solver.ca itself never texts, emails or calls anyone. Webhooks only tell YOUR tools what changed.
 'use strict';
 const crypto = require('node:crypto');
+const netguard = require('./netguard.js');
 
-module.exports = function integrations({ db, q, now, broadcast, HttpError, readBody, send, merge, notifyNames = () => 0, itemNotifications = () => {}, fillTemplate = t => t, buzz = () => {}, lockedCols = () => new Set(), lockError = null, hooks = {} }) {
+module.exports = function integrations({ db, q, now, broadcast, HttpError, readBody, send, merge, notifyNames = () => 0, itemNotifications = () => {}, fillTemplate = t => t, buzz = () => {}, lockedCols = () => new Set(), lockError = null, hooks = {}, clientIp = req => String(req.socket.remoteAddress || '') }) {
   // hooks (filled in by ext.js): ruleRan(board, rule, itemId, itemName, result, via), onEvent(event, hits)
   db.exec(`
     CREATE TABLE IF NOT EXISTS api_keys (
@@ -19,6 +20,9 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
   `);
   const sha = s => crypto.createHash('sha256').update(s).digest('hex');
   const rid = p => p + crypto.randomBytes(9).toString('base64url');
+  const hits = new Map(); // key -> [times]
+  function limited(key, max, ms) { const t = Date.now(), list = (hits.get(key) || []).filter(x => t - x < ms); if (list.length >= max) { hits.set(key, list); return true; } list.push(t); hits.set(key, list); return false; }
+  setInterval(() => { const t = Date.now(); for (const [k, v] of hits) if (!v.some(x => t - x < 3600e3)) hits.delete(k); }, 600e3).unref();
   const EVENTS = ['item.created', 'item.updated', 'item.moved', 'item.status_changed', 'item.deleted', 'update.created', 'reminder.due', 'button.pressed', 'automation.webhook'];
 
   // ---------- helpers: boards and readable fields ----------
@@ -60,7 +64,8 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
       else if (c.type === 'number') { v = Number(String(v).replace(/[^0-9.\-]/g, '')); if (!Number.isFinite(v)) { errors.push(`${c.title} needs a number.`); continue; } }
       else if (c.type === 'date') { if (/^\d{4}-\d{2}-\d{2}$/.test(String(v))) v = String(v); else { const d = new Date(v); if (isNaN(d)) { errors.push(`${c.title} needs a date like 2026-11-20.`); continue; } v = new Intl.DateTimeFormat('en-CA', { timeZone: process.env.KS_TIMEZONE || 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d); } }
       else if (c.type === 'checkbox') v = v === true || v === 'true' || v === 1 || v === '1';
-      else if (c.type === 'file' || c.source === 'file') v = Array.isArray(v) ? v.filter(f => f && f.url).map(f => ({ name: String(f.name || f.url), url: String(f.url) })) : String(v);
+      else if (c.type === 'file' || c.source === 'file') { v = Array.isArray(v) ? v.filter(f => f && f.url).map(f => ({ name: String(f.name || f.url), url: String(f.url) })) : String(v); if (Array.isArray(v) && v.some(f => !netguard.urlOk(f.url))) { errors.push(`${c.title}: files must be https:// links.`); continue; } }
+      else if (c.type === 'link' && netguard.badLink(null, { values: { l: String(v) } }, ['l'])) { errors.push(`${c.title} needs an https:// link.`); continue; }
       else if (Array.isArray(v)) v = v.join(', ');
       else v = String(v);
       out[c.id] = v;
@@ -157,13 +162,14 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     const body = JSON.stringify(payload);
     const sig = 'sha256=' + crypto.createHmac('sha256', h.secret).update(body).digest('hex');
     try {
-      const r = await fetch(h.url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': 'Solver.ca-Webhooks/1', 'X-Solver-Event': payload.event, 'X-Solver-Signature': sig, 'X-Solver-Delivery': payload.delivery }, body, signal: AbortSignal.timeout(10000) });
+      // every address the name resolves to is checked when connecting; redirects are not followed
+      const r = await netguard.safePost(h.url, { headers: { 'Content-Type': 'application/json', 'User-Agent': 'Solver.ca-Webhooks/1', 'X-Solver-Event': payload.event, 'X-Solver-Signature': sig, 'X-Solver-Delivery': payload.delivery }, body, timeout: 10000 });
       setHookResult.run(now(), String(r.status), r.ok ? null : `Got ${r.status}`, h.id);
       if (!r.ok && r.status >= 500 && attempt < 3) setTimeout(() => deliver(h, payload, attempt + 1), 5000 * attempt);
       return r.status;
     } catch (e) {
       setHookResult.run(now(), 'failed', e.message, h.id);
-      if (attempt < 3) setTimeout(() => deliver(h, payload, attempt + 1), 5000 * attempt);
+      if (attempt < 3 && e.code !== 'EPRIVATE') setTimeout(() => deliver(h, payload, attempt + 1), 5000 * attempt);
       return 0;
     }
   }
@@ -225,8 +231,12 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     try { itemNotifications(path, before, data, actor); } catch (e) { console.error('notifications:', e.message); }
   }
   // opts.quiet: no pet heads-up per item (used by spreadsheet imports, which can add thousands of rows)
+  // Columns the writer may not set: API keys and lead links get the board's locks, people their own; forms (made by an admin) none.
+  const lockedFor = (b, actor) => { const id = String((actor && actor.id) || ''); if (id.startsWith('form:')) return new Set(); return lockedCols(id.startsWith('key:') || id.startsWith('link:') || !actor || !actor.role ? null : actor, b); };
   function createItem(b, body, actor, opts = {}) {
     const errors = []; const values = toValues(b, { ...(body.values || {}), ...(body.fields || {}) }, errors);
+    const locked = opts.locked || lockedFor(b, actor), stripped = [];
+    for (const k of Object.keys(values)) if (locked.has(String(k).replace(/__d?t$/, ''))) { delete values[k]; stripped.push(k); }
     const name = String(body.name || '').trim(); if (!name) errors.push('Give the item a name.');
     const grp = groupId(b, body.group); if (!grp) errors.push(`No group called “${body.group}”.`);
     if (errors.length) throw new HttpError(400, errors.join(' '));
@@ -237,7 +247,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     runRules(b, item, { type: 'created', group: grp }, actor, notes, iid);
     saveItem(b.id, iid, item, actor, opts);
     sendNotes(b, iid, item, notes);
-    return { id: iid, item };
+    return { id: iid, item, stripped };
   }
 
   // ---------- API keys ----------
@@ -257,7 +267,10 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
       const h = db.prepare("SELECT * FROM hooks WHERE kind = 'in' AND token = ? AND active = 1").get(inm[1]);
       if (!h) throw new HttpError(404, 'This lead link is off or doesn’t exist.');
       const b = findBoard(h.board); if (!b) throw new HttpError(404, 'The board for this lead link no longer exists.');
-      const raw = await readBody(req);
+      const ip = clientIp(req);
+      if (limited('link:' + h.id, 60, 60e3) || limited('linkh:' + h.id, 1000, 3600e3) || limited('linkip:' + ip, 30, 60e3)) throw new HttpError(429, 'Too many leads sent to this link. Try again in a minute.');
+      if (Number(req.headers['content-length'] || 0) > 64 * 1024) throw new HttpError(413, 'That lead is too large.');
+      const raw = await readBody(req, 64 * 1024);
       // Flat forms: name/first_name/last_name + any field named like a column title.
       const name = raw.name || [raw.first_name || raw.firstName, raw.last_name || raw.lastName].filter(Boolean).join(' ') || raw.email || raw.phone || 'New lead';
       const fields = {}; const skip = new Set(['name', 'first_name', 'firstName', 'last_name', 'lastName', 'group', 'values', 'fields', 'update', 'note']);
@@ -274,7 +287,9 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
         if (v) { const norm = s => String(s).replace(/\D/g, '').slice(-10) || String(s).toLowerCase();
           for (const r of q.docsInCol.all(`boards/${b.id}/items`)) { const d = JSON.parse(r.data); if (norm((d.values || {})[col.id] || '') === norm(v)) { setHookResult.run(now(), 'duplicate', null, h.id); return send(res, 200, { ok: true, duplicate: true, id: r.id }); } } }
       }
-      const out = createItem(b, { name, group: raw.group || h.grp, values: known, update: [raw.update || raw.note, extra.length ? 'Other form answers:\n' + extra.join('\n') : ''].filter(Boolean).join('\n\n') }, actor);
+      // a group sent with the lead must exist; otherwise the link's own group (then the first group) is used, so no lead is lost
+      const grpIn = raw.group && groupId(b, String(raw.group)) ? String(raw.group) : (h.grp && groupId(b, h.grp) ? h.grp : undefined);
+      const out = createItem(b, { name: String(name).slice(0, 255), group: grpIn, values: known, update: [raw.update || raw.note, extra.length ? 'Other form answers:\n' + extra.join('\n') : ''].filter(Boolean).join('\n\n') }, actor);
       setHookResult.run(now(), 'created', null, h.id);
       return send(res, 201, { ok: true, id: out.id });
     }
@@ -330,7 +345,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
         const items = rows.map(r => ({ r, d: JSON.parse(r.data) })).filter(x => !gid || x.d.group === gid);
         return send(res, 200, { total: items.length, items: items.slice(offset, offset + limit).map(x => ({ ...itemOut(b, x.r.id, x.d), updated_at: x.r.updated_at })) });
       }
-      if (method === 'POST') { needWrite(); const body = await readBody(req); const out = createItem(b, body, user); return send(res, 201, itemOut(b, out.id, out.item)); }
+      if (method === 'POST') { needWrite(); if (Number(req.headers['content-length'] || 0) > 256 * 1024) throw new HttpError(413, 'That item is too large (256 KB at most).'); const body = await readBody(req, 256 * 1024); const out = createItem(b, body, user); return send(res, 201, { ...itemOut(b, out.id, out.item), ...(out.stripped.length ? { skipped_locked: out.stripped } : {}) }); }
     }
     const path = `boards/${b.id}/items/${iid}`; const row = q.doc.get(path);
     if (!row) throw new HttpError(404, 'No such item on this board.');
@@ -382,11 +397,13 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
         const b = await readBody(req); const name = String(b.name || '').trim(); if (!name) throw new HttpError(400, 'Give it a name.');
         if (b.kind === 'in') {
           const bd = findBoard(b.board); if (!bd) throw new HttpError(400, 'Pick the board new leads should go to.');
+          if (b.group && !(bd.groups || []).some(g => g.id === b.group)) throw new HttpError(400, 'That group isn’t on the board.');
           const token = crypto.randomBytes(18).toString('base64url');
           db.prepare("INSERT INTO hooks (id, kind, name, token, board, grp, dedupe, created_at) VALUES (?, 'in', ?, ?, ?, ?, ?, ?)").run(rid('h_'), name, token, bd.id, b.group || null, b.dedupe || null, now());
           return send(res, 201, { ok: true });
         }
         const u = safeUrl(b.url); if (!u) throw new HttpError(400, 'Enter a public https:// address.');
+        try { await netguard.checkUrl(u); } catch (e) { throw new HttpError(400, e.message + ' Enter a public https:// address.'); }
         const ev = (Array.isArray(b.events) ? b.events : []).filter(e => EVENTS.includes(e));
         const secret = crypto.randomBytes(24).toString('base64url');
         db.prepare("INSERT INTO hooks (id, kind, name, url, secret, events, board, created_at) VALUES (?, 'out', ?, ?, ?, ?, ?, ?)").run(rid('h_'), name, u, secret, JSON.stringify(ev), b.board || null, now());

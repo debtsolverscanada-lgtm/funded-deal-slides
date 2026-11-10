@@ -16,7 +16,8 @@ const SKIP_KEYS = new Set(['activity', 'pos', 'reminded', 'values', 'updates', '
 
 module.exports = function features(ctx) {
   const { db, q, now, broadcast, HttpError, readBody, send, canSee, mustSee, boardInfo, boardCache, itemVisible, restricted, lockedCols, lockError,
-    canWrite, integ, cleanAccess, clearSummary = () => {}, formulaText = () => '', itemNotifications = () => {}, publicDir, startIndex = true } = ctx;
+    canWrite, integ, cleanAccess, clearSummary = () => {}, formulaText = () => '', itemNotifications = () => {}, publicDir, startIndex = true,
+    clientIp = req => String(req.socket.remoteAddress || '') } = ctx;
   const als = new AsyncLocalStorage();
   const store = () => als.getStore() || {};
   const rid = p => p + crypto.randomBytes(9).toString('base64url');
@@ -44,13 +45,34 @@ module.exports = function features(ctx) {
       id TEXT PRIMARY KEY, token TEXT UNIQUE NOT NULL, board TEXT NOT NULL, data TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL, created_by TEXT, submissions INTEGER NOT NULL DEFAULT 0, last_at TEXT
     );
-    CREATE TABLE IF NOT EXISTS search_map (path TEXT PRIMARY KEY, board TEXT NOT NULL, item TEXT NOT NULL);
   `);
-  // Full-text search: SQLite FTS5 with the trigram tokenizer (substring matches, any language). Falls back to LIKE.
+  try { db.exec('ALTER TABLE board_templates ADD COLUMN source_board TEXT'); } catch (e) { /* already there */ }
+  // Search: two small contentless FTS5 indexes (they keep no copy of the text, only the index):
+  //   search_tri   trigram over names and short fields (phones, emails, links, dropdowns, short text): substring matches
+  //   search_words words (unicode61, prefixes of 2-3 letters) over long text and updates: word / word-start matches
+  // search_items maps each index row to its item and keeps the name (for 2-letter searches and sorting).
+  // The old index (search_fts + search_map, a full copy of every update, ~5x the data) is dropped once.
   let FTS = true;
-  try { db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(name, body, tokenize = 'trigram')`); }
-  catch (e) { FTS = false; db.exec('CREATE TABLE IF NOT EXISTS search_fts (rowid INTEGER PRIMARY KEY, name TEXT, body TEXT)'); }
+  if (db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'search_fts'").get()) {
+    const t = Date.now();
+    db.exec('DROP TABLE IF EXISTS search_fts'); db.exec('DROP TABLE IF EXISTS search_map');
+    try { const free = db.prepare('PRAGMA freelist_count').get().freelist_count, pages = db.prepare('PRAGMA page_count').get().page_count;
+      if (free > pages / 4) { db.exec('VACUUM'); console.log(`Search index: replaced the old index and gave back ${Math.round(free * 4096 / 1048576)} MB of disk (${Date.now() - t} ms)`); } }
+    catch (e) { console.error('search index vacuum:', e.message); }
+  }
+  db.exec(`CREATE TABLE IF NOT EXISTS search_items (rowid INTEGER PRIMARY KEY, path TEXT UNIQUE NOT NULL, board TEXT NOT NULL, item TEXT NOT NULL, name TEXT NOT NULL DEFAULT '');
+    CREATE INDEX IF NOT EXISTS search_items_board ON search_items(board);`);
+  try {
+    db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS search_tri USING fts5(name, fields, tokenize = 'trigram', content = '', contentless_delete = 1)`);
+    db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS search_words USING fts5(body, tokenize = 'unicode61 remove_diacritics 2', prefix = '2 3', content = '', contentless_delete = 1, detail = 'column')`);
+  } catch (e) {
+    FTS = false;
+    db.exec('CREATE TABLE IF NOT EXISTS search_tri (rowid INTEGER PRIMARY KEY, name TEXT, fields TEXT); CREATE TABLE IF NOT EXISTS search_words (rowid INTEGER PRIMARY KEY, body TEXT)');
+  }
 
+  // history keeps each before/after value up to 16 KB; bigger ones keep their first 2,000 characters (and can't be undone)
+  const HIST_MAX = 16 * 1024;
+  const histJson = v => { if (v === undefined) return null; const s = JSON.stringify(v); return s.length <= HIST_MAX ? s : JSON.stringify({ __truncated: s.slice(0, 2000) }); };
   const H = {
     insert: db.prepare('INSERT INTO item_history (at, board, item, item_name, kind, col, before, after, by_id, by_name, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
     byId: db.prepare('SELECT * FROM item_history WHERE id = ?'),
@@ -81,7 +103,7 @@ module.exports = function features(ctx) {
     const a = actor(by), at = now(), st = store();
     if (st.quiet) return;
     const name = String((after || before || {}).name || '').slice(0, 200);
-    const add = (kind, col, b4, af) => H.insert.run(at, bid, iid, name, kind, col, b4 === undefined ? null : JSON.stringify(b4), af === undefined ? null : JSON.stringify(af), a.id, a.name, a.source);
+    const add = (kind, col, b4, af) => H.insert.run(at, bid, iid, name, kind, col, histJson(b4), histJson(af), a.id, a.name, a.source);
     if (!before && after) { add(st.source === 'restore' ? 'restored' : 'created', null); return; }
     if (before && !after) { add('deleted', null); return; }
     if (before.name !== after.name) add('change', '__name', before.name || '', after.name || '');
@@ -112,13 +134,19 @@ module.exports = function features(ctx) {
 
   // ---------- search index ----------
   const S = {
-    mapGet: db.prepare('SELECT rowid FROM search_map WHERE path = ?'),
-    mapAdd: db.prepare('INSERT INTO search_map (path, board, item) VALUES (?, ?, ?)'),
-    mapDel: db.prepare('DELETE FROM search_map WHERE path = ?'),
-    ftsAdd: db.prepare('INSERT INTO search_fts (rowid, name, body) VALUES (?, ?, ?)'),
-    ftsDel: db.prepare('DELETE FROM search_fts WHERE rowid = ?'),
+    get: db.prepare('SELECT rowid FROM search_items WHERE path = ?'),
+    add: db.prepare('INSERT INTO search_items (path, board, item, name) VALUES (?, ?, ?, ?)'),
+    rename: db.prepare('UPDATE search_items SET name = ? WHERE rowid = ?'),
+    del: db.prepare('DELETE FROM search_items WHERE rowid = ?'),
+    triAdd: db.prepare('INSERT INTO search_tri (rowid, name, fields) VALUES (?, ?, ?)'),
+    triDel: db.prepare('DELETE FROM search_tri WHERE rowid = ?'),
+    wordsAdd: db.prepare('INSERT INTO search_words (rowid, body) VALUES (?, ?)'),
+    wordsDel: db.prepare('DELETE FROM search_words WHERE rowid = ?'),
+    ofBoard: db.prepare('SELECT rowid FROM search_items WHERE board = ?'),
   };
   const TEXTY = new Set(['text', 'phone', 'email', 'link', 'dropdown']);
+  const SHORT = 200; // text up to this long goes in the substring index; longer text only in the word index
+  // The readable lines of an item that search looks through (also used to show where a match was found).
   function searchBody(cols, item) {
     const lines = [], v = item.values || {};
     for (const c of cols || []) {
@@ -128,41 +156,74 @@ module.exports = function features(ctx) {
       if (c.type === 'phone') { const d = String(val).replace(/\D/g, ''); if (d.length >= 3) lines.push(`\u0001${c.title}: ${d}`); }
     }
     for (const u of (item.updates || []).slice(-100)) { if (u && u.text) lines.push(`Update: ${String(u.text).replace(/\s+/g, ' ').slice(0, 2000)}`); for (const r of (u && u.replies) || []) if (r && r.text) lines.push(`Reply: ${String(r.text).replace(/\s+/g, ' ').slice(0, 1000)}`); }
-    return lines.join('\n');
+    return lines;
   }
-  function unindex(p) { const r = S.mapGet.get(p); if (r) { S.ftsDel.run(r.rowid); S.mapDel.run(p); } }
+  // -> { fields: short values for the substring index, body: long text + updates for the word index }
+  function searchParts(cols, item) {
+    const fields = [], body = [];
+    for (const l of searchBody(cols, item)) {
+      if (l.startsWith('Update: ') || l.startsWith('Reply: ')) { body.push(l.slice(l.indexOf(' ') + 1)); continue; }
+      const val = l.startsWith('\u0001') ? l.slice(l.indexOf(': ') + 2) : l.slice(l.indexOf(': ') + 2);
+      if (val.length <= SHORT) fields.push(val); else { fields.push(val.slice(0, SHORT)); body.push(val); }
+    }
+    return { fields: fields.join('\n'), body: body.join('\n') };
+  }
+  function unindex(p) { const r = S.get.get(p); if (r) { S.triDel.run(r.rowid); S.wordsDel.run(r.rowid); S.del.run(r.rowid); } }
   function indexItem(bid, iid, item, cols) {
-    const p = `boards/${bid}/items/${iid}`; unindex(p);
-    if (!item) return;
+    const p = `boards/${bid}/items/${iid}`;
+    if (!item) return unindex(p);
     const info = cols ? { columns: cols } : boardInfo(bid) || boardDoc(bid); if (!info) return;
-    const r = S.mapAdd.run(p, bid, iid);
-    S.ftsAdd.run(Number(r.lastInsertRowid), String(item.name || ''), searchBody(info.columns, item));
+    const name = String(item.name || '').slice(0, 500), parts = searchParts(info.columns, item);
+    const r = S.get.get(p); let rowid;
+    if (r) { rowid = r.rowid; S.triDel.run(rowid); S.wordsDel.run(rowid); S.rename.run(name, rowid); }
+    else rowid = Number(S.add.run(p, bid, iid, name).lastInsertRowid);
+    S.triAdd.run(rowid, name, parts.fields);
+    if (parts.body) S.wordsAdd.run(rowid, parts.body);
   }
   function unindexBoard(bid) {
-    for (const r of db.prepare('SELECT rowid, path FROM search_map WHERE board = ?').all(bid)) S.ftsDel.run(r.rowid);
-    db.prepare('DELETE FROM search_map WHERE board = ?').run(bid);
+    for (const r of S.ofBoard.all(bid)) { S.triDel.run(r.rowid); S.wordsDel.run(r.rowid); }
+    db.prepare('DELETE FROM search_items WHERE board = ?').run(bid);
   }
-  function reindexBoard(bid, board) {
-    db.exec('BEGIN');
-    try { unindexBoard(bid); for (const r of q.docsInCol.all(`boards/${bid}/items`)) { const d = J(r.data); if (d) indexItem(bid, r.id, d, board.columns || []); } db.exec('COMMIT'); }
-    catch (e) { db.exec('ROLLBACK'); throw e; }
-  }
-  // Builds the index one board at a time, letting requests through in between (first start: ~10k items take a few seconds).
-  function rebuildIndex(done) {
-    const t = Date.now(); let n = 0;
-    const boards = q.docsInCol.all('boards').map(r => r.id);
-    db.exec('DELETE FROM search_fts'); db.exec('DELETE FROM search_map');
+  // Indexes a board's items a few hundred at a time, each batch in one transaction, letting requests through in between.
+  // Each item is read fresh when its batch runs, so a change made meanwhile is never overwritten with old data.
+  const CHUNK = 250;
+  function reindexBoard(bid, board, done) {
+    const ids = db.prepare('SELECT id FROM docs WHERE col = ?').all(`boards/${bid}/items`).map(r => r.id), cols = board.columns || [];
+    let k = 0, n = 0;
     const step = () => {
-      const bid = boards.shift();
-      if (!bid) { console.log(`Search index: ${n} items in ${Date.now() - t} ms${FTS ? '' : ' (no FTS5: plain search)'}`); if (done) done(n); return; }
-      try { const b = boardDoc(bid); if (b) { reindexBoard(bid, b); n += db.prepare('SELECT COUNT(*) AS n FROM search_map WHERE board = ?').get(bid).n; } } catch (e) { console.error('search index:', e.message); }
-      setImmediate(step);
+      try {
+        db.exec('BEGIN');
+        try {
+          if (k === 0) unindexBoard(bid);
+          for (const iid of ids.slice(k, k + CHUNK)) { const r = q.doc.get(`boards/${bid}/items/${iid}`); const d = r && J(r.data); if (d) { indexItem(bid, iid, d, cols); n++; } }
+          db.exec('COMMIT');
+        } catch (e) { db.exec('ROLLBACK'); throw e; }
+      } catch (e) { console.error('search index:', e.message); }
+      k += CHUNK;
+      if (k < ids.length) setImmediate(step); else if (done) done(n);
     };
     step();
   }
+  // Builds the whole index board by board, in batches (first start: ~20k items in well under a minute, never blocking).
+  function rebuildIndex(done) {
+    const t = Date.now(); let n = 0;
+    const boards = q.docsInCol.all('boards').map(r => r.id);
+    try {
+      if (FTS) { db.exec("INSERT INTO search_tri(search_tri) VALUES('delete-all')"); db.exec("INSERT INTO search_words(search_words) VALUES('delete-all')"); }
+      else { db.exec('DELETE FROM search_tri'); db.exec('DELETE FROM search_words'); }
+      db.exec('DELETE FROM search_items');
+    } catch (e) { console.error('search index:', e.message); }
+    const next = () => {
+      const bid = boards.shift();
+      if (!bid) { console.log(`Search index: ${n} items in ${Date.now() - t} ms${FTS ? '' : ' (no FTS5: plain search)'}`); if (done) done(n); return; }
+      const b = boardDoc(bid); if (!b) return setImmediate(next);
+      reindexBoard(bid, b, m => { n += m; setImmediate(next); });
+    };
+    next();
+  }
   {
-    const items = db.prepare("SELECT COUNT(*) AS n FROM docs WHERE col LIKE 'boards/%/items'").get().n, idx = db.prepare('SELECT COUNT(*) AS n FROM search_map').get().n;
-    if (items !== idx && startIndex) setImmediate(() => rebuildIndex());
+    const items = db.prepare("SELECT COUNT(*) AS n FROM docs WHERE col LIKE 'boards/%/items'").get().n, idx = db.prepare('SELECT COUNT(*) AS n FROM search_items').get().n;
+    if (items !== idx && startIndex) setImmediate(() => rebuildIndex(() => { try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch (e) {} }));
   }
   const colSig = b => JSON.stringify((b.columns || []).map(c => [c.id, c.title, c.type]));
 
@@ -190,7 +251,7 @@ module.exports = function features(ctx) {
         try {
           const before = prev ? J(prev.data) : null, after = J(json);
           if (im) { if (!prev || prev.data !== json) { recordItem(im[1], im[2], before, after, by); indexItem(im[1], im[2], after); } }
-          else { recordBoard(bm[1], before, after, by); if (before && after && colSig(before) !== colSig(after)) { boardCache.delete(bm[1]); setImmediate(() => { try { reindexBoard(bm[1], after); } catch (e) { console.error('search:', e.message); } }); } }
+          else { recordBoard(bm[1], before, after, by); if (before && after && colSig(before) !== colSig(after)) { boardCache.delete(bm[1]); setImmediate(() => { try { const cur = boardDoc(bm[1]); if (cur) reindexBoard(bm[1], cur); } catch (e) { console.error('search:', e.message); } }); } }
         } catch (e) { console.error('history:', e.message); }
       }
       return res;
@@ -228,8 +289,19 @@ module.exports = function features(ctx) {
     if (r.changes) console.log(`Recycle bin: ${r.changes} entries older than ${BIN_DAYS} days removed for good`);
     return r.changes;
   }
-  setTimeout(() => { try { purgeBin(); } catch (e) {} }, 15000).unref();
-  setInterval(() => { try { purgeBin(); } catch (e) { console.error('purge:', e.message); } }, 24 * 3600 * 1000).unref();
+  // Daily: item history older than 180 days, notifications older than 90 days, and expired sign-ins are removed.
+  const HISTORY_DAYS = 180, NOTIFY_DAYS = 90;
+  function purgeOld() {
+    const ago = d => new Date(Date.now() - d * 864e5).toISOString(), out = {};
+    out.history = db.prepare('DELETE FROM item_history WHERE at < ?').run(ago(HISTORY_DAYS)).changes;
+    try { out.notifications = db.prepare('DELETE FROM notifications WHERE at < ?').run(ago(NOTIFY_DAYS)).changes; } catch (e) {}
+    try { out.sessions = db.prepare('DELETE FROM sessions WHERE expires < ?').run(now()).changes; } catch (e) {}
+    if (out.history || out.notifications || out.sessions) console.log(`Clean-up: ${out.history || 0} history rows (>${HISTORY_DAYS} days), ${out.notifications || 0} notifications (>${NOTIFY_DAYS} days), ${out.sessions || 0} expired sign-ins removed`);
+    return out;
+  }
+  const daily = () => { try { purgeBin(); } catch (e) { console.error('purge:', e.message); } try { purgeOld(); } catch (e) { console.error('purge:', e.message); } };
+  setTimeout(daily, 15000).unref();
+  setInterval(daily, 24 * 3600 * 1000).unref();
 
   // ---------- shared helpers ----------
   const boardDoc = bid => { const r = q.doc.get('boards/' + bid); return r ? J(r.data) : null; };
@@ -270,7 +342,7 @@ module.exports = function features(ctx) {
     return String(v).length > 300 ? String(v).slice(0, 298) + '…' : String(v);
   }
   // the readable value of one history before/after map ({ key: value })
-  const histVal = (b, col, raw) => { const v = J(raw); if (v && typeof v === 'object' && !Array.isArray(v) && col && !col.startsWith('__')) return describeValue(b, col, v[col]); return describeValue(b, col, v); };
+  const histVal = (b, col, raw) => { const v = J(raw); if (v && typeof v === 'object' && v.__truncated !== undefined) return String(v.__truncated).slice(0, 300) + '…'; if (v && typeof v === 'object' && !Array.isArray(v) && col && !col.startsWith('__')) return describeValue(b, col, v[col]); return describeValue(b, col, v); };
   const colName = (b, col) => col === '__name' ? 'Name' : col === '__group' ? 'Group' : col === '__update' ? 'Update' : col === '__subitems' ? 'Subitems' : col === '__board' ? 'Board' : ((((b && b.columns) || []).find(c => c.id === col) || {}).title || col || '');
 
   // ---------- history: read ----------
@@ -292,7 +364,7 @@ module.exports = function features(ctx) {
       id: r.id, at: r.at, item: r.item, itemName: r.item_name, kind: r.kind, col: r.col, colName: colName(b, r.col), by: r.by_id, byName: r.by_name, source: r.source, undone: !!r.undone,
       before: r.kind === 'change' ? histVal(b, r.col, r.before) : null,
       after: r.kind === 'change' ? histVal(b, r.col, r.after) : r.after ? J(r.after) : null,
-      canUndo: r.kind === 'change' && !r.undone && !['__subitems'].includes(r.col) && !!r.item,
+      canUndo: r.kind === 'change' && !r.undone && !['__subitems'].includes(r.col) && !!r.item && !String(r.before || '').startsWith('{"__truncated"'),
     })) };
   }
 
@@ -308,6 +380,7 @@ module.exports = function features(ctx) {
       const next = JSON.parse(JSON.stringify(cur)); next.values = next.values || {};
       for (const x of xs) {
         const b4 = J(x.before);
+        if (b4 && typeof b4 === 'object' && b4.__truncated !== undefined) { skipped.push('a value too large to undo'); continue; }
         if (x.col === '__name') { if (b4) next.name = b4; }
         else if (x.col === '__group') { if (b4 && (info.groups || []).some(g => g.id === b4)) next.group = b4; else { skipped.push('a group that no longer exists'); continue; } }
         else if (x.col.startsWith('__')) continue;
@@ -328,9 +401,10 @@ module.exports = function features(ctx) {
   function binVisible(user, r) {
     if (user.role === 'admin') return true;
     if (!canWrite(user)) return false;
-    if (r.deleted_by === user.id) return true;
+    // the board's access comes first, even for things this person deleted (they may have been taken off the board since)
     const live = boardInfo(r.board), access = live ? live.access : J(r.access);
     if (!canSee(user, access)) return false;
+    if (r.deleted_by === user.id) return r.kind !== 'item' || !live || !restricted(user, live) || itemVisible(user, live, J(r.data));
     if (r.kind === 'board') return false; // a whole board: admins and the person who deleted it
     if (r.kind === 'item' && live && restricted(user, live)) return itemVisible(user, live, J(r.data));
     if (r.kind === 'group' && live && restricted(user, live)) return false;
@@ -339,6 +413,7 @@ module.exports = function features(ctx) {
   function restoreEntry(user, r) {
     if (r.restored_at) throw bad(409, 'That was already restored.');
     if (!binVisible(user, r) || !canWrite(user)) throw bad(404, 'That isn’t in your recycle bin.');
+    if (r.kind !== 'board') mustSee(user, r.board); // the board must still be shared with them
     const st = store(); st.source = 'restore';
     let out = {};
     if (r.kind === 'item') {
@@ -376,31 +451,49 @@ module.exports = function features(ctx) {
   // ---------- search ----------
   function search(user, text) {
     const qs = String(text || '').trim().slice(0, 100); if (qs.length < 2) return { q: qs, boards: [], total: 0 };
-    const digits = qs.replace(/\D/g, '');
-    let rows;
-    const sel = 'SELECT m.board AS board, m.item AS item, f.name AS name, f.body AS body FROM search_fts f JOIN search_map m ON m.rowid = f.rowid';
-    if (FTS && qs.length >= 3) rows = db.prepare(`${sel} WHERE search_fts MATCH ? LIMIT 3000`).all('"' + qs.replace(/"/g, '""') + '"');
-    else { const like = '%' + qs.replace(/[\\%_]/g, c => '\\' + c) + '%'; rows = db.prepare(`${sel} WHERE f.name LIKE ? ESCAPE '\\' OR f.body LIKE ? ESCAPE '\\' LIMIT 3000`).all(like, like); }
-    // phone numbers typed with spaces or dashes: match the digits too
-    if (FTS && digits.length >= 4 && digits !== qs) { const seen = new Set(rows.map(r => r.board + '/' + r.item)); for (const r of db.prepare(`${sel} WHERE search_fts MATCH ? LIMIT 500`).all('"' + digits + '"')) if (!seen.has(r.board + '/' + r.item)) rows.push(r); }
-    const ql = qs.toLowerCase(), byBoard = new Map(), infos = new Map(); let total = 0;
+    const digits = qs.replace(/\D/g, ''), ql = qs.toLowerCase();
+    const ids = new Set(), phrase = x => '"' + String(x).replace(/"/g, '""') + '"';
+    const add = rows => { for (const r of rows) ids.add(r.rowid); };
+    // words for the word index: each word (2+ letters) as a word start, all of them required
+    const words = qs.split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 2).slice(0, 6);
+    if (FTS) {
+      if (qs.length >= 3) add(db.prepare('SELECT rowid FROM search_tri WHERE search_tri MATCH ? LIMIT 3000').all(phrase(qs)));
+      else { const like = '%' + qs.replace(/[\\%_]/g, c => '\\' + c) + '%'; add(db.prepare("SELECT rowid FROM search_items WHERE name LIKE ? ESCAPE '\\' LIMIT 3000").all(like)); }
+      if (words.length) try { add(db.prepare('SELECT rowid FROM search_words WHERE search_words MATCH ? LIMIT 3000').all(words.map(w => phrase(w) + '*').join(' AND '))); } catch (e) { /* odd input: the substring results stand */ }
+      // phone numbers typed with spaces or dashes: match the digits too
+      if (digits.length >= 4 && digits !== qs) add(db.prepare('SELECT rowid FROM search_tri WHERE search_tri MATCH ? LIMIT 500').all(phrase(digits)));
+    } else {
+      const like = '%' + qs.replace(/[\\%_]/g, c => '\\' + c) + '%';
+      add(db.prepare("SELECT rowid FROM search_tri WHERE name LIKE ? ESCAPE '\\' OR fields LIKE ? ESCAPE '\\' LIMIT 3000").all(like, like));
+      add(db.prepare("SELECT rowid FROM search_words WHERE body LIKE ? ESCAPE '\\' LIMIT 3000").all(like));
+    }
+    const rows = ids.size ? db.prepare('SELECT rowid, board, item, name FROM search_items WHERE rowid IN (SELECT value FROM json_each(?))').all(JSON.stringify([...ids].slice(0, 6000))) : [];
+    const byBoard = new Map(), infos = new Map(); let total = 0;
     for (const r of rows) {
       if (!infos.has(r.board)) infos.set(r.board, boardInfo(r.board));
       const info = infos.get(r.board); if (!info || !canSee(user, info.access)) continue;
       if (restricted(user, info)) { const d = itemDoc(r.board, r.item); if (!d || !itemVisible(user, info, d)) continue; }
       const nameHit = String(r.name || '').toLowerCase().includes(ql);
-      let where = '', snip = '';
-      if (!nameHit) {
-        const lines = String(r.body || '').split('\n'); let k = lines.findIndex(l => l.toLowerCase().includes(ql));
-        if (k < 0 && digits.length >= 3) k = lines.findIndex(l => l.replace(/\D/g, '').includes(digits));
-        if (k >= 0) { let line = lines[k]; if (line.startsWith('\u0001')) { const t = line.slice(1).split(':')[0]; line = lines.find(l => l.startsWith(t + ':')) || line.slice(1); } const i = line.indexOf(': '); where = line.slice(0, i); const val = line.slice(i + 2); const at = Math.max(0, val.toLowerCase().indexOf(ql) - 40); snip = (at ? '…' : '') + val.slice(at, at + 120) + (val.length > at + 120 ? '…' : ''); }
-      }
       if (!byBoard.has(r.board)) byBoard.set(r.board, { id: r.board, name: info.name, count: 0, items: [] });
       const g = byBoard.get(r.board); g.count++; total++;
-      g.items.push({ id: r.item, name: r.name, where, snip, nameHit });
+      g.items.push({ id: r.item, name: r.name, where: '', snip: '', nameHit });
     }
+    // where the match is: worked out from the item itself, only for the items shown
+    const snippet = (bid, it) => {
+      const d = itemDoc(bid, it.id), info = infos.get(bid); if (!d || !info) return;
+      const lines = searchBody(info.columns, d);
+      let k = lines.findIndex(l => l.toLowerCase().includes(ql));
+      if (k < 0 && digits.length >= 3) k = lines.findIndex(l => l.replace(/\D/g, '').includes(digits));
+      if (k < 0 && words.length) k = lines.findIndex(l => { const t = l.toLowerCase(); return words.every(w => t.includes(w.toLowerCase())); });
+      if (k < 0) return;
+      let line = lines[k]; if (line.startsWith('\u0001')) { const t = line.slice(1).split(':')[0]; line = lines.find(l => l.startsWith(t + ':')) || line.slice(1); }
+      const i = line.indexOf(': '); it.where = line.slice(0, i); const val = line.slice(i + 2);
+      const hit = Math.max(val.toLowerCase().indexOf(ql), words.length ? val.toLowerCase().indexOf(words[0].toLowerCase()) : -1);
+      const at = Math.max(0, hit - 40); it.snip = (at ? '…' : '') + val.slice(at, at + 120) + (val.length > at + 120 ? '…' : '');
+    };
     const boards = [...byBoard.values()].map(g => { g.items.sort((a, b) => (b.nameHit - a.nameHit) || String(a.name).localeCompare(String(b.name))); g.items = g.items.slice(0, 8); return g; })
       .sort((a, b) => b.items.filter(x => x.nameHit).length - a.items.filter(x => x.nameHit).length || b.count - a.count).slice(0, 25);
+    for (const g of boards) for (const it of g.items) if (!it.nameHit) snippet(g.id, it);
     // boards whose names match
     const boardHits = q.docsInCol.all('boards').map(r => ({ id: r.id, d: J(r.data) })).filter(x => x.d && canSee(user, x.d.access) && String(x.d.name || '').toLowerCase().includes(ql)).slice(0, 8).map(x => ({ id: x.id, name: x.d.name }));
     return { q: qs, total, boards, boardHits };
@@ -420,6 +513,15 @@ module.exports = function features(ctx) {
     if (access) data.access = cleanAccess(access);
     if (perms) data.perms = perms;
     return { id, data };
+  }
+
+  // A template shows a board's setup (columns, labels, automations): only people who can see the board it came from
+  // get it, plus whoever saved it and admins. Templates saved before this was recorded stay with their creator and admins.
+  function templateVisible(user, t) {
+    if (user.role === 'admin' || t.created_by === user.id) return true;
+    if (!t.source_board) return false;
+    const info = boardInfo(t.source_board);
+    return !!info && canSee(user, info.access);
   }
 
   // ---------- public forms ----------
@@ -648,7 +750,7 @@ module.exports = function features(ctx) {
     }
     if (p === '/api/x/templates' && method === 'GET') {
       if (!canWrite(user)) return send(res, 200, []);
-      return send(res, 200, db.prepare('SELECT id, name, data, created_at, created_by, created_by_name FROM board_templates ORDER BY name').all().map(t => { const d = J(t.data) || {}; return { id: t.id, name: t.name, at: t.created_at, by: t.created_by_name, mine: t.created_by === user.id, columns: (d.columns || []).length, groups: (d.groups || []).length, automations: (d.automations || []).length, views: (d.views || []).length }; }));
+      return send(res, 200, db.prepare('SELECT id, name, data, created_at, created_by, created_by_name, source_board FROM board_templates ORDER BY name').all().filter(t => templateVisible(user, t)).map(t => { const d = J(t.data) || {}; return { id: t.id, name: t.name, at: t.created_at, by: t.created_by_name, mine: t.created_by === user.id, columns: (d.columns || []).length, groups: (d.groups || []).length, automations: (d.automations || []).length, views: (d.views || []).length }; }));
     }
     if (p === '/api/x/templates' && method === 'POST') {
       writer(user);
@@ -656,12 +758,12 @@ module.exports = function features(ctx) {
       mustSee(user, bid); const b = boardDoc(bid);
       const name = String(body.name || b.name).trim().slice(0, 120) || b.name;
       const id = rid('tp_');
-      db.prepare('INSERT INTO board_templates (id, name, data, created_at, created_by, created_by_name) VALUES (?, ?, ?, ?, ?, ?)').run(id, name, JSON.stringify(structureOf(b)), now(), user.id, user.name);
+      db.prepare('INSERT INTO board_templates (id, name, data, created_at, created_by, created_by_name, source_board) VALUES (?, ?, ?, ?, ?, ?, ?)').run(id, name, JSON.stringify(structureOf(b)), now(), user.id, user.name, bid);
       return send(res, 201, { id, name });
     }
     if (p === '/api/x/templates/use' && method === 'POST') {
       writer(user);
-      const t = db.prepare('SELECT * FROM board_templates WHERE id = ?').get(String(body.id || '')); if (!t) throw bad(404, 'That template no longer exists.');
+      const t = db.prepare('SELECT * FROM board_templates WHERE id = ?').get(String(body.id || '')); if (!t || !templateVisible(user, t)) throw bad(404, 'That template no longer exists.');
       const ws = body.workspace && typeof body.workspace === 'object' ? { id: String(body.workspace.id || 'main').slice(0, 60), name: String(body.workspace.name || 'Main workspace').slice(0, 120) } : undefined;
       const nb = newBoard(user, { name: String(body.name || '').trim() || t.name, workspace: ws, structure: J(t.data) || {} });
       for (const c of nb.data.columns || []) if (c.type === 'board_relation' && (c.boards || []).some(x => !boardInfo(x))) c.boards = c.boards.filter(x => boardInfo(x));
@@ -783,7 +885,7 @@ module.exports = function features(ctx) {
     const data = J(f.data) || {};
     if (method === 'GET') return send(res, 200, { title: data.title, desc: data.desc, fields: formFields(b, data) }, sec);
     if (method !== 'POST') throw bad(405, 'Send the answers with POST.');
-    const ip = String(req.socket.remoteAddress || '');
+    const ip = clientIp(req);
     if (limited('ip:' + ip, 10, 10 * 60e3) || limited('ipall:' + ip, 40, 3600e3) || limited('tok:' + f.token, 200, 3600e3)) throw bad(429, 'Too many answers from here. Try again a little later.');
     if (Number(req.headers['content-length'] || 0) > 32 * 1024) throw bad(413, 'That’s too much text for this form.');
     const raw = await readBody(req, 32 * 1024);
@@ -803,6 +905,6 @@ module.exports = function features(ctx) {
   return {
     run: (fn, url) => als.run({ api: !!(url && url.pathname.startsWith('/api/v1/')) }, fn),
     setUser: user => { const st = als.getStore(); if (st) st.user = user; },
-    handle, isPublic, handlePublic, exportCell, purgeBin, rebuildIndex, search, describeValue,
+    handle, isPublic, handlePublic, exportCell, purgeBin, purgeOld, rebuildIndex, search, describeValue,
   };
 };

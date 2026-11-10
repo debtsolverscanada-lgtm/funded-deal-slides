@@ -88,6 +88,20 @@ function cleanRule(r, b, { strict, boardExists }) {
   return out;
 }
 
+// The groups and columns a rule points at that aren't on the board (copied rules often keep the old board's ids).
+function missingRefs(r, b) {
+  const cols = new Set((b.columns || []).map(c => c.id)), subCols = new Set((b.subColumns || []).map(c => c.id)), groups = new Set((b.groups || []).map(g => g.id));
+  const out = [], colOk = id => !id || (r.trigger === 'sub_status' ? subCols.has(id) : cols.has(id)), grpOk = g => !g || g === '__top__' || groups.has(g);
+  if (['status', 'column', 'button', 'date_arrives', 'sub_status'].includes(r.trigger) && !colOk(r.col)) out.push('a column');
+  if (['created', 'moved_group'].includes(r.trigger) && !grpOk(r.group)) out.push('a group');
+  for (const c of Array.isArray(r.conditions) ? r.conditions : []) { if (c && c.col === '__group') { if (!grpOk(c.value)) out.push('a group (in a condition)'); } else if (c && !cols.has(c.col)) out.push('a column (in a condition)'); }
+  for (const a of Array.isArray(r.actions) ? r.actions : []) {
+    if (!a) continue;
+    if (a.type === 'move_group' && !grpOk(a.group)) out.push('a group (in “move to group”)');
+    if (['set_status', 'set_value', 'set_date', 'clear', 'assign'].includes(a.type) && !colOk(a.col)) out.push('a column (in an action)');
+  }
+  return [...new Set(out)];
+}
 // Checks a board's automations when they are saved. Only rules that are new or changed are held to the strict
 // checks, so an old Monday copy that points at a column someone deleted can still be switched on or off.
 function validateAutomations(list, board, before, boardExists) {
@@ -103,7 +117,13 @@ function validateAutomations(list, board, before, boardExists) {
     // toggling On/Off alone is not an edit
     const sameButSwitch = old.has(id) && (() => { try { const a = JSON.parse(old.get(id)); delete a.on; const c = { ...r }; delete c.on; return JSON.stringify(a) === JSON.stringify(c); } catch (e) { return false; } })();
     try { return cleanRule(r, board, { strict: !unchanged && !sameButSwitch, boardExists }); }
-    catch (e) { throw new Error(typeof e === 'string' ? e : e.message); }
+    catch (e) {
+      const msg = typeof e === 'string' ? e : e.message;
+      // a copied rule (from Monday or another board) that still points at what isn't here: say so plainly
+      const gone = r && typeof r === 'object' ? missingRefs(r, board) : [];
+      if (gone.length) throw new Error(`“${str((r && r.title) || 'This automation', 120)}” points at ${gone.join(' and ')} that isn’t on this board any more (it was probably copied from Monday or another board). In the editor, pick a group and columns that exist on this board, then save. Switching it on or off still works without that. (${msg})`);
+      throw new Error(msg);
+    }
   });
 }
 
@@ -159,13 +179,15 @@ module.exports = function automation({ db, q, now, HttpError, readBody, send, bo
       const info = mustSee(user, bid);
       const rows = rule ? db.prepare('SELECT * FROM automation_runs WHERE board = ? AND rule = ? ORDER BY id DESC LIMIT 50').all(bid, rule)
         : db.prepare('SELECT * FROM automation_runs WHERE board = ? ORDER BY id DESC LIMIT 200').all(bid);
-      const out = rows.filter(r => { if (!r.item) return true; const it = itemDoc(bid, r.item); return !it || itemVisible(user, info, it); })
+      // people who only see their own items don't see runs for items that are gone (their names could be anyone's)
+      const limitedView = user.role !== 'admin' && (((info.perms || {}).assignedOnly) || []).length > 0;
+      const out = rows.filter(r => { if (!r.item) return true; const it = itemDoc(bid, r.item); return it ? itemVisible(user, info, it) : !limitedView; })
         .map(r => ({ id: r.id, rule: r.rule, item: r.item, itemName: r.item_name, at: r.at, result: r.result, ok: !!r.ok, via: r.via }));
       return send(res, 200, out);
     }
     // ---- the page ran rules: write them to the log ----
     if (p === '/api/automations/runs' && method === 'POST') {
-      if (!canWrite(user) && user.role !== 'guest') throw new HttpError(403, 'Your account can view boards but not change them.');
+      if (!canWrite(user)) throw new HttpError(403, 'Your account can view boards but not change them.');
       const body = await readBody(req); const bid = String(body.board || '');
       if (!ID.test(bid) || !boardInfo(bid)) throw new HttpError(404, 'No such board.');
       const info = mustSee(user, bid), b = boardDoc(bid), ids = new Set((b.automations || []).map(r => r.id));
@@ -180,7 +202,7 @@ module.exports = function automation({ db, q, now, HttpError, readBody, send, bo
     }
     // ---- "Send to a connected tool": the page asks the server to send the signed webhook for a rule it ran ----
     if (p === '/api/automations/webhook' && method === 'POST') {
-      if (!canWrite(user) && user.role !== 'guest') throw new HttpError(403, 'Your account can view boards but not change them.');
+      if (!canWrite(user)) throw new HttpError(403, 'Your account can view boards but not change them.');
       const body = await readBody(req); const bid = String(body.board || ''), iid = String(body.item || ''), rid = String(body.rule || '');
       if (!ID.test(bid) || !boardInfo(bid)) throw new HttpError(404, 'No such board.');
       const info = mustSee(user, bid), b = boardDoc(bid);
@@ -204,6 +226,7 @@ module.exports = function automation({ db, q, now, HttpError, readBody, send, bo
   return { handle, checkBoard, logRun, sendWebhook, throttled };
 };
 module.exports.validateAutomations = validateAutomations;
+module.exports.missingRefs = missingRefs;
 module.exports.TRIGGERS = TRIGGERS;
 module.exports.ACTIONS = ACTIONS;
 module.exports.COND_OPS = COND_OPS;

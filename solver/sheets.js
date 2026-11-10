@@ -64,21 +64,55 @@ function zip(files) { // files: [{ name, data: Buffer|string }]
   end.writeUInt32LE(cd.length, 12); end.writeUInt32LE(offset, 16); end.writeUInt16LE(0, 20);
   return Buffer.concat([...locals, cd, end]);
 }
-function unzip(buf) { // -> Map(name -> Buffer)
+// Reads the ZIP's directory without inflating anything. get(name) inflates one entry on demand.
+// Guards against zip bombs: entries must not share or overlap their data, and everything inflated in one file
+// adds up to at most `budget` bytes (50 MB by default).
+const MAX_INFLATE = 50 * 1024 * 1024;
+function openZip(buf, budget = MAX_INFLATE) {
+  if (!Buffer.isBuffer(buf) || buf.length < 22) throw new Error('This is not a valid .xlsx file.');
   let eocd = -1;
   for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--) if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
   if (eocd < 0) throw new Error('This is not a valid .xlsx file.');
-  const n = buf.readUInt16LE(eocd + 10); let p = buf.readUInt32LE(eocd + 16); const out = new Map();
+  const bad = () => new Error('This .xlsx file is damaged.');
+  const n = buf.readUInt16LE(eocd + 10); let p = buf.readUInt32LE(eocd + 16);
+  if (n > 5000) throw new Error('This .xlsx file has too many parts.');
+  const entries = new Map(), ranges = [];
   for (let k = 0; k < n; k++) {
-    if (buf.readUInt32LE(p) !== 0x02014b50) throw new Error('This .xlsx file is damaged.');
-    const method = buf.readUInt16LE(p + 10), csize = buf.readUInt32LE(p + 20), nlen = buf.readUInt16LE(p + 28), xlen = buf.readUInt16LE(p + 30), clen = buf.readUInt16LE(p + 32), lho = buf.readUInt32LE(p + 42);
+    if (p + 46 > buf.length || buf.readUInt32LE(p) !== 0x02014b50) throw bad();
+    const method = buf.readUInt16LE(p + 10), csize = buf.readUInt32LE(p + 20), usize = buf.readUInt32LE(p + 24), nlen = buf.readUInt16LE(p + 28), xlen = buf.readUInt16LE(p + 30), clen = buf.readUInt16LE(p + 32), lho = buf.readUInt32LE(p + 42);
     const name = buf.slice(p + 46, p + 46 + nlen).toString('utf8');
-    const start = lho + 30 + buf.readUInt16LE(lho + 26) + buf.readUInt16LE(lho + 28), data = buf.slice(start, start + csize);
-    if (method === 0) out.set(name, data); else if (method === 8) out.set(name, zlib.inflateRawSync(data, { maxOutputLength: 200 * 1024 * 1024 }));
+    if (lho + 30 > buf.length || buf.readUInt32LE(lho) !== 0x04034b50) throw bad();
+    const start = lho + 30 + buf.readUInt16LE(lho + 26) + buf.readUInt16LE(lho + 28);
+    if (start + csize > buf.length) throw bad();
+    ranges.push([lho, start + csize]);
+    if (!entries.has(name)) entries.set(name, { method, start, csize, usize });
     p += 46 + nlen + xlen + clen;
   }
-  return out;
+  // no two entries may point at the same (or overlapping) bytes: that is how small files inflate to gigabytes
+  ranges.sort((a, b) => a[0] - b[0]);
+  for (let i = 1; i < ranges.length; i++) if (ranges[i][0] < ranges[i - 1][1]) throw new Error('This .xlsx file is damaged (its parts overlap).');
+  let used = 0;
+  const tooBig = () => new Error('This .xlsx file is too large once unpacked. Save it as CSV, or split it, and try again.');
+  return {
+    names: () => [...entries.keys()],
+    has: name => entries.has(name),
+    get(name) {
+      const e = entries.get(name); if (!e) return null;
+      const data = buf.subarray(e.start, e.start + e.csize), left = budget - used;
+      let out;
+      if (e.method === 0) out = data;
+      else if (e.method === 8) {
+        if (e.usize > left) throw tooBig();
+        try { out = zlib.inflateRawSync(data, { maxOutputLength: Math.max(1, left) }); }
+        catch (err) { if (err && (err.code === 'ERR_BUFFER_TOO_LARGE' || /maxOutputLength|buffer/i.test(String(err.message)))) throw tooBig(); throw bad(); }
+      } else throw new Error('This .xlsx file uses a kind of compression Solver.ca can’t read.');
+      used += out.length; if (used > budget) throw tooBig();
+      return out;
+    },
+  };
 }
+// Everything at once (used by tests and small files); same limits.
+function unzip(buf, budget) { const z = openZip(buf, budget), out = new Map(); for (const n of z.names()) out.set(n, z.get(n)); return out; }
 
 // ---------- XLSX out ----------
 const xmlEsc = s => String(s).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f￾￿]/g, '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -110,7 +144,7 @@ function toXlsx(rows, sheetName = 'Sheet1') {
 const unXml = s => String(s).replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (m, e) => e[0] === '#' ? String.fromCodePoint(e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10)) : { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" }[e.toLowerCase()]);
 const textOf = xml => [...String(xml).matchAll(/<(?:\w+:)?t(?:\s[^>]*)?>([\s\S]*?)<\/(?:\w+:)?t>/g)].map(m => unXml(m[1])).join('');
 function parseXlsx(buf) {
-  const files = unzip(buf);
+  const files = openZip(buf); // only the parts needed below are inflated
   const get = n => { const b = files.get(n); return b ? b.toString('utf8') : null; };
   const shared = []; const ss = get('xl/sharedStrings.xml');
   if (ss) for (const m of ss.matchAll(/<(?:\w+:)?si>([\s\S]*?)<\/(?:\w+:)?si>/g)) shared.push(textOf(m[1].replace(/<(?:\w+:)?rPh[\s\S]*?<\/(?:\w+:)?rPh>/g, '')));
@@ -122,7 +156,7 @@ function parseXlsx(buf) {
     const target = rid && (new RegExp(`<Relationship\\b[^>]*Id="${rid}"[^>]*Target="([^"]+)"`).exec(rels) || new RegExp(`<Relationship\\b[^>]*Target="([^"]+)"[^>]*Id="${rid}"`).exec(rels) || [])[1];
     if (target) sheetPath = target.startsWith('/') ? target.slice(1) : 'xl/' + target.replace(/^\.\//, '');
   }
-  const sheet = get(sheetPath) || [...files.keys()].filter(n => /^xl\/worksheets\/[^/]+\.xml$/.test(n)).map(get)[0];
+  const sheet = get(sheetPath) || (n => n ? get(n) : null)(files.names().find(n => /^xl\/worksheets\/[^/]+\.xml$/.test(n)));
   if (!sheet) throw new Error('This .xlsx file has no sheet.');
   const rows = [];
   for (const rm of sheet.matchAll(/<(?:\w+:)?row\b[^>]*?(?:\/>|>([\s\S]*?)<\/(?:\w+:)?row>)/g)) {
@@ -149,4 +183,4 @@ function parseXlsx(buf) {
 // Excel stores dates as days since 1899-12-30.
 function excelSerialToYmd(n) { const d = new Date(Date.UTC(1899, 11, 30) + Math.round(Number(n) * 864e5)); return d.toISOString().slice(0, 10); }
 
-module.exports = { toCsv, parseCsv, toXlsx, parseXlsx, zip, unzip, crc32, excelSerialToYmd };
+module.exports = { toCsv, parseCsv, toXlsx, parseXlsx, zip, unzip, openZip, crc32, excelSerialToYmd };
