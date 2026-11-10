@@ -14,7 +14,7 @@
   document.body.prepend(orbs);
 
   // ---------- celebration ----------
-  const CELEBRATE = /^(funded|closed|paid|deal accepted|approved|lender says yes|commitment issued|deal done|won)$/i;
+  const CELEBRATE = /^(funded|closed|paid|deal accepted|approved|lender says yes|commitment issued|deal done|won|signed)$/i;
   function confetti(color) {
     if (!full()) return;
     const c = document.createElement('canvas'); c.className = 'mx-confetti'; const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -99,7 +99,15 @@
     lanes = nowLanes;
     // rows that moved group: flash them
     const nowGroups = new Map();
-    document.querySelectorAll('tr[data-row][data-group]').forEach(tr => { nowGroups.set(tr.dataset.row, tr.dataset.group); if (!firstScan && on() && groups.has(tr.dataset.row) && groups.get(tr.dataset.row) !== tr.dataset.group) { tr.classList.add('mx-flash'); setTimeout(() => tr.classList.remove('mx-flash'), 1300); } });
+    document.querySelectorAll('tr[data-row][data-group]').forEach(tr => {
+      nowGroups.set(tr.dataset.row, tr.dataset.group);
+      if (!firstScan && on() && groups.has(tr.dataset.row) && groups.get(tr.dataset.row) !== tr.dataset.group) {
+        tr.classList.add('mx-flash'); setTimeout(() => tr.classList.remove('mx-flash'), 1300);
+        // moved into a winning group (e.g. DebtSolvers "Signed"): confetti + Penny cheers
+        const gEl = document.querySelector(`.group-name[data-group="${CSS.escape(tr.dataset.group)}"]`), gName = gEl ? String(gEl.value || gEl.textContent || '').trim() : '';
+        if (CELEBRATE.test(gName)) { const nm = tr.querySelector('[data-edit="name"]') || tr.querySelector('.name-open'); celebrate(gName, nm ? (nm.value || nm.textContent) : ''); }
+      }
+    });
     groups = nowGroups;
     firstScan = false;
   }
