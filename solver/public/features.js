@@ -295,7 +295,7 @@
   function openBin() { openModal({ type: 'bin', title: 'Recycle bin', items: null }); api('GET', '/api/x/bin').then(r => { if (M && M.type === 'bin') { M.items = r.items; M.days = r.days; renderModal(); } }).catch(e => { if (M) { M.err = e.message; renderModal(); } }); }
 
   // ---------- modals ----------
-  const boardOptions = (sel, skip) => A().workspaces().map(w => `<optgroup label="${esc(w.name)}">${S().boards.filter(x => A().wsOf(x).id === w.id && x.id !== skip).map(x => `<option value="${esc(x.id)}" ${x.id === sel ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</optgroup>`).join('');
+  const boardOptions = (sel, skip) => A().workspaces().map(w => `<optgroup label="${esc(A().wsLabel ? A().wsLabel(w) : w.name)}">${S().boards.filter(x => A().wsOf(x).id === w.id && x.id !== skip).map(x => `<option value="${esc(x.id)}" ${x.id === sel ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</optgroup>`).join('');
   const MODALS = {
     search: () => `<div class="fx-search-wrap" data-fx="close-bg"><div class="fx-search" role="dialog" aria-modal="true" aria-label="Search everything">
       <div class="fx-search-top">${ICON.search}<input id="fx-q" type="search" placeholder="Search every board" value="${esc(SR.q)}" autocomplete="off" aria-label="Search every board" aria-controls="fx-results"><button class="btn" data-fx="close">${narrow() ? 'Cancel' : 'Esc'}</button></div>

@@ -897,7 +897,7 @@
     busy: () => !!drag,
     settings: t => stripLocal(cfg(t)),
     renderDash,
-    railLink: () => `<button class="board-link" data-act="go-dash" aria-current="${A.S.page === 'dash'}" style="margin-top:-14px"><span class="dot"></span>Dashboards</button>`,
+    railLink: () => `<button class="rl-link" data-act="go-dash" aria-current="${A.S.page === 'dash'}"><svg class="rl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4z M13 4h7v4h-7z M13 10h7v10h-7z M4 13h7v7H4z"/></svg>Dashboards</button>`,
     // exposed for tests
     _geocode: geocode, _aggregate: aggregate,
   };
