@@ -843,6 +843,8 @@ async function api(req, res, url) {
     return send(res, 200, { created, skipped: up.rows.length - created, errors });
   }
 
+  if (p === '/api/dashboards' || p.startsWith('/api/dashboards/')) return dashboardsApi(req, res, p, method, user);
+
   // ---- documents ----
   if (p === '/api/col' && method === 'GET') {
     const col = url.searchParams.get('path') || '';
@@ -1138,6 +1140,33 @@ async function runMondayPull() {
     savePull({ lastRunAt: now(), error: e.message });
   } finally { pullState.running = false; }
 }
+
+// ================= dashboards (public/views.js) =================
+// Stored as docs "dashboards/<id>": { name, owner, ownerName, shared, widgets: [...] }.
+// Each person sees their own dashboards and the shared ones. Only the owner (or an admin) changes or deletes one.
+// A dashboard holds no item data: widgets load items through /api/col, which only returns boards the viewer can see.
+function dashboardsApi(req, res, p, method, user) {
+  if (user.role === 'guest') throw new HttpError(403, 'Guests can’t use dashboards.');
+  const read = r => ({ id: r.id, ...JSON.parse(r.data) });
+  const mineOrShared = d => d.owner === user.id || !!d.shared;
+  if (p === '/api/dashboards' && method === 'GET') return send(res, 200, q.docsInCol.all('dashboards').map(read).filter(mineOrShared).sort((a, b) => String(a.name).localeCompare(String(b.name))));
+  const m = /^\/api\/dashboards\/([A-Za-z0-9_-]{4,40})$/.exec(p); if (!m) throw new HttpError(404, 'Not found.');
+  const dp = 'dashboards/' + m[1], row = q.doc.get(dp), cur = row ? read(row) : null;
+  if (cur && !mineOrShared(cur)) throw new HttpError(404, 'That dashboard doesn’t exist or isn’t shared with you.');
+  if (method === 'GET') { if (!cur) throw new HttpError(404, 'That dashboard doesn’t exist.'); return send(res, 200, cur); }
+  if (cur && cur.owner !== user.id && user.role !== 'admin') throw new HttpError(403, 'Only the person who made this dashboard can change it.');
+  if (method === 'DELETE') { q.deleteDoc.run(dp); return send(res, 200, { ok: true }); }
+  if (method !== 'PUT') throw new HttpError(405, 'Method not allowed.');
+  return readBody(req).then(body => {
+    const clip = (s, n) => String(s ?? '').slice(0, n);
+    const widgets = (Array.isArray(body.widgets) ? body.widgets : []).slice(0, 40).map(w => JSON.parse(JSON.stringify(w || {})));
+    const data = { name: clip(body.name, 120).trim() || 'Dashboard', owner: cur ? cur.owner : user.id, ownerName: cur ? cur.ownerName : user.name, shared: !!body.shared, widgets, updatedAt: now() };
+    const json = JSON.stringify(data); if (json.length > 256 * 1024) throw new HttpError(413, 'That dashboard is too large.');
+    q.upsertDoc.run(dp, 'dashboards', m[1], json, now(), user.id);
+    return send(res, 200, { id: m[1], ...data });
+  });
+}
+// ================= end dashboards =================
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');

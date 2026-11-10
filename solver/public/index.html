@@ -537,6 +537,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
 
 <script src="/formula.js"></script>
 <script src="/ks-client.js"></script>
+<script src="/views.js"></script>
 <script src="/qr.js"></script>
 <script>
 (() => {
@@ -840,6 +841,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
   // ---------- rendering ----------
   function isEditing() {
     const a = document.activeElement;
+    if (window.KSViews && KSViews.busy()) return true; // a timeline bar is being dragged
     return a && a.matches && a.matches('input[type=text], input:not([type]), input[type=date], textarea') && a.closest('#app, #layer') && !a.matches('.search');
   }
   let renderTimer = null;
@@ -869,6 +871,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
         <div><div class="brand-name">Solver.ca</div><div class="brand-tag">CRM · test build</div></div></div>
       ${S.me ? `<div class="whoami"><span class="role ${S.isGuest ? 'guest-badge' : ''}">${roleLabel()}</span><b>${esc(S.me.name || 'Signed in')}</b></div>` : ''}
       <button class="board-link" data-act="go-home" aria-current="${S.page === 'home'}"><span class="dot"></span>Home</button>
+      ${window.KSViews && !S.isGuest ? KSViews.railLink() : ''}
       <button class="board-link" data-act="notifs" aria-label="Notifications${S.notifs.unread ? ', ' + S.notifs.unread + ' unread' : ''}" style="margin-top:-14px">${IC.bell.replace('<svg', '<svg class="bell"')}Notifications${S.notifs.unread ? `<span class="nbadge">${S.notifs.unread > 99 ? '99+' : S.notifs.unread}</span>` : ''}</button>
       ${S.isGuest ? '' : `<div><h2>Workspace</h2><select class="kbd-select ws-select" id="ws-select" aria-label="Workspace">`}${S.isGuest ? '' : `${workspaces().map(w => `<option value="${esc(w.id)}" ${w.id === S.ws ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select></div>`}
       <div><h2>${S.isGuest ? 'Boards shared with you' : 'Boards'} · ${wsBoards().length}</h2>
@@ -882,8 +885,8 @@ td.currency::before, td.percent::after { color: var(--muted); }
 
   function renderHead() {
     const b = board();
-    $('#head').hidden = S.page === 'home';
-    if (!b || S.page === 'home') { $('#head').innerHTML = ''; return; }
+    $('#head').hidden = S.page === 'home' || S.page === 'dash';
+    if (!b || S.page === 'home' || S.page === 'dash') { $('#head').innerHTML = ''; return; }
     const opts = workspaces().map(w => `<optgroup label="${esc(w.name)}">${S.boards.filter(x => wsOf(x).id === w.id).map(x => `<option value="${esc(x.id)}" ${x.id === S.boardId ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</optgroup>`).join('');
     const statusCols = b.columns.filter(c => c.type === 'status');
     $('#head').innerHTML = `
@@ -897,12 +900,14 @@ td.currency::before, td.percent::after { color: var(--muted); }
       <div class="head-row">
         <div class="tabs" role="group" aria-label="View">
           <button class="tab" data-act="view" data-v="table" aria-pressed="${S.view === 'table' && !S.viewId}">Main table</button>
-          ${(b.views || []).map(v => `<button class="tab" data-act="saved-view" data-id="${esc(v.id)}" aria-pressed="${S.view === 'table' && S.viewId === v.id}">${esc(v.name)}</button>`).join('')}
-          <button class="tab" data-act="view" data-v="kanban" aria-pressed="${S.view === 'kanban'}">Kanban</button>
-          <button class="tab" data-act="view" data-v="calendar" aria-pressed="${S.view === 'calendar'}">Calendar</button>
+          ${(b.views || []).map(v => `<button class="tab" data-act="saved-view" data-id="${esc(v.id)}" aria-pressed="${S.viewId === v.id}">${esc(v.name)}</button>`).join('')}
+          <button class="tab" data-act="view" data-v="kanban" aria-pressed="${S.view === 'kanban' && !S.viewId}">Kanban</button>
+          <button class="tab" data-act="view" data-v="calendar" aria-pressed="${S.view === 'calendar' && !S.viewId}">Calendar</button>
+          ${window.KSViews ? KSViews.tabs(b) : ''}
         </div>
         ${S.view === 'calendar' && b.columns.filter(c => c.type === 'date').length > 1 ? `<select class="kbd-select" id="cal-col" aria-label="Date column">${b.columns.filter(c => c.type === 'date').map(c => `<option value="${c.id}" ${c.id === calColId(b) ? 'selected' : ''}>By ${esc(c.title)}</option>`).join('')}</select>` : ''}
         ${S.view === 'kanban' && statusCols.length > 1 ? `<select class="kbd-select" id="kanban-col" aria-label="Group cards by">${statusCols.map(c => `<option value="${c.id}" ${c.id === kanbanColId(b) ? 'selected' : ''}>By ${esc(c.title)}</option>`).join('')}</select>` : ''}
+        ${window.KSViews ? KSViews.head(b) : ''}
         <input class="search" id="search" type="search" placeholder="Search this board" value="${esc(S.search)}" aria-label="Search this board">
         ${peopleOnBoard(b).length ? `<select class="kbd-select" id="person-filter" aria-label="Filter by person"><option value="">Person: everyone</option>${peopleOnBoard(b).map(p => `<option value="${esc(p)}" ${p === S.person ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>` : ''}
         ${filterCount() ? `<button class="btn" data-act="clear-filters">Filtered · ${filterCount()} ✕</button>` : ''}
@@ -1004,6 +1009,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
   function renderContent() {
     const b = board(), el = $('#content');
     if (S.status === 'offline') { el.innerHTML = `<div class="empty"><h3>Can’t reach the server</h3>Check your connection, then reload the page.</div>`; return; }
+    if (S.page === 'dash' && window.KSViews && S.boards.length) { el.innerHTML = KSViews.renderDash(); return; }
     if (S.page === 'home' && S.boards.length) { el.innerHTML = renderHome(); return; }
     if (S.status === 'slow' && !S.boards.length) { el.innerHTML = `<div class="empty"><h3>Still connecting</h3>The boards can’t be reached yet. They will appear here by themselves once the connection comes back.</div>`; return; }
     if (!b) {
@@ -1016,7 +1022,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     const dl = `<datalist id="people">${people.map(p => `<option value="${esc(p)}">`).join('')}</datalist>`;
     const imp = renderImporter();
     if (!S.itemsLoaded && !S.items.length) { el.innerHTML = imp + `<div class="empty"><h3>Loading ${esc(b.name)}</h3>Its items appear here in a moment.</div>`; return; }
-    el.innerHTML = imp + dl + (S.view === 'kanban' ? renderKanban(b) : S.view === 'calendar' ? renderCalendar(b) : renderTable(b));
+    el.innerHTML = imp + dl + (S.view === 'kanban' ? renderKanban(b) : S.view === 'calendar' ? renderCalendar(b) : window.KSViews && KSViews.has(S.view) ? KSViews.render(b) : renderTable(b));
   }
 
   function renderTable(b) {
@@ -1352,6 +1358,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
       const link = x => `<button class="li" data-act="board" data-id="${esc(x.id)}"><span class="li-ic">${esc(initials(x.name))}</span><span class="li-main"><b>${esc(x.name)}</b></span><span class="chev">›</span></button>`;
       return `<h3>Boards</h3>
         ${S.isGuest ? '' : `<select class="kbd-select ws-select" id="ws-select" aria-label="Workspace">${workspaces().map(w => `<option value="${esc(w.id)}" ${w.id === S.ws ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select>`}
+        ${window.KSViews && !S.isGuest ? `<div class="glass list"><button class="li" data-act="go-dash"><span class="li-ic">▦</span><span class="li-main"><b>Dashboards</b><span>Numbers and charts across boards</span></span><span class="chev">›</span></button></div>` : ''}
         <div class="glass list">${wsBoards().map(link).join('') || '<p class="home-skel">No boards in this workspace.</p>'}</div>
         <div><button class="btn" data-act="close-modal-btn">Close</button></div>`;
     }
@@ -1476,10 +1483,10 @@ td.currency::before, td.percent::after { color: var(--muted); }
       case 'sheet-boards': S.modal = { type: 'boards' }; renderLayer(); break;
       case 'sheet-profile': S.modal = { type: 'profile' }; renderLayer(); break;
       case 'quick-new': { const b2 = board(); if (b2 && b2.groups[0]) { S.page = 'board'; savePage(); render(); addItem(b2.groups[0].id, 'New lead', true); } else toast('Open a board first.'); break; }
-      case 'saved-view': S.viewId = t.dataset.id; S.view = 'table'; S.shown = {}; render(); break;
+      case 'saved-view': { const sv = b && (b.views || []).find(v => v.id === t.dataset.id); S.viewId = t.dataset.id; S.view = sv && sv.type && (['kanban', 'calendar'].includes(sv.type) || (window.KSViews && KSViews.has(sv.type))) ? sv.type : 'table'; } S.shown = {}; render(); break;
       case 'save-view': S.modal = { type: 'save-view' }; renderLayer(); setTimeout(() => $('#sv-name') && $('#sv-name').focus(), 0); break;
       case 'do-save-view': { const name = ($('#sv-name').value || '').trim(); if (!name) return; const rules = []; Object.entries(S.filters).forEach(([cid, vals]) => { if (vals && vals.length) rules.push({ col: cid, op: 'any', values: vals }); }); if (S.person) { const pc = b.columns.find(c => c.type === 'person'); if (pc) rules.push({ col: pc.id, op: 'any', values: [S.person] }); }
-        const v = { id: rid('v'), name, rules, sort: S.sort, columns: b.columns.filter(c => !S.hidden.has(c.id)).map(c => c.id), source: 'keystone' }; const views = [...(b.views || []), v]; patchBoard({ views }); localBoard({ views }); S.filters = {}; S.sort = null; S.person = ''; S.viewId = v.id; S.modal = null; toast(`Saved view “${name}”`); render(); break; }
+        const v = { id: rid('v'), name, rules, sort: S.sort, columns: b.columns.filter(c => !S.hidden.has(c.id)).map(c => c.id), source: 'keystone', ...(window.KSViews && KSViews.has(S.view) ? { type: S.view, settings: KSViews.settings(S.view) } : {}) }; const views = [...(b.views || []), v]; patchBoard({ views }); localBoard({ views }); S.filters = {}; S.sort = null; S.person = ''; S.viewId = v.id; S.modal = null; toast(`Saved view “${name}”`); render(); break; }
       case 'delete-view': { if (S.confirmDelete !== 'v:' + S.viewId) { S.confirmDelete = 'v:' + S.viewId; renderHead(); return; } S.confirmDelete = null; const views = (b.views || []).filter(v => v.id !== S.viewId); S.viewId = null; patchBoard({ views }); localBoard({ views }); break; }
       case 'view': S.viewId = null; S.view = t.dataset.v; try { localStorage.setItem('ks-view', S.view); } catch (x) {} render(); break;
       case 'notifs': S.pop = null; S.modal = { type: 'notifs' }; renderLayer(); loadNotifs(); break;
@@ -2124,13 +2131,14 @@ td.currency::before, td.percent::after { color: var(--muted); }
   }
   function renderNav() {
     const nav = $('#bnav'); if (!nav) return;
-    const cur = S.page === 'home' ? 'home' : S.view === 'calendar' ? 'cal' : 'boards';
+    const cur = S.page === 'home' ? 'home' : S.page === 'dash' ? 'dash' : S.view === 'calendar' ? 'cal' : 'boards';
     const btn = (k, act, label, ic) => `<button data-act="${act}" aria-current="${cur === k}" aria-label="${label}">${ic}<span>${label}</span></button>`;
     nav.innerHTML = btn('home', 'go-home', 'Home', IC.home) + btn('boards', 'sheet-boards', 'Boards', IC.boards)
       + `<button data-act="quick-new" aria-label="New lead"><span class="bnav-plus">${IC.plus}</span></button>`
       + btn('cal', 'go-calendar', 'Calendar', IC.cal) + btn('me', 'sheet-profile', 'Profile', `<span class="nwrap">${IC.user}${S.notifs.unread ? `<span class="nbadge">${S.notifs.unread > 9 ? '9+' : S.notifs.unread}</span>` : ''}</span>`);
   }
 
+  if (window.KSViews) KSViews.init({ S, board, itemById, visibleItems, labelOf, splitPeople, fileList, isFileCol, describe, colEditable, setValue, patchItem, patchBoard, localBoard, formulaResult, hue, initials, toast, render, renderHead, renderContent, renderLayer, savePage });
   async function init() {
     render();
     if (!(window.claude && window.claude.use)) { S.status = 'offline'; render(); return; }
