@@ -284,7 +284,8 @@
 
   // ---------- head: tabs and per-view controls ----------
   function tabs(b) {
-    queueMicrotask(() => { const c = document.querySelector('.head .tabs'), t = c && c.querySelector('.tab[aria-pressed="true"]'); if (t && c.scrollWidth > c.clientWidth) c.scrollLeft = t.offsetLeft - c.clientWidth / 2 + t.offsetWidth / 2; });
+    // after the frame is laid out anyway (reading scrollWidth right after the header renders forced an extra layout)
+    requestAnimationFrame(() => { const c = document.querySelector('.head .tabs'), t = c && c.querySelector('.tab[aria-pressed="true"]'); if (t && c.scrollWidth > c.clientWidth) c.scrollLeft = t.offsetLeft - c.clientWidth / 2 + t.offsetWidth / 2; });
     return TYPES.map(([k, l]) => `<button class="tab" data-act="view" data-v="${k}" aria-pressed="${A.S.view === k && !A.S.viewId}">${l}</button>`).join('');
   }
   const sel = (k, opts, cur, label) => `<select class="kbd-select" data-vxset="${k}" aria-label="${esc(label)}">${opts.map(([v, l]) => `<option value="${esc(v)}" ${String(v) === String(cur) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
@@ -616,11 +617,13 @@
   // ---------- Files ----------
   const extOf = n => { const m = /\.([a-z0-9]{1,5})(?:$|\?)/i.exec(String(n || '')); return m ? m[1].toLowerCase() : ''; };
   const KIND = e => /^(png|jpe?g|gif|webp|heic|svg)$/.test(e) ? 'image' : e === 'pdf' ? 'pdf' : /^(docx?|xlsx?|csv|txt|pptx?|rtf|odt)$/.test(e) ? 'doc' : 'other';
+  // only web links and our own uploads become links (never javascript: or data:)
+  const SAFE = u => { const x = String(u || '').trim(); return /^https?:\/\/\S+$/i.test(x) || /^\/api\/files\/\S*$/.test(x) ? x : ''; };
   function collectFiles(b, items) {
     const out = [];
     for (const it of items) {
       for (const c of b.columns) if (A.isFileCol(c)) A.fileList((it.values || {})[c.id]).forEach(f => out.push({ name: f.name || f.url, url: f.url, it, src: c.title, at: '' }));
-      (it.updates || []).forEach(u => (u.files || []).forEach(f => out.push({ name: f.name || f.url, url: f.url || '', it, src: 'Update', at: u.at, by: u.byName })));
+      (it.updates || []).forEach(u => (u.files || []).forEach(f => out.push({ name: f.name || f.url, url: SAFE(f.url), it, src: 'Update', at: u.at, by: u.byName })));
     }
     return out;
   }

@@ -103,6 +103,20 @@ canvas#burst { position: fixed; inset: 0; width: 100%; height: 100%; pointer-eve
 
 @media (max-width: 520px) { h1 { font-size: 34px; } .stage { margin-top: 70px; } form { padding: 54px 20px 22px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } .tilt { transform: none !important; } }
+/* the coins and floor always stay behind the card (3D layers could poke through it) */
+.world { z-index: 0; isolation: isolate; }
+.stage { isolation: isolate; transform: translateZ(0); }
+/* 16px fields: iPhone doesn't zoom the page when one is tapped */
+input { font-size: 16px; }
+/* small phones (iPhone SE): nothing in the card gets squashed; the page scrolls instead */
+form > * { flex-shrink: 0; }
+form { max-height: none; overflow-y: visible; }
+body { min-height: 100dvh; height: auto; overflow-x: hidden; overflow-y: auto; grid-template-columns: minmax(0, 1fr); }
+@media (max-height: 700px) {
+  body { place-items: start center; padding-top: max(16px, env(safe-area-inset-top, 0px)); }
+  .stage { margin-top: 124px; } /* room for Penny and her speech bubble above the card */
+  .bubble { white-space: normal; width: max-content; max-width: min(240px, 70vw); text-align: center; }
+}
 </style>
 </head>
 <body>

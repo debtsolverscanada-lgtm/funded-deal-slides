@@ -22,14 +22,24 @@
   // ---- live collection cache ----
   const cols = new Map(); // collection path -> { docs: Map(id -> data), listeners: Set, loaded, pending }
   const docSnap = (id, data) => ({ id, exists: data !== undefined, data: () => data, metadata: { fromCache: false, hasPendingWrites: false } });
-  function snapshot(entry) {
+  // changes: the ids that changed since the last snapshot (live updates), or null when everything may have changed
+  function snapshot(entry, changes) {
     const docs = [...entry.docs.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([id, d]) => docSnap(id, d));
-    return { docs, size: docs.length, empty: !docs.length, metadata: { fromCache: !entry.loaded, hasPendingWrites: false }, docChanges: () => [] };
+    return { docs, size: docs.length, empty: !docs.length, metadata: { fromCache: !entry.loaded, hasPendingWrites: false }, changes: changes || null, get: id => entry.docs.get(id),
+      docChanges: () => (changes || []).map(id => ({ type: entry.docs.has(id) ? 'modified' : 'removed', doc: docSnap(id, entry.docs.get(id)) })) };
   }
-  function notify(entry) {
+  // Live updates arrive one document at a time; a burst (an import, an automation, a bulk edit elsewhere) is gathered
+  // for a moment and handed to the page as one snapshot that says which documents changed.
+  function notify(entry, id) {
+    if (id === undefined) entry.changed = null;
+    else if (entry.changed !== null) (entry.changed = entry.changed || new Set()).add(id);
     if (entry.pending) return;
     entry.pending = true;
-    queueMicrotask(() => { entry.pending = false; const s = snapshot(entry); entry.listeners.forEach(l => { try { l.next(s); } catch (e) { console.error(e); } }); });
+    const run = () => {
+      entry.pending = false; const ch = entry.changed; entry.changed = undefined;
+      const s = snapshot(entry, ch ? [...ch] : null); entry.listeners.forEach(l => { try { l.next(s); } catch (e) { console.error(e); } });
+    };
+    if (id === undefined) queueMicrotask(run); else setTimeout(run, 40);
   }
   async function load(path, entry) {
     const rows = await call('GET', '/api/col?path=' + encodeURIComponent(path));
@@ -53,7 +63,7 @@
       if (ev.op === 'set' || ev.op === 'delete') emit('change', { op: ev.op, col: ev.col, id: ev.id });
       const entry = cols.get(ev.col); if (!entry) return;
       if (ev.op === 'set') entry.docs.set(ev.id, ev.data); else entry.docs.delete(ev.id);
-      notify(entry);
+      notify(entry, ev.id);
     };
     es.onerror = () => { hadError = true; };
     es.onopen = () => { if (hadError) { hadError = false; cols.forEach((entry, path) => load(path, entry).catch(() => {})); emit('reconnect'); } };
