@@ -691,6 +691,11 @@ if (require.main === module) {
   } else if (q.userCount.get().n === 0) {
     console.log('No accounts yet. Set ADMIN_EMAIL and ADMIN_PASSWORD, or run:  node scripts/create-user.js you@example.com "Your Name" admin "a-strong-password"');
   }
+  // First start with a Monday token: fill in each board's private/open access from Monday (read-only), once.
+  if (process.env.MONDAY_API_TOKEN && q.docsInCol.all('boards').some(r => { try { return !JSON.parse(r.data).access; } catch (e) { return false; } })) {
+    const child = require('node:child_process').spawn(process.execPath, [path.join(__dirname, 'scripts', 'monday-board-access.js')], { stdio: 'inherit', env: process.env });
+    child.on('exit', code => console.log('Board access from Monday:', code === 0 ? 'done' : 'failed (' + code + ')'));
+  }
   server.listen(PORT, () => console.log(`Solver.ca running on http://localhost:${PORT}  (data: ${DATA_DIR})`));
   if (livePullOn()) {
     const every = 5 * 60 * 1000;
