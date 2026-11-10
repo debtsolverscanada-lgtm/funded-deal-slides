@@ -2447,6 +2447,22 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     KS.markRead(ids ? { ids } : { all: true }).then(r => { S.notifs.unread = r.unread; renderRail(); renderNav(); }).catch(() => {});
   }
 
+  // Shift-click (or Cmd/Ctrl-click) a row's checkbox: every lead between the last one you ticked and this one gets the
+  // same tick, in the order the table shows them (groups top to bottom). Runs before the change handler below.
+  document.addEventListener('click', e => {
+    const t = e.target; if (!(t instanceof HTMLInputElement) || !t.dataset || !t.dataset.sel) return;
+    const id = t.dataset.sel, b = board();
+    if ((e.shiftKey || e.metaKey || e.ctrlKey) && S.selAnchor && S.selAnchor !== id && b) {
+      const order = (b.groups || []).flatMap(g => (TV.items || []).filter(i => i.group === g.id)).map(i => i.id);
+      let a = order.indexOf(S.selAnchor), z = order.indexOf(id);
+      if (a >= 0 && z >= 0) {
+        if (a > z) [a, z] = [z, a];
+        const on = t.checked; order.slice(a, z + 1).forEach(x => on ? S.selected.add(x) : S.selected.delete(x));
+        S.selAnchor = id; S.confirmDelete = null; selChanged(); return;
+      }
+    }
+    S.selAnchor = id;
+  }, true);
   document.addEventListener('change', e => {
     if (window.SolverExt && SolverExt.onChange(e)) return;
     const t = e.target, b = board();
