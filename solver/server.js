@@ -168,6 +168,32 @@ function refreshClients(userId) {
 }
 setInterval(() => { for (const res of clients.keys()) res.write(': ping\n\n'); }, 25000).unref();
 
+// ---------- Penny's heads-ups ("buzz"): small, friendly updates shown by the pet ----------
+// Sent like other live updates, so private boards only reach people who can see them. Nothing is stored or sent outside.
+function buzz(bid, iid, before, after, by, extra) {
+  try {
+    if (!after && !extra) return;
+    const r = q.doc.get('boards/' + bid); if (!r) return; const b = JSON.parse(r.data);
+    const name = String((after || before || {}).name || 'A lead').slice(0, 60), out = [];
+    const people = (b.columns || []).filter(c => c.type === 'person').map(c => String(((after || {}).values || {})[c.id] || '')).join(', ');
+    const send1 = (kind, text) => out.push({ kind, text, board: bid, boardName: b.name, item: String(iid), name, people, by: by || '' });
+    if (extra) send1(extra.kind, extra.text);
+    else if (!before) send1('new', `New lead! ${name} just landed on ${b.name}`);
+    else {
+      if (before.group !== after.group) { const g = (b.groups || []).find(x => x.id === after.group); if (g) send1('moved', `${name} moved to ${g.name}`); }
+      const nb = (before.updates || []).length, na = (after.updates || []).length;
+      if (na > nb) { const u = after.updates[na - 1] || {}; send1('note', `New note on ${name}${u.byName ? ' from ' + String(u.byName).split(' ')[0] : ''}`); }
+      for (const c of b.columns || []) {
+        if (c.type !== 'date') continue; const x = ((before.values || {})[c.id]) || '', y = ((after.values || {})[c.id]) || '';
+        if (!y || y <= x) continue;
+        if (/last date texted/i.test(c.title)) send1('text', `New text activity with ${name}`);
+        else if (/last date contacted/i.test(c.title)) send1('call', `New call logged with ${name}`);
+      }
+    }
+    for (const ev of out.slice(0, 3)) broadcast({ op: 'buzz', col: `boards/${bid}/items`, id: String(iid), ev });
+  } catch (e) { /* a heads-up must never break a save */ }
+}
+
 // ---------- in-app notifications (inside Solver.ca only; nothing is emailed or texted) ----------
 const nq = {
   insert: db.prepare('INSERT INTO notifications (id, user_id, at, kind, text, board, item) VALUES (?, ?, ?, ?, ?, ?, ?)'),
@@ -299,7 +325,7 @@ function throttled(ip) {
   return r.n >= 10;
 }
 
-const integ = require('./integrations.js')({ db, q, now, broadcast, HttpError, readBody, send, merge, notifyNames, itemNotifications, fillTemplate });
+const integ = require('./integrations.js')({ db, q, now, broadcast, HttpError, readBody, send, merge, notifyNames, itemNotifications, fillTemplate, buzz });
 module.exports.integ = integ;
 
 async function api(req, res, url) {
@@ -501,6 +527,7 @@ async function api(req, res, url) {
       const json = JSON.stringify(data);
       if (json.length > 1024 * 1024) throw new HttpError(413, 'That record is too large.');
       q.upsertDoc.run(dp, col, id, json, now(), user.id);
+      { const m = /^boards\/([^/]+)\/items\/([^/]+)$/.exec(dp); if (m) buzz(m[1], m[2], before, data, user.id); }
       if (col === 'boards') boardCache.delete(id);
       broadcast({ op: 'set', col, id, data });
       integ.itemChanged(dp, before, data, user.id);
@@ -633,7 +660,7 @@ async function runMondayPull() {
     const itemPath = (bid, iid) => `boards/${bid}/items/${iid}`;
     const store = {
       getItem: (bid, iid) => { const r = q.doc.get(itemPath(bid, iid)); return r ? JSON.parse(r.data) : null; },
-      saveItem: (bid, iid, doc) => { q.upsertDoc.run(itemPath(bid, iid), `boards/${bid}/items`, String(iid), JSON.stringify(doc), now(), 'monday-sync'); broadcast({ op: 'set', col: `boards/${bid}/items`, id: String(iid), data: doc }); },
+      saveItem: (bid, iid, doc) => { const prev = q.doc.get(itemPath(bid, iid)); q.upsertDoc.run(itemPath(bid, iid), `boards/${bid}/items`, String(iid), JSON.stringify(doc), now(), 'monday-sync'); broadcast({ op: 'set', col: `boards/${bid}/items`, id: String(iid), data: doc }); buzz(bid, iid, prev ? JSON.parse(prev.data) : null, doc, 'monday'); },
       removeItem: (bid, iid) => {
         const r = q.doc.get(itemPath(bid, iid)); if (!r) return false;
         let d = {}; try { d = JSON.parse(r.data); } catch (e) {}

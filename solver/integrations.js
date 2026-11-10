@@ -3,7 +3,7 @@
 'use strict';
 const crypto = require('node:crypto');
 
-module.exports = function integrations({ db, q, now, broadcast, HttpError, readBody, send, merge, notifyNames = () => 0, itemNotifications = () => {}, fillTemplate = t => t }) {
+module.exports = function integrations({ db, q, now, broadcast, HttpError, readBody, send, merge, notifyNames = () => 0, itemNotifications = () => {}, fillTemplate = t => t, buzz = () => {} }) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS api_keys (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, prefix TEXT NOT NULL, hash TEXT NOT NULL UNIQUE,
@@ -160,6 +160,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     q.upsertDoc.run(path, `boards/${bid}/items`, iid, JSON.stringify(data), now(), actor.id);
     broadcast({ op: 'set', col: `boards/${bid}/items`, id: iid, data });
     itemChanged(path, before, data, actor.id);
+    buzz(bid, iid, before, data, actor.id);
     try { itemNotifications(path, before, data, actor); } catch (e) { console.error('notifications:', e.message); }
   }
   function createItem(b, body, actor) {
@@ -220,6 +221,21 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     if (!user) throw new HttpError(401, 'Send your API key as: Authorization: Bearer ks_…');
     const needWrite = () => { if (user.scope !== 'write') throw new HttpError(403, 'This API key is read-only.'); };
     if (p === '/api/v1/me') return send(res, 200, { key: user.name, scope: user.scope });
+    if (p === '/api/v1/events' && method === 'POST') {
+      needWrite(); const body = await readBody(req);
+      const KINDS = { client_texted: ['text', n => `${n} just texted you!`], client_called: ['call', n => `${n} just called!`], client_emailed: ['email', n => `${n} just emailed!`], documents_received: ['docs', n => `New documents from ${n}!`] };
+      const k = KINDS[body.type]; if (!k) throw new HttpError(400, 'type must be one of: ' + Object.keys(KINDS).join(', '));
+      let hits = [];
+      if (body.board && body.item) hits = [{ bid: body.board, iid: String(body.item) }];
+      else {
+        const phone = String(body.phone || '').replace(/\D/g, '').slice(-10), email = String(body.email || '').toLowerCase();
+        if (!phone && !email) throw new HttpError(400, 'Send phone, email, or board + item.');
+        for (const br of q.docsInCol.all('boards')) { const bd = JSON.parse(br.data); const pc = (bd.columns || []).filter(c => c.type === 'phone').map(c => c.id), ec = (bd.columns || []).filter(c => c.type === 'email').map(c => c.id);
+          for (const r of q.docsInCol.all(`boards/${br.id}/items`)) { const v = (JSON.parse(r.data).values || {}); if ((phone && pc.some(c => String(v[c] || '').replace(/\D/g, '').slice(-10) === phone)) || (email && ec.some(c => String(v[c] || '').toLowerCase() === email))) hits.push({ bid: br.id, iid: r.id }); } }
+      }
+      for (const h of hits.slice(0, 5)) { const r = q.doc.get(`boards/${h.bid}/items/${h.iid}`); if (!r) continue; const d = JSON.parse(r.data); buzz(h.bid, h.iid, null, d, user.id, { kind: k[0], text: k[1](String(d.name || 'A client').slice(0, 60)) }); }
+      return send(res, 200, { ok: true, matched: hits.length });
+    }
     if (p === '/api/v1/boards' && method === 'GET') return send(res, 200, q.docsInCol.all('boards').map(r => boardOut(r.id, JSON.parse(r.data))).sort((a, c) => a.name.localeCompare(c.name)));
     if (p === '/api/v1/search' && method === 'GET') {
       const qs = (url.searchParams.get('q') || '').toLowerCase(), phone = (url.searchParams.get('phone') || '').replace(/\D/g, '').slice(-10), email = (url.searchParams.get('email') || '').toLowerCase();

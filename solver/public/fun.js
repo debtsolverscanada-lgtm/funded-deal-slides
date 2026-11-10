@@ -84,6 +84,59 @@
   };
   hook(); setTimeout(hook, 500);
 
+  // ---------- Penny's heads-ups: new leads, text/call activity, notes, moves, mentions ----------
+  // Setting (Flair): all boards / only mine / off. Bursts are bundled; tap the bubble to open the lead.
+  html.setAttribute('data-flair-news', get('news', 'mine'));
+  const ICON = { new: '✨', text: '💬', call: '📞', email: '✉️', docs: '📎', note: '📝', moved: '➡️', mention: '👋', due: '⏰' };
+  const queue = []; let showing = null, flushTimer = null;
+  const me = () => (window.SolverMe ? window.SolverMe() : { name: '', homeBoard: '', boards: [] });
+  function mine(ev) {
+    const m = me(), first = String(m.name || '').split(/\s+/)[0].toLowerCase();
+    if (m.homeBoard && ev.board === m.homeBoard) return true;
+    if (first && first !== 'your' && String(ev.boardName || '').toLowerCase().includes('(' + first)) return true;
+    if (first && String(ev.people || '').toLowerCase().split(/,\s*/).some(p => p.split(' ')[0] === first)) return true;
+    return false;
+  }
+  function showNews(text, sub, open) {
+    if (html.getAttribute('data-flair-pet') === 'off') return;
+    pet.querySelectorAll('.pet-news').forEach(b => b.remove());
+    const b = document.createElement('div'); b.className = 'pet-news'; b.setAttribute('role', 'status');
+    const t = document.createElement('div'); t.textContent = text; b.appendChild(t);
+    if (sub) { const s2 = document.createElement('small'); s2.textContent = sub; b.appendChild(s2); }
+    const x = document.createElement('button'); x.className = 'pn-x'; x.textContent = '×'; x.setAttribute('aria-label', 'Dismiss'); b.appendChild(x);
+    b.addEventListener('click', e => { e.stopPropagation(); if (e.target === x) { b.classList.add('out'); setTimeout(() => b.remove(), 300); return; } b.remove(); if (open) open(); });
+    pet.appendChild(b); wake(); mood('pet-happy', 1200); if (motionOn()) hearts(2);
+    clearTimeout(showing); showing = setTimeout(() => { b.classList.add('out'); setTimeout(() => b.remove(), 300); }, 6500);
+  }
+  function flush() {
+    flushTimer = null; if (!queue.length) return;
+    const batch = queue.splice(0);
+    if (batch.length === 1) { const ev = batch[0]; showNews(`${ICON[ev.kind] || '✨'} ${ev.text}`, ev.boardName && !ev.text.includes(ev.boardName) ? ev.boardName : 'Tap to open', () => window.SolverOpen && window.SolverOpen(ev.board, ev.item)); return; }
+    const byKind = {}; batch.forEach(ev => (byKind[ev.kind] = byKind[ev.kind] || []).push(ev));
+    const parts = Object.entries(byKind).map(([k, v]) => k === 'new' ? `${v.length} new lead${v.length > 1 ? 's' : ''}` : k === 'text' ? `${v.length} text${v.length > 1 ? 's' : ''}` : k === 'call' ? `${v.length} call${v.length > 1 ? 's' : ''}` : k === 'note' ? `${v.length} new note${v.length > 1 ? 's' : ''}` : k === 'moved' ? `${v.length} move${v.length > 1 ? 's' : ''}` : `${v.length} update${v.length > 1 ? 's' : ''}`);
+    const first = batch[batch.length - 1];
+    showNews(`🎉 ${parts.join(', ')} just came in!`, `Latest: ${first.name}. Tap to open`, () => window.SolverOpen && window.SolverOpen(first.board, first.item));
+  }
+  function onBuzz(ev) {
+    const setting = html.getAttribute('data-flair-news'); if (setting === 'off' || !ev) return;
+    if (ev.by && window.SolverMe && ev.by === window.SolverMe().id) return; // not your own changes
+    if (setting === 'mine' && !mine(ev)) return;
+    queue.push(ev); if (queue.length > 30) queue.shift();
+    if (!flushTimer) flushTimer = setTimeout(flush, 2500);
+  }
+  (function attach() { if (window.KS && window.KS.on) { window.KS.on('buzz', onBuzz); window.KS.on('notify', n => { if (n && /mention/i.test(n.kind || '')) onBuzz({ kind: 'mention', text: 'Psst… you were mentioned!', board: n.board, item: n.item, name: '', boardName: '', people: '' , by: '' }); }); } else setTimeout(attach, 400); })();
+  // a little hello with today's follow-ups, once per day
+  setTimeout(async () => {
+    try {
+      const today = new Date().toDateString(); if (get('hello', '') === today || html.getAttribute('data-flair-news') === 'off') return;
+      const ws = (localStorage.getItem('ks-ws') || 'main'); const sm = window.KS && window.KS.summary ? await window.KS.summary(ws) : null;
+      const f = sm && sm.followups; if (!f) return; set('hello', today);
+      const first = String(me().name || '').split(/\s+/)[0]; const hi = first && !/^your$/i.test(first) ? `Hi ${first}! ` : 'Hi! ';
+      if (f.dueToday || f.overdue) showNews(`⏰ ${hi}${f.dueToday} follow-up${f.dueToday === 1 ? '' : 's'} due today${f.overdue ? `, ${f.overdue} overdue` : ''}.`, 'Tap to see the calendar', () => document.querySelector('[data-act="go-calendar"]') && document.querySelector('[data-act="go-calendar"]').click());
+      else showNews(`☀️ ${hi}No follow-ups due today. Let’s find a new deal!`);
+    } catch (e) {}
+  }, 4000);
+
   // ---------- Flair picker ----------
   const THEMES = [['classic', 'Classic', '#ffffff'], ['cyan', 'Cyan', '#3ef2ff'], ['magenta', 'Magenta', '#ff4fd8'], ['lime', 'Lime', '#b6ff3e'], ['aurora', 'Aurora', '#9fd8ff']];
   function openFlair() {
@@ -96,6 +149,7 @@
       <div class="fx-row"><div class="pop-section">Avatar ring</div>${seg('ring', [['spin', 'Neon spin'], ['sparkle', 'Spin + sparkle'], ['off', 'None']])}</div>
       <div class="fx-row"><div class="pop-section">Name</div>${seg('name', [['shimmer', 'Shimmer'], ['plain', 'Plain']])}</div>
       <div class="fx-row"><div class="pop-section">Penny the money pet</div>${seg('pet', [['on', 'Show Penny'], ['off', 'Hide']])}</div>
+      <div class="fx-row"><div class="pop-section">Penny’s heads-ups</div>${seg('news', [['mine', 'My boards'], ['all', 'All boards'], ['off', 'Off']])}<p style="margin-top:8px">New leads, texts, calls, notes and mentions, as little bubbles. Tap one to open the lead.</p></div>
       <div class="form-row" style="margin-top:8px"><button class="btn primary" data-fx-close>Done</button><button class="btn" data-fx-party>Test confetti</button></div></div>`;
     document.body.appendChild(wrap);
     wrap.addEventListener('click', e => {

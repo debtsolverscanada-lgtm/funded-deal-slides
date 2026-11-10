@@ -45,6 +45,7 @@
     es.onmessage = e => {
       let ev; try { ev = JSON.parse(e.data); } catch (x) { return; }
       if (ev.op === 'notify') { emit('notify', ev.n); return; }
+      if (ev.op === 'buzz') { emit('buzz', ev.ev); return; }
       if (ev.op === 'reload') { cols.forEach((entry, path) => load(path, entry).catch(() => {})); return; }
       const entry = cols.get(ev.col); if (!entry) return;
       if (ev.op === 'set') entry.docs.set(ev.id, ev.data); else entry.docs.delete(ev.id);

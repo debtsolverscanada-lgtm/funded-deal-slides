@@ -80,3 +80,13 @@ html[data-flair-pet="off"] .pet { display: none; }
 
 html.mx-off .btn.primary::after, html.mx-off .bnav-plus::after, html.mx-off .hero::before { animation: none; }
 @media (prefers-reduced-motion: reduce) { .pet svg, .fx-tilt, .btn.primary::after, .hero::before, .whoami .fx-avatar::before { animation: none !important; transition: none !important; transform: none !important; } }
+
+/* Penny's heads-ups: a tappable bubble */
+.pet-news { position: absolute; bottom: 94px; left: 0; width: max-content; max-width: min(300px, calc(100vw - 40px)); background: rgba(14,14,16,.92); border: 1px solid var(--neon); box-shadow: 0 0 22px var(--neon-glow), 0 18px 50px rgba(0,0,0,.6); color: #fff; font-size: 13px; line-height: 1.35; padding: 9px 12px 9px 12px; border-radius: 14px; cursor: pointer; animation: pet-news-in .45s cubic-bezier(.2,.9,.25,1.15) both; text-align: left; }
+.pet-news::after { content: ""; position: absolute; left: 26px; bottom: -6px; width: 10px; height: 10px; background: inherit; border-right: 1px solid var(--neon); border-bottom: 1px solid var(--neon); transform: rotate(45deg); }
+.pet-news small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+.pet-news .pn-x { position: absolute; top: 3px; right: 6px; color: var(--muted); font-size: 12px; background: none; border: 0; cursor: pointer; }
+.pet-news.out { animation: pet-news-out .3s ease forwards; }
+@keyframes pet-news-in { from { opacity: 0; transform: translateY(8px) scale(.92); } to { opacity: 1; transform: none; } }
+@keyframes pet-news-out { to { opacity: 0; transform: translateY(6px) scale(.96); } }
+@media (max-width: 780px) { .pet-news { left: auto; right: 0; } .pet-news::after { left: auto; right: 22px; } }

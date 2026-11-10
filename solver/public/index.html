@@ -1973,6 +1973,8 @@ td.currency::before, td.percent::after { color: var(--muted); }
     if (window.KS) KS.users().then(l => { S.team = l; S.teamNames = l.filter(u => !u.disabled).map(u => u.name); }).catch(() => {});
     if (window.KS) {
       loadNotifs();
+      window.SolverOpen = (bid, iid) => { if (!S.boards.some(x => x.id === bid)) { toast('That board isn’t available to you.'); return; } S.modal = null; S.page = 'board'; S.view = 'table'; savePage(); selectBoard(bid); if (iid) { if (S.itemsLoaded && itemById(iid)) { S.openItem = iid; S.drawerTab = 'updates'; } else S.pendingOpen = iid; } render(); };
+      window.SolverMe = () => ({ id: S.uid, name: (S.me && S.me.name) || '', homeBoard: (S.me && S.me.homeBoard) || '', ws: S.ws, boards: S.boards.map(b => ({ id: b.id, name: b.name })) });
       KS.on('notify', n => { if (S.notifs.items.some(x => x.id === n.id)) return; S.notifs.items.unshift(n); S.notifs.unread++; toast(n.text.length > 110 ? n.text.slice(0, 108) + '…' : n.text); renderRail(); renderNav(); if (S.modal && ['notifs', 'profile'].includes(S.modal.type)) renderLayer(); });
       KS.on('reconnect', loadNotifs);
     }
