@@ -687,6 +687,17 @@ async function api(req, res, url) {
     return send(res, 200, { ok: true, sent: notifyNames(names, { kind: b.kind === 'reminder' ? 'reminder' : 'automation', text, board: bid, item: iid || null }) });
   }
 
+  // ---- button columns: log the press and send the button.pressed webhook ----
+  if (p === '/api/press' && method === 'POST') {
+    if (!canWrite(user)) throw new HttpError(403, 'Your account can view boards but not press buttons.');
+    const b = await readBody(req); const bid = String(b.board || ''), iid = String(b.item || ''), col = String(b.col || '');
+    const okId = x => /^[A-Za-z0-9_\-.~:@+]{1,200}$/.test(x);
+    if (!okId(bid) || !okId(iid) || !okId(col) || !boardInfo(bid)) throw new HttpError(404, 'No such board.');
+    const info = mustSee(user, bid);
+    const ir = q.doc.get(`boards/${bid}/items/${iid}`); if (!ir || !itemVisible(user, info, JSON.parse(ir.data))) throw new HttpError(404, 'No such item.');
+    return send(res, 200, { ok: true, ...integ.pressButton(bid, iid, col, user) });
+  }
+
   // ---- files ----
   if (p === '/api/files' && method === 'POST') {
     // guests may attach files to their updates; viewers can't upload

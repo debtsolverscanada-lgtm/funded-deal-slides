@@ -1312,8 +1312,8 @@ td.currency::before, td.percent::after { color: var(--muted); }
         <div class="form-row"><input class="field-input" id="sv-name" placeholder="View name, e.g. My follow-ups" style="flex:1 1 220px"><button class="btn primary" data-act="do-save-view">Save view</button><button class="btn" data-act="close-modal-btn">Cancel</button></div>`;
     }
     if (m.type === 'integrations') {
-      const I = m.data; const EV = ['item.created', 'item.updated', 'item.moved', 'item.status_changed', 'item.deleted', 'update.created', 'reminder.due'];
-      const evName = { 'item.created': 'New item', 'item.updated': 'Item changed', 'item.moved': 'Moved to a group', 'item.status_changed': 'Status changed', 'item.deleted': 'Item deleted', 'update.created': 'Update posted', 'reminder.due': 'Date reminder (Monday “when date arrives”)' };
+      const I = m.data; const EV = ['item.created', 'item.updated', 'item.moved', 'item.status_changed', 'item.deleted', 'update.created', 'reminder.due', 'button.pressed'];
+      const evName = { 'item.created': 'New item', 'item.updated': 'Item changed', 'item.moved': 'Moved to a group', 'item.status_changed': 'Status changed', 'item.deleted': 'Item deleted', 'update.created': 'Update posted', 'reminder.due': 'Date reminder (Monday “when date arrives”)', 'button.pressed': 'Button pressed (Build Application, Send to Scarlett…)' };
       const bname = id => (S.boards.find(x => x.id === id) || {}).name || 'All boards';
       const boardSel = (id, all) => `<select class="field-input" id="${id}" aria-label="Board">${all ? '<option value="">All boards</option>' : ''}${workspaces().map(w => `<optgroup label="${esc(w.name)}">${S.boards.filter(x => wsOf(x).id === w.id).map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')}</optgroup>`).join('')}</select>`;
       if (!I) return '<h3>Integrations</h3><p>Loading.</p>';
@@ -2017,8 +2017,11 @@ td.currency::before, td.percent::after { color: var(--muted); }
   function runButton(itemId, colId) {
     const b = board(), item = itemById(itemId), col = b && b.columns.find(c => c.id === colId); if (!item || !col) return;
     const rules = (b.automations || []).filter(r => r.on !== false && r.trigger === 'button' && r.col === colId);
-    if (!rules.length) { toast(`“${col.title}” runs a Monday tool. It isn’t connected in Solver.ca.`); return; }
-    runRules(b, item, rules, `Pressed ${col.title}`);
+    if (rules.length) runRules(b, item, rules, `Pressed ${col.title}`);
+    KS.api('POST', '/api/press', { board: b.id, item: item.id, col: col.id }).then(r => {
+      if (r.sent) toast(`“${col.title}” sent to ${r.sent === 1 ? 'the connected tool' : r.sent + ' connected tools'}.`);
+      else if (!rules.length) toast(`“${col.title}” isn’t connected yet. An admin can connect it in Integrations with a “Button pressed” webhook.`);
+    }).catch(e => toast(e.message));
   }
   // ---------- subitems (editable, with their own automations) ----------
   function subCell(b, item, sub, c) {

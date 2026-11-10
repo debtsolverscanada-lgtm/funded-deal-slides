@@ -18,7 +18,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
   `);
   const sha = s => crypto.createHash('sha256').update(s).digest('hex');
   const rid = p => p + crypto.randomBytes(9).toString('base64url');
-  const EVENTS = ['item.created', 'item.updated', 'item.moved', 'item.status_changed', 'item.deleted', 'update.created', 'reminder.due'];
+  const EVENTS = ['item.created', 'item.updated', 'item.moved', 'item.status_changed', 'item.deleted', 'update.created', 'reminder.due', 'button.pressed'];
 
   // ---------- helpers: boards and readable fields ----------
   const boardDoc = id => { const r = q.doc.get('boards/' + id); return r ? JSON.parse(r.data) : null; };
@@ -124,9 +124,24 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
   }
   function emit(event, boardId, itemId, b, item, extra = {}) {
     const hooks = outHooks().filter(h => { const ev = JSON.parse(h.events || '[]'); return (!ev.length || ev.includes(event)) && (!h.board || h.board === boardId); });
-    if (!hooks.length) return;
+    if (!hooks.length) return 0;
     const payload = { event, delivery: rid('d_'), at: now(), board: { id: boardId, name: b ? b.name : null }, item: item && b ? itemOut({ id: boardId, ...b }, itemId, item) : { id: itemId }, ...extra };
     hooks.forEach(h => deliver(h, payload));
+    return hooks.length;
+  }
+  // A person pressed a button column (Build Application, Send to Scarlett...). Solver.ca never runs the
+  // outside tool itself: it logs the press on the item and sends a signed button.pressed webhook to
+  // whatever tool is listening (n8n, the agency server). Returns how many webhooks it was sent to.
+  function pressButton(bid, iid, colId, user) {
+    const b = boardDoc(bid); if (!b) throw new HttpError(404, 'No such board.');
+    const col = (b.columns || []).find(c => c.id === colId && c.type === 'button'); if (!col) throw new HttpError(404, 'No such button.');
+    const path = `boards/${bid}/items/${iid}`; const r = q.doc.get(path); if (!r) throw new HttpError(404, 'No such item.');
+    const item = JSON.parse(r.data);
+    item.activity = [{ at: now(), by: user.name || user.email, text: `Pressed “${col.title}”` }, ...(item.activity || [])].slice(0, 40);
+    q.upsertDoc.run(path, `boards/${bid}/items`, iid, JSON.stringify(item), now(), user.id);
+    broadcast({ op: 'set', col: `boards/${bid}/items`, id: iid, data: item });
+    const sent = emit('button.pressed', bid, iid, b, item, { button: { column_id: col.id, title: col.title }, pressed_by: { name: user.name || null, email: user.email || null } });
+    return { sent, button: col.title };
   }
   // Called after any item write (app or API). Skips bulk copies from Monday.
   function itemChanged(path, before, after, actor) {
@@ -374,5 +389,5 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
   }
   if (process.env.KS_REMINDERS !== 'off') { setInterval(() => { try { checkReminders(); } catch (e) { console.error('reminders:', e.message); } }, 10 * 60 * 1000).unref(); setTimeout(() => { try { checkReminders(); } catch (e) {} }, 30000).unref(); }
 
-  return { handleV1, handleAdmin, itemChanged, EVENTS, checkReminders, createItem };
+  return { handleV1, handleAdmin, itemChanged, EVENTS, checkReminders, createItem, pressButton };
 };
