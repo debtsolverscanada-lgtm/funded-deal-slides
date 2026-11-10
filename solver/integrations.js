@@ -367,7 +367,9 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
         for (const br of q.docsInCol.all('boards')) { const bd = JSON.parse(br.data); const pc = (bd.columns || []).filter(c => c.type === 'phone').map(c => c.id), ec = (bd.columns || []).filter(c => c.type === 'email').map(c => c.id);
           for (const r of q.docsInCol.all(`boards/${br.id}/items`)) { const v = (JSON.parse(r.data).values || {}); if ((phone && pc.some(c => String(v[c] || '').replace(/\D/g, '').slice(-10) === phone)) || (email && ec.some(c => String(v[c] || '').toLowerCase() === email))) hits.push({ bid: br.id, iid: r.id }); } }
       }
-      for (const h of hits.slice(0, 5)) { const r = q.doc.get(`boards/${h.bid}/items/${h.iid}`); if (!r) continue; const d = JSON.parse(r.data); buzz(h.bid, h.iid, null, d, user.id, { kind: k[0], text: k[1](String(d.name || 'A client').slice(0, 60)) }); }
+      // something the rep sent themselves (direction: 'outbound') is only logged on the lead's timeline, never pinged
+      const outbound = String(body.direction || '').toLowerCase() === 'outbound';
+      if (!outbound) for (const h of hits.slice(0, 5)) { const r = q.doc.get(`boards/${h.bid}/items/${h.iid}`); if (!r) continue; const d = JSON.parse(r.data); buzz(h.bid, h.iid, null, d, user.id, { kind: k[0], text: k[1](String(d.name || 'A client').slice(0, 60)) }); }
       // kept for the item's "Calls & texts" timeline
       if (hooks.onEvent) try { hooks.onEvent(body, hits.slice(0, 5), user); } catch (e) { console.error('events:', e.message); }
       return send(res, 200, { ok: true, matched: hits.length });

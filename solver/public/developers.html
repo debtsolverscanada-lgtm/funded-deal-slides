@@ -55,6 +55,7 @@ a { color: #fff; }
 <tr><td><code>POST /api/v1/boards/{board}/items/{id}/updates</code></td><td>Post an update: <code>{"text": "…", "author": "RingCentral"}</code>.</td></tr>
 <tr><td><code>DELETE /api/v1/boards/{board}/items/{id}</code></td><td>Delete an item (write keys only).</td></tr>
 <tr><td><code>GET /api/v1/search?phone=4035550101</code></td><td>Find leads on every board by phone (last 10 digits), <code>?email=</code>, or name <code>?q=</code>.</td></tr>
+<tr><td><code>POST /api/v1/events</code></td><td>Tell Solver.ca a client texted, called, emailed or sent documents: <code>{"type": "client_texted" | "client_called" | "client_emailed" | "documents_received", "phone" or "email" (or "board" + "item"), "text", "direction": "inbound" | "outbound"}</code>. It shows on the lead's Calls &amp; texts timeline; inbound events also give the rep a heads-up, outbound ones (sent by the rep) are only logged.</td></tr>
 </table></div>
 <p>Fields can use the column's title (<code>"Status"</code>) or its id (<code>"color_mkp75dsm"</code>). Status values use the label's name (<code>"NA 1"</code>). Dates are <code>YYYY-MM-DD</code>. Calculated columns (formulas, buttons) can't be set.</p>
 <pre><code># move a lead to "Appointment Booked" and set its status
