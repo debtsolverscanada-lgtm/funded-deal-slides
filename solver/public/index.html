@@ -1052,6 +1052,16 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     if (removeHere) { S.items = S.items.filter(x => x.id !== item.id); if (S.openItem === item.id) S.openItem = null; }
     toast(`${removeHere ? 'Moved' : 'Copied'} to ${tb.name}`); scheduleRender();
   }
+  // "Move to board": the boards this person can see, grouped by workspace (this one first). A move only happens between
+  // boards that live in Solver.ca: while either board still copies from Monday, the move has to be made in Monday,
+  // or the lead would vanish from the Monday board the other rep is still working.
+  function moveBoardSelect(b) {
+    const others = S.boards.filter(x => x.id !== b.id && (x.groups || []).length); if (!others.length) return '';
+    const here = b.source === 'monday', byWs = new Map();
+    others.forEach(x => { const w = wsOf(x); if (!byWs.has(w.id)) byWs.set(w.id, { w, list: [] }); byWs.get(w.id).list.push(x); });
+    const order = [...byWs.values()].sort((p, q) => (q.w.id === wsOf(b).id) - (p.w.id === wsOf(b).id) || String(p.w.name).localeCompare(String(q.w.name)));
+    return `<select class="kbd-select" id="bulk-board" aria-label="Move to another board"><option value="">${here ? 'Move to board… (do it in Monday for now)' : 'Move to board…'}</option>${order.map(({ w, list }) => `<optgroup label="${esc(w.name)}">${list.sort((p, q) => String(p.name).localeCompare(String(q.name))).map(x => { const off = here || x.source === 'monday'; return `<option value="${esc(x.id)}" ${off ? 'disabled' : ''}>${esc(x.name)}${x.source === 'monday' ? ' · copies from Monday' : ''}</option>`; }).join('')}</optgroup>`).join('')}</select>`;
+  }
   // Moving an item into a group by hand runs that group's "when moved to group" rules, like Monday.
   function moveToGroup(b, item, groupId, extra = {}) {
     const g = b.groups.find(x => x.id === groupId); if (!g || item.group === groupId) return;
@@ -1793,6 +1803,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
       html += `<div class="bulkbar" role="region" aria-label="Selected items"><span class="count">${S.selected.size} selected</span>
         ${S.canWrite ? `${sc.map(c => `<button class="btn" data-act="bulk-status" data-col="${esc(c.id)}">Set ${esc(c.title)}</button>`).join('')}
         <select class="kbd-select" id="bulk-move" aria-label="Move to group"><option value="">Move to group…</option>${b.groups.map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('')}</select>
+        ${moveBoardSelect(b)}
         <button class="btn" data-act="bulk-dup">Duplicate</button>
         <button class="btn danger" data-act="bulk-del">${S.confirmDelete === 'bulk' ? `Click again to delete ${S.selected.size}` : 'Delete'}</button>` : ''}
         <button class="btn" data-act="bulk-clear">Clear selection</button></div>`;
@@ -2466,6 +2477,15 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
       const g = b.groups.find(x => x.id === t.value); if (!g) return;
       const t0 = Date.now(), moved = [...S.selected]; moved.map(itemById).filter(Boolean).forEach(i => moveToGroup(b, i, g.id));
       if (fx('bulkEdited', b, moved, t0, `Moved ${moved.length} items to ${g.name}`) === undefined) toast(`Moved ${moved.length} items to ${g.name}`); S.selected = new Set(); render(); return;
+    }
+    if (t.id === 'bulk-board') {
+      const tb = S.boards.find(x => x.id === t.value); if (!tb) return;
+      if (b.source === 'monday' || tb.source === 'monday') { toast(`${b.source === 'monday' ? b.name : tb.name} still copies from Monday, so move these in Monday for now.`); t.value = ''; return; }
+      const moved = [...S.selected].map(itemById).filter(Boolean), who = (S.me && S.me.name) || 'Someone';
+      // same-named group on the new board (Pitched → Pitched), else its first group
+      moved.forEach(i => { const gn = String(((b.groups.find(g => g.id === i.group) || {}).name) || '').toLowerCase(), tg = (tb.groups || []).find(g => String(g.name).toLowerCase() === gn); moveItemToBoard(b, i, tb.id, tg ? tg.id : '__top__', who, true); });
+      if (moved.length > 1) toast(`Moved ${moved.length} items to ${tb.name}`);
+      S.selected = new Set(); render(); return;
     }
     if (t.dataset && t.dataset.lockEmails !== undefined) { const locks = { ...(permsOf(b).locks || {}) }; locks[t.dataset.lockEmails] = t.value.split(/[,;\s]+/).map(x => x.trim().toLowerCase()).filter(x => /^[^@\s]+@[^@\s]+$/.test(x)); savePerms({ locks }); return; }
     if (t.dataset && t.dataset.impMap !== undefined && S.modal && S.modal.type === 'import') { S.modal.mapping[Number(t.dataset.impMap)] = t.value; return; }
