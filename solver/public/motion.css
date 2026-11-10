@@ -9,8 +9,8 @@
 .mx-orbs span:nth-child(2) { bottom: -22vmax; left: -16vmax; animation-duration: 62s; animation-delay: -20s; opacity: .05; }
 .mx-orbs span:nth-child(3) { top: 30vh; left: 40vw; width: 28vmax; height: 28vmax; animation-duration: 54s; animation-delay: -8s; opacity: .035; }
 @keyframes mx-drift { 0% { transform: translate3d(0, 0, 0) scale(1); } 50% { transform: translate3d(-6vw, 4vh, 0) scale(1.08); } 100% { transform: translate3d(4vw, -3vh, 0) scale(.96); } }
-.app, #layer, .bnav, .toasts { position: relative; z-index: 1; }
-#layer { position: static; }
+/* #layer stays unpositioned so its drawer (21), windows (30) and pop-ups (40) stack against the page itself, above Penny (19) */
+.app, .bnav, .toasts { position: relative; z-index: 1; }
 
 /* entrances: only when a page/board/view is first shown (motion.js adds .mx-enter for a moment) */
 @keyframes mx-rise { from { opacity: 0; transform: translateY(14px) scale(.985); } to { opacity: 1; transform: none; } }

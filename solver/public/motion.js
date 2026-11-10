@@ -63,8 +63,8 @@
   let counted = new Map(), lastKey = '', chips = new Map(), lanes = new Map(), groups = new Map(), firstScan = true, enterTimer = null;
   const pageKey = () => {
     if (content.querySelector('.home')) return 'home';
-    const title = document.getElementById('board-title'); const tab = document.querySelector('.tabs .tab[aria-pressed="true"]');
-    return 'board:' + (title ? title.value : '') + ':' + (tab ? tab.textContent : '') + ':' + (content.querySelector('.board tbody tr, .lane, .cal') ? 'ready' : 'loading');
+    const title = document.getElementById('board-select') || document.getElementById('board-title'); const tab = document.querySelector('.tabs .tab[aria-pressed="true"]');
+    return 'board:' + (title ? title.value : '') + ':' + (tab ? tab.textContent : '') + ':' + (content.querySelector('.board tbody tr, .lane, .cal, .agenda') ? 'ready' : 'loading');
   };
   function scan() {
     const key = pageKey();
@@ -83,7 +83,7 @@
     if (on()) content.querySelectorAll(NUMSEL).forEach((el, i) => { const txt = el.textContent.trim(); if (running.has(i)) return; if (counted.get(i) !== txt) { counted.set(i, txt); countUp(i, txt); } });
     // status chips that changed since the last render
     const now = new Map();
-    document.querySelectorAll('.chip[data-item][data-col]').forEach(ch => {
+    content.querySelectorAll('.chip[data-item][data-col]').forEach(ch => {
       const k = ch.dataset.item + '|' + ch.dataset.col + '|' + (ch.dataset.sub || ''), text = ch.textContent.trim(); now.set(k, text);
       const prev = chips.get(k);
       if (!firstScan && prev !== undefined && prev !== text && on()) {
@@ -94,12 +94,12 @@
     chips = now;
     // Kanban cards that changed lanes
     const nowLanes = new Map();
-    document.querySelectorAll('.lane[data-lane]').forEach(l => { const name = (l.querySelector('.lane-head span') || {}).textContent || ''; l.querySelectorAll('.card[data-item]').forEach(cd => nowLanes.set(cd.dataset.item, name.trim())); });
+    content.querySelectorAll('.lane[data-lane]').forEach(l => { const name = (l.querySelector('.lane-head span') || {}).textContent || ''; l.querySelectorAll('.card[data-item]').forEach(cd => nowLanes.set(cd.dataset.item, name.trim())); });
     if (!firstScan && on()) for (const [id, lane] of nowLanes) { const prev = lanes.get(id); if (prev && prev !== lane && CELEBRATE.test(lane)) { const cd = document.querySelector(`.card[data-item="${CSS.escape(id)}"] .card-name`); celebrate(lane, cd ? cd.textContent : ''); } }
     lanes = nowLanes;
     // rows that moved group: flash them
     const nowGroups = new Map();
-    document.querySelectorAll('tr[data-row][data-group]').forEach(tr => {
+    content.querySelectorAll('tr[data-row][data-group]').forEach(tr => {
       nowGroups.set(tr.dataset.row, tr.dataset.group);
       if (!firstScan && on() && groups.has(tr.dataset.row) && groups.get(tr.dataset.row) !== tr.dataset.group) {
         tr.classList.add('mx-flash'); setTimeout(() => tr.classList.remove('mx-flash'), 1300);
@@ -129,7 +129,8 @@
   let queued = false;
   const schedule = () => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; try { scan(); } catch (e) {} }); };
   if (content) new MutationObserver(schedule).observe(content, { childList: true, subtree: true });
-  if (layer) new MutationObserver(() => { try { scanLayer(); } catch (e) {} schedule(); }).observe(layer, { childList: true, subtree: true });
+  // overlays only need their entrance; the page scan watches #content (re-scanning every row on each drawer change was slow)
+  if (layer) new MutationObserver(() => { try { scanLayer(); } catch (e) {} }).observe(layer, { childList: true });
   const head = document.getElementById('head'); if (head) new MutationObserver(schedule).observe(head, { childList: true, subtree: true });
 
   // ---------- pointer spotlight on glass ----------
@@ -146,7 +147,7 @@
   const label = () => `Motion: ${mode === 'full' ? 'Full' : mode === 'calm' ? 'Calm' : 'Off'}`;
   function addToggle(root) {
     if (!root || root.querySelector('[data-mx-toggle]')) return;
-    const row = root.querySelector('.form-row:last-of-type'); if (!row) return;
+    const row = root.querySelector('[data-slot="settings"]') || root.querySelector('.form-row:last-of-type'); if (!row) return;
     const b = document.createElement('button'); b.className = 'btn'; b.dataset.mxToggle = '1'; b.type = 'button'; b.textContent = label();
     b.title = 'Full: all animations. Calm: quick, no confetti. Off: none.';
     b.addEventListener('click', ev => { ev.stopPropagation(); mode = mode === 'full' ? 'calm' : mode === 'calm' ? 'off' : 'full'; try { localStorage.setItem('ks-motion', mode); } catch (x) {} applyMode(); document.querySelectorAll('[data-mx-toggle]').forEach(x => x.textContent = label()); if (mode === 'full') confetti(); });
@@ -154,6 +155,6 @@
   }
   const rail = document.getElementById('rail');
   if (rail) new MutationObserver(() => addToggle(rail)).observe(rail, { childList: true });
-  if (layer) new MutationObserver(() => { const m = layer.querySelector('.modal'); if (m && /Sign out/.test(m.textContent)) addToggle(m); }).observe(layer, { childList: true, subtree: true });
+  if (layer) new MutationObserver(() => { const m = layer.querySelector('.modal'); if (m && m.querySelector('[data-slot="settings"]')) addToggle(m); }).observe(layer, { childList: true });
   window.SolverMotion = { celebrate, confetti };
 })();

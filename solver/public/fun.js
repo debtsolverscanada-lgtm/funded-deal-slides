@@ -150,11 +150,17 @@
     && !document.querySelector('#layer .drawer, #layer .modal, .modal-wrap, .mx-banner, .mx-dragging') && Date.now() - lastKey > 8000;
   const place = (x, y, ms) => { pos = { x, y }; pet.style.transition = ms ? `transform ${ms}ms linear` : 'none'; pet.style.transform = (x || y) ? `translate(${Math.round(x)}px, ${Math.round(y)}px)` : ''; };
   const home0 = () => { const t = pet.style.transform; pet.style.transform = ''; const r = pet.getBoundingClientRect(); pet.style.transform = t; return r; };
+  // a window, drawer or the bulk bar opened: Penny stops wandering at once (and CSS hides her until it closes)
+  const overlayOpen = () => !!document.querySelector('#layer .drawer, #layer .modal-wrap, #layer .bulkbar, #fx-layer .modal-wrap, #fx-layer .fx-search-wrap, body > .modal-wrap, body > .fx-menu');
+  // html.pet-away hides her (CSS) while any of those is open
+  const away = () => { const o = overlayOpen(); html.classList.toggle('pet-away', o); if (o && (roaming || pos.x || pos.y)) { cancel = true; place(0, 0, 0); pet.classList.remove('pet-peek', 'pet-duck', 'pet-walk'); } };
+  [document.getElementById('layer'), document.body].forEach(el => el && new MutationObserver(away).observe(el, { childList: true }));
+  setTimeout(() => { const f = document.getElementById('fx-layer'); if (f) new MutationObserver(away).observe(f, { childList: true }); }, 0);
   async function walkTo(x, y = pos.y) {
     const dist = Math.hypot(x - pos.x, y - pos.y); if (dist < 4) return;
     pet.classList.add('pet-walk'); pet.classList.toggle('pet-lean-left', x < pos.x);
     const ms = Math.max(500, dist / 95 * 1000); place(x, y, ms);
-    for (let t = 0; t < ms && !cancel; t += 100) await wait(100);
+    for (let t = 0; t < ms && !cancel; t += 100) { await wait(100); if (overlayOpen()) cancel = true; }
     pet.classList.remove('pet-walk', 'pet-lean-left');
   }
   async function goHome(quick) {
@@ -184,7 +190,7 @@
           place(spot.x, spot.y, 0); pet.classList.add('pet-peek'); await wait(30);
           pet.classList.remove('pet-duck');                                      // ...and peeks over the board
           const onScroll = () => { cancel = true; }; addEventListener('scroll', onScroll, { capture: true, once: true, passive: true });
-          for (let t = 0, stay = 3500 + Math.random() * 3500; t < stay && !cancel; t += 100) { await wait(100); if (t === 1500 && Math.random() < .5) say(['Peekaboo!', 'You can’t see me', 'Shhh… hiding', 'Find me!'][Math.floor(Math.random() * 4)]); }
+          for (let t = 0, stay = 3500 + Math.random() * 3500; t < stay && !cancel; t += 100) { await wait(100); if (overlayOpen()) { cancel = true; break; } if (t === 1500 && Math.random() < .5) say(['Peekaboo!', 'You can’t see me', 'Shhh… hiding', 'Find me!'][Math.floor(Math.random() * 4)]); }
           removeEventListener('scroll', onScroll, { capture: true });
           await goHome(true); return;
         }
@@ -228,12 +234,12 @@
   }
   function addFlairButton(root) {
     if (!root || root.querySelector('[data-fx-open]')) return;
-    const row = root.querySelector('.form-row:last-of-type'); if (!row) return;
+    const row = root.querySelector('[data-slot="settings"]') || root.querySelector('.form-row:last-of-type'); if (!row) return;
     const b = document.createElement('button'); b.className = 'btn'; b.type = 'button'; b.dataset.fxOpen = '1'; b.textContent = '✦ Flair';
     b.addEventListener('click', e => { e.stopPropagation(); openFlair(); }); row.appendChild(b);
   }
   const layer = document.getElementById('layer');
-  if (layer) new MutationObserver(() => { const m = layer.querySelector('.modal'); if (m && /Sign out/.test(m.textContent)) addFlairButton(m); }).observe(layer, { childList: true, subtree: true });
+  if (layer) new MutationObserver(() => { const m = layer.querySelector('.modal'); if (m && m.querySelector('[data-slot="settings"]')) addFlairButton(m); }).observe(layer, { childList: true });
   setTimeout(() => { decorate(); addFlairButton(rail); }, 300);
   window.SolverFlair = { openFlair, say, set, roam };
 })();

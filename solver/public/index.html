@@ -13,8 +13,6 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="stylesheet" href="/motion.css">
 <link rel="stylesheet" href="/fun.css">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Solver.ca</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -517,6 +515,126 @@ td.currency::before, td.percent::after { color: var(--muted); }
 .imp-errors { max-height: 160px; overflow: auto; font-size: 12.5px; color: var(--muted); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; }
 /* installed app (home screen / desktop window): keep clear of the phone's status bar */
 @media (display-mode: standalone) { .app { padding-top: env(safe-area-inset-top, 0px); box-sizing: border-box; } .modal-wrap { padding-top: env(safe-area-inset-top, 0px); } }
+
+/* ---------- table view: #content scrolls both ways, one set of fixed column widths shared by every group ---------- */
+.content.tv { overflow: auto; overscroll-behavior-x: contain; padding-left: 0; padding-right: 0; }
+.tv > * { margin-left: max(20px, env(safe-area-inset-left, 0px)); }
+.tv .tv-groups { padding-right: max(20px, env(safe-area-inset-right, 0px)); }
+.tv .group-head, .tv .tv-stick { left: max(20px, env(safe-area-inset-left, 0px)) !important; }
+@media (max-width: 780px) { .tv > * { margin-left: max(12px, env(safe-area-inset-left, 0px)); } .tv .group-head, .tv .tv-stick { left: max(12px, env(safe-area-inset-left, 0px)) !important; } }
+.tv .tv-groups, .tv .group { width: max-content; min-width: 0; }
+.tv .group-head { position: sticky; left: 0; z-index: 4; width: max-content; max-width: calc(100vw - 48px); }
+.tv .tv-stick { position: sticky; left: 0; }
+.tv .tablewrap { overflow: visible; backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none; background: #070708; }
+.tv .tablewrap::before { display: none; }
+.tv table.board { table-layout: fixed; min-width: 0; }
+.tv .board td, .tv .board th { overflow: hidden; }
+.tv .board .name-cell { min-width: 0; max-width: none; }
+.tv .board thead th { position: sticky; top: 0; z-index: 2; background: #0d0d0f; }
+.tv .board thead th.name-cell { left: 0; z-index: 3; background: #111113; }
+.tv .board th button.col-head { overflow: hidden; }
+.tv .board .col-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.tv .board tr.more-row td, .tv .board tr.sub-row > td { overflow: visible; }
+.tv .more-row button { white-space: nowrap; }
+.tv .tv-ph { background: repeating-linear-gradient(to bottom, transparent 0 37px, rgba(255,255,255,0.035) 37px 38px); }
+.sub-stick { position: sticky; left: 0; display: inline-block; max-width: calc(100vw - 80px); overflow-x: auto; vertical-align: top; }
+
+/* ---------- compact board header (phones and short landscape screens) ---------- */
+.head.compact { padding: 8px max(12px, env(safe-area-inset-right, 0px)) 6px max(12px, env(safe-area-inset-left, 0px)); gap: 6px; }
+.head.compact .head-row { flex-wrap: nowrap; gap: 8px; min-width: 0; }
+.head.compact .head-row:not(.hr-top):not(.tabs-row) { overflow-x: auto; scrollbar-width: none; }
+.head.compact .head-row::-webkit-scrollbar { display: none; }
+.head.compact .board-select { display: block; flex: 1 1 auto; min-width: 0; height: 40px; padding: 0 26px 0 2px; border: 0; border-radius: 10px; background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' fill='none' stroke='%23ffffff' stroke-opacity='.6' stroke-width='1.8'/%3E%3C/svg%3E") no-repeat right 6px center / 12px; -webkit-appearance: none; appearance: none; color: #fff; font: 600 20px/1.2 var(--f-display) !important; letter-spacing: -0.02em; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; }
+.head.compact .hb-ic { width: 40px; height: 40px; padding: 0; display: grid; place-items: center; flex: none; }
+.head.compact .hb-ic svg { width: 19px; height: 19px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.head.compact .hb-ic[aria-pressed="true"] { background: rgba(255,255,255,0.14); border-color: var(--line-2); }
+.head.compact .hb-new { flex: none; height: 40px; padding: 0 14px; }
+.head.compact .tabs-row .tabs { flex: 1 1 auto; min-width: 0; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; padding: 0; gap: 6px; background: none; border: 0; border-radius: 0; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.head.compact .tabs-row .tabs::-webkit-scrollbar { display: none; }
+.head.compact .tabs-row .tab { flex: none; white-space: nowrap; min-height: 36px; padding: 0 14px; border: 1px solid var(--line); background: var(--surface); }
+.head.compact .tabs-row .tab[aria-pressed="true"] { background: rgba(255,255,255,0.16); border-color: var(--line-2); }
+.head.compact .search { flex: 1 1 auto; width: auto; min-width: 0; }
+.head.compact .btn { flex: none; }
+.head.compact { max-height: 260px; overflow: hidden; transition: max-height .28s cubic-bezier(.16, 1, .3, 1), padding .28s, opacity .2s; }
+.main.head-up .head.compact { max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; border-bottom-color: transparent; }
+.sheet-list { padding: 4px; border-radius: 20px; }
+.sheet-list .li { padding: 12px 14px; }
+@media (max-height: 500px) and (orientation: landscape) { .head.compact .tabs-row .tab { min-height: 32px; } .head.compact { padding-top: 4px; padding-bottom: 4px; } }
+.group-head .group-count, .open-btn { white-space: nowrap; flex: none; }
+/* short landscape phones: a slimmer bottom bar that also tucks away while scrolling down */
+@media (max-width: 780px) and (max-height: 500px) {
+  .bnav { height: 50px; bottom: calc(6px + env(safe-area-inset-bottom, 0px)); transition: transform .28s, opacity .2s; }
+  .bnav button > span:last-child:not(.bnav-plus):not(.nwrap) { display: none; }
+  .bnav .bnav-plus { width: 42px; height: 42px; }
+  body.head-up .bnav { transform: translateY(80px); opacity: 0; pointer-events: none; }
+  .content { padding-bottom: calc(70px + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* ---------- item drawer: the title and tabs never shrink; only the body scrolls ---------- */
+.drawer-head, .drawer-tabs { flex: none; }
+.drawer-body { flex: 1 1 auto; min-height: 0; overscroll-behavior: contain; }
+.drawer:focus { outline: none; }
+@media (min-width: 781px) and (pointer: fine) { .drawer-tabs { flex-wrap: wrap; overflow: visible; row-gap: 0; } }
+.log-sec { margin-top: 18px; }
+.log-sec > summary { cursor: pointer; list-style: none; }
+.log-sec > summary::-webkit-details-marker { display: none; }
+.log-sec > summary::before { content: "▸ "; }
+.log-sec[open] > summary::before { content: "▾ "; }
+
+/* ---------- Penny stays under every window, drawer and the bulk bar, and hides while one is open ---------- */
+.pet { z-index: 19; transition: opacity .15s; }
+html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
+
+/* ---------- toasts: readable boxes, above the bottom bar on phones ---------- */
+.toasts { width: max-content; max-width: calc(100vw - 32px); }
+.toast { border-radius: 16px; max-width: min(520px, calc(100vw - 32px)); padding: 10px 16px; line-height: 1.4; text-align: center; }
+
+/* ---------- bulk bar: centred over the board, one line, scrolls sideways if it must ---------- */
+.bulkbar { left: 0; right: 0; transform: none; margin: 0 auto; width: max-content; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.bulkbar::-webkit-scrollbar { display: none; }
+@media (min-width: 781px) { .bulkbar { left: 236px; max-width: calc(100% - 236px - 32px); } }
+
+/* ---------- windows: clear of the notch and home bar ---------- */
+.modal-wrap { padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
+
+/* ---------- head toolbar: selects stay a steady width so the toolbar doesn't jump between views ---------- */
+.head select.kbd-select { max-width: 220px; text-overflow: ellipsis; }
+.head .search { flex: 0 0 200px; }
+.head.compact .search { flex: 1 1 auto; }
+.settings-slot:empty { display: none; }
+.settings-slot [data-mx-toggle] { order: 1; } .settings-slot [data-fx-open] { order: 2; } .settings-slot [data-install] { order: 3; }
+
+/* ---------- Home: two columns on wide screens ---------- */
+.home-boards, .home-fu { display: flex; flex-direction: column; gap: 22px; }
+@media (min-width: 1100px) {
+  .home { max-width: 1120px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 28px; row-gap: 22px; align-items: start; }
+  .home > .home-top { grid-column: 1 / -1; }
+  .home > .hero, .home > .quick, .home > .home-fu { grid-column: 1; }
+  .home > .home-boards { grid-column: 2; grid-row: 2 / span 3; }
+}
+
+/* ---------- phone calendar: an agenda list ---------- */
+.agenda { display: flex; flex-direction: column; gap: 12px; }
+.ag-day { display: flex; flex-direction: column; gap: 6px; }
+.ag-date { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; padding: 0 4px; }
+.ag-day.today .ag-date { color: #fff; }
+.ag-day .cal-chip { font-size: 14px; padding: 10px 12px; min-height: 44px; white-space: normal; border-radius: 14px; }
+
+/* ---------- phones: opaque bottom bar, landscape safe areas ---------- */
+@media (max-width: 780px) {
+  .bnav.glass { background: rgba(10,10,12,0.97); left: max(12px, env(safe-area-inset-left, 0px)); right: max(12px, env(safe-area-inset-right, 0px)); }
+  .toasts { bottom: calc(86px + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* ---------- touch screens: 16px fields (no zoom on iPhone), 40px tap targets ---------- */
+@media (pointer: coarse) {
+  input, select:not(#board-select), textarea, [contenteditable="true"] { font-size: 16px !important; }
+  .btn, .tab, .drawer-tab, .toggle, .pop-btn, .pop-check, .board-link, .fx-res, .vx-seg button, .head .icon-btn, .group-head .icon-btn, .modal .icon-btn, .drawer .icon-btn { min-height: 40px; }
+  .btn, .toggle { display: inline-flex; align-items: center; justify-content: center; }
+  .caret { width: 40px; height: 40px; }
+  .field-input, .kbd-select, .search, .rail-input { min-height: 40px; }
+  .file-chip .icon-btn { min-height: 0; }
+}
 </style>
 </head>
 <body>
@@ -548,7 +666,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
 <script>
 (() => {
   const PALETTE = ['#2f8f6f', '#3a78c2', '#c2852b', '#b44a5c', '#7a5bc0', '#5f7a2e', '#6b7280', '#c45f2c', '#2a8a9a'];
-  const TYPES = { text: 'Text', status: 'Status', person: 'Person', date: 'Date', phone: 'Phone', email: 'Email', number: 'Number', ai: 'AI', doc: 'Doc' };
+  const TYPES = { text: 'Text', long_text: 'Long text', status: 'Status', person: 'Person', date: 'Date', phone: 'Phone', email: 'Email', number: 'Number', checkbox: 'Checkbox', dropdown: 'Dropdown', link: 'Link', formula: 'Formula', button: 'Button', ai: 'AI', doc: 'Doc' };
   const S = {
     db: null, user: null, uid: '', canWrite: true, status: 'loading',
     boards: [], boardId: null, items: [], itemsLoaded: false, itemsUnsub: null,
@@ -589,10 +707,12 @@ td.currency::before, td.percent::after { color: var(--muted); }
   const roleLabel = () => S.isOwner ? 'Admin' : S.isGuest ? 'Guest' : S.canWrite ? 'Member' : 'Viewer';
   // File columns hold [{ name, url }]. Older copies stored Monday's text: a comma-separated list of links.
   const isFileCol = c => !!c && (c.type === 'file' || c.source === 'file');
+  // Only web links and our own uploads become links: never javascript:, data: or other schemes.
+  const safeUrl = u => { const x = String(u || '').trim(); return /^https?:\/\/[^\s]+$/i.test(x) || /^\/api\/files\/[^\s]*$/.test(x) ? x : ''; };
   function fileList(v) {
-    if (Array.isArray(v)) return v.filter(f => f && f.url);
+    if (Array.isArray(v)) return v.filter(f => f && safeUrl(f.url)).map(f => ({ ...f, url: safeUrl(f.url) }));
     const s2 = String(v || '').trim(); if (!s2) return [];
-    return s2.split(/,\s*(?=https?:\/\/)/).map(u => u.trim()).filter(Boolean).map(url => { let name = url; try { name = decodeURIComponent(new URL(url).pathname.split('/').pop() || url); } catch (e) {} return { name, url }; });
+    return s2.split(/,\s*(?=https?:\/\/)/).map(u => safeUrl(u)).filter(Boolean).map(url => { let name = url; try { name = decodeURIComponent(new URL(url).pathname.split('/').pop() || url); } catch (e) {} return { name, url }; });
   }
   const splitPeople = v => String(v || '').split(',').map(x => x.trim()).filter(Boolean);
   const initials = n => String(n).replace(/@.*/, '').split(/[\s._-]+/).filter(Boolean).slice(0, 2).map(x => x[0].toUpperCase()).join('') || '?';
@@ -644,7 +764,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     for (const c of b.columns) if (c.type === 'status') { const v = (item.values || {})[c.id]; if (v === undefined || v === null || v === '') { const d = (c.labels || []).find(l => l.id === '5' && l.label && l.label !== '(blank)'); if (d) item.values = { ...(item.values || {}), [c.id]: '5' }; } }
     return item;
   }
-  function linkParts(v) { const s2 = String(v || ''); const m = /^(.*?)\s+[-|]\s+(https?:\/\/\S+)$/i.exec(s2); if (m) return { text: m[1], url: m[2] }; return { text: s2, url: /^https?:\/\//i.test(s2) ? s2 : '' }; }
+  function linkParts(v) { const s2 = String(v || '').trim(); const m = /^(.*?)\s+[-|]\s+(https?:\/\/\S+)$/i.exec(s2); if (m) return { text: m[1], url: m[2] }; return { text: s2, url: /^https?:\/\/\S+$/i.test(s2) ? s2 : '' }; }
   const filterCount = () => Object.values(S.filters).filter(v => v && v.length).length;
   const toast = msg => { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; $('#toasts').appendChild(t); setTimeout(() => t.remove(), 2600); };
   function $(s) { return document.querySelector(s); }
@@ -884,8 +1004,20 @@ td.currency::before, td.percent::after { color: var(--muted); }
     if (renderTimer) return;
     renderTimer = setTimeout(() => { renderTimer = null; if (isEditing()) { S.pendingRender = true; return; } render(); }, S.importing && !S.importing.finished ? 1500 : 40);
   }
-  let wasNarrow = window.matchMedia('(max-width: 780px)').matches;
-  window.addEventListener('resize', () => { const n = window.matchMedia('(max-width: 780px)').matches; if (n !== wasNarrow) { wasNarrow = n; scheduleRender(); } });
+  let wasNarrow = window.matchMedia('(max-width: 780px)').matches + ':' + window.matchMedia('(max-width: 780px), (max-height: 500px) and (pointer: coarse)').matches;
+  window.addEventListener('resize', () => { const n = window.matchMedia('(max-width: 780px)').matches + ':' + window.matchMedia('(max-width: 780px), (max-height: 500px) and (pointer: coarse)').matches; if (n !== wasNarrow) { wasNarrow = n; scheduleRender(); } else if (tvOn()) onContentScroll(); });
+  // the board scroller: fills in table groups/columns as they come into view, and tucks the phone header away while
+  // scrolling down (it comes back on the way up)
+  let lastTop = 0, headFlip = 0;
+  $('#content').addEventListener('scroll', () => {
+    onContentScroll();
+    const el = $('#content'), t = el.scrollTop, main = el.parentElement, dy = t - lastTop; lastTop = t;
+    if (!compactHead() || S.page !== "board") { main.classList.remove("head-up"); document.body.classList.remove("head-up"); return; }
+    if (Date.now() - headFlip < 350 || t + el.clientHeight >= el.scrollHeight - 4) return; // ignore the jump the flip itself causes, and the bottom bounce
+    const up = main.classList.contains('head-up');
+    if (!up && dy > 6 && t > 80 && !main.querySelector('.head').contains(document.activeElement)) { main.classList.add("head-up"); document.body.classList.add("head-up"); headFlip = Date.now(); }
+    else if (up && (dy < -6 || t < 30)) { main.classList.remove("head-up"); document.body.classList.remove("head-up"); headFlip = Date.now(); }
+  }, { passive: true });
   document.addEventListener('focusout', () => setTimeout(() => { if (S.pendingRender && !isEditing()) { S.pendingRender = false; render(); } }, 0));
 
   function render() {
@@ -915,17 +1047,60 @@ td.currency::before, td.percent::after { color: var(--muted); }
       ${S.canWrite && S.db ? '<input class="rail-input" id="new-board" placeholder="+ New board" aria-label="New board name">' : ''}
       ${fx('railBottom') || ''}
       <p class="rail-note">${S.isGuest ? 'You’re a guest: you see only the boards shared with you, and you can read items and post updates.' : 'Changes save for everyone on the team, live. Automations run the moment a status changes.'}</p>
+      <div class="form-row settings-slot" data-slot="settings"></div>
       <div class="form-row">${S.isOwner ? '<button class="btn" data-act="team">Team & settings</button><button class="btn" data-act="integrations">Integrations</button>' : ''}<button class="btn" data-act="security">Security</button><button class="btn" data-act="logout">Sign out</button></div>`;
     if (filterEl) { const f = $('#board-filter'); if (f) { f.focus(); f.setSelectionRange(f.value.length, f.value.length); } }
   }
 
-  function renderHead() {
-    const b = board();
-    $('#head').hidden = S.page === 'home' || S.page === 'dash';
-    if (!b || S.page === 'home' || S.page === 'dash') { $('#head').innerHTML = ''; return; }
-    const opts = workspaces().map(w => `<optgroup label="${esc(w.name)}">${S.boards.filter(x => wsOf(x).id === w.id).map(x => `<option value="${esc(x.id)}" ${x.id === S.boardId ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</optgroup>`).join('');
+  // Phones (and short landscape screens) get a compact header: the board picker is the title, then search, + New and a
+  // ⋯ sheet holding everything else; the view tabs scroll sideways underneath. It tucks away while you scroll down.
+  const compactHead = () => window.matchMedia('(max-width: 780px), (max-height: 500px) and (pointer: coarse)').matches;
+  const IC_SEARCH = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>';
+  function viewTabs(b) {
+    return `<div class="tabs" role="group" aria-label="View">
+          <button class="tab" data-act="view" data-v="table" aria-pressed="${S.view === 'table' && !S.viewId}">Main table</button>
+          ${(b.views || []).map(v => `<button class="tab" data-act="saved-view" data-id="${esc(v.id)}" aria-pressed="${S.viewId === v.id}">${esc(v.name)}</button>`).join('')}
+          <button class="tab" data-act="view" data-v="kanban" aria-pressed="${S.view === 'kanban' && !S.viewId}">Kanban</button>
+          <button class="tab" data-act="view" data-v="calendar" aria-pressed="${S.view === 'calendar' && !S.viewId}">Calendar</button>
+          ${window.KSViews ? KSViews.tabs(b) : ''}
+        </div>`;
+  }
+  function viewControls(b) {
     const statusCols = b.columns.filter(c => c.type === 'status');
-    $('#head').innerHTML = `
+    return `${S.view === 'calendar' && b.columns.filter(c => c.type === 'date').length > 1 ? `<select class="kbd-select" id="cal-col" aria-label="Date column">${b.columns.filter(c => c.type === 'date').map(c => `<option value="${c.id}" ${c.id === calColId(b) ? 'selected' : ''}>By ${esc(c.title)}</option>`).join('')}</select>` : ''}
+        ${S.view === 'kanban' && statusCols.length > 1 ? `<select class="kbd-select" id="kanban-col" aria-label="Group cards by">${statusCols.map(c => `<option value="${c.id}" ${c.id === kanbanColId(b) ? 'selected' : ''}>By ${esc(c.title)}</option>`).join('')}</select>` : ''}
+        ${window.KSViews ? KSViews.head(b) : ''}`;
+  }
+  function filterChips(b) {
+    return `${filterCount() ? `<button class="btn" data-act="clear-filters">Filtered · ${filterCount()} ✕</button>` : ''}
+        ${S.sort ? `<button class="btn" data-act="clear-sort">Sorted: ${esc(S.sort.col === 'name' ? 'Name' : ((b.columns.find(c => c.id === S.sort.col) || {}).title || ''))} ${S.sort.dir === 'desc' ? '↓' : '↑'} ✕</button>` : ''}
+        ${S.hidden.size ? `<button class="btn" data-act="hidden-cols">Hidden columns · ${S.hidden.size}</button>` : ''}`;
+  }
+  const personFilter = b => { const ppl = peopleOnBoard(b); return ppl.length ? `<select class="kbd-select" id="person-filter" aria-label="Filter by person"><option value="">Person: everyone</option>${ppl.map(p => `<option value="${esc(p)}" ${p === S.person ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>` : ''; };
+  function renderHead() {
+    const b = board(), head = $('#head');
+    head.hidden = S.page === 'home' || S.page === 'dash';
+    if (!b || S.page === 'home' || S.page === 'dash') { head.innerHTML = ''; return; }
+    const opts = workspaces().map(w => `<optgroup label="${esc(w.name)}">${S.boards.filter(x => wsOf(x).id === w.id).map(x => `<option value="${esc(x.id)}" ${x.id === S.boardId ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</optgroup>`).join('');
+    const count = `<span class="group-count" id="item-count">${visibleItems().length} of ${S.items.length} items</span>`;
+    const compact = compactHead();
+    head.classList.toggle('compact', compact);
+    if (compact) {
+      const chips = filterChips(b).trim(), ctrls = viewControls(b).trim();
+      head.innerHTML = `
+      <div class="head-row hr-top">
+        <select class="board-select" id="board-select" aria-label="Board">${opts}</select>
+        ${S.isGuest ? '<span class="pill guest-badge" title="You see only the boards shared with you">Guest</span>' : ''}
+        <button class="btn hb-ic" data-act="m-search" aria-label="Search this board" aria-pressed="${!!(S.mSearch || S.search)}">${IC_SEARCH}</button>
+        ${S.canWrite ? '<button class="btn primary hb-new" data-act="new-item">+ New</button>' : ''}
+        <button class="btn hb-ic" data-act="board-sheet" aria-label="More for this board" aria-haspopup="dialog">${IC.more}</button>
+      </div>
+      ${S.mSearch || S.search ? `<div class="head-row"><input class="search" id="search" type="search" placeholder="Search this board" value="${esc(S.search)}" aria-label="Search this board" enterkeyhint="search"><button class="btn" data-act="m-search-close">${S.search ? 'Clear' : 'Done'}</button></div>` : ''}
+      <div class="head-row tabs-row">${viewTabs(b)}</div>
+      ${chips || ctrls ? `<div class="head-row">${chips}${ctrls}</div>` : ''}`;
+      return;
+    }
+    head.innerHTML = `
       <div class="head-row">
         <select class="board-select" id="board-select" aria-label="Board">${opts}</select>
         <input class="board-title" id="board-title" value="${esc(b.name)}" aria-label="Board name" ${S.canWrite ? '' : 'readonly'}>
@@ -935,29 +1110,39 @@ td.currency::before, td.percent::after { color: var(--muted); }
         ${S.canWrite ? '<button class="btn" data-act="import" title="Add items from a CSV or Excel file">Import</button><button class="btn primary" data-act="new-item">+ New item</button>' : ''}
       </div>
       <div class="head-row">
-        <div class="tabs" role="group" aria-label="View">
-          <button class="tab" data-act="view" data-v="table" aria-pressed="${S.view === 'table' && !S.viewId}">Main table</button>
-          ${(b.views || []).map(v => `<button class="tab" data-act="saved-view" data-id="${esc(v.id)}" aria-pressed="${S.viewId === v.id}">${esc(v.name)}</button>`).join('')}
-          <button class="tab" data-act="view" data-v="kanban" aria-pressed="${S.view === 'kanban' && !S.viewId}">Kanban</button>
-          <button class="tab" data-act="view" data-v="calendar" aria-pressed="${S.view === 'calendar' && !S.viewId}">Calendar</button>
-          ${window.KSViews ? KSViews.tabs(b) : ''}
-        </div>
-        ${S.view === 'calendar' && b.columns.filter(c => c.type === 'date').length > 1 ? `<select class="kbd-select" id="cal-col" aria-label="Date column">${b.columns.filter(c => c.type === 'date').map(c => `<option value="${c.id}" ${c.id === calColId(b) ? 'selected' : ''}>By ${esc(c.title)}</option>`).join('')}</select>` : ''}
-        ${S.view === 'kanban' && statusCols.length > 1 ? `<select class="kbd-select" id="kanban-col" aria-label="Group cards by">${statusCols.map(c => `<option value="${c.id}" ${c.id === kanbanColId(b) ? 'selected' : ''}>By ${esc(c.title)}</option>`).join('')}</select>` : ''}
-        ${window.KSViews ? KSViews.head(b) : ''}
+        ${viewTabs(b)}
         <input class="search" id="search" type="search" placeholder="Search this board" value="${esc(S.search)}" aria-label="Search this board">
-        ${peopleOnBoard(b).length ? `<select class="kbd-select" id="person-filter" aria-label="Filter by person"><option value="">Person: everyone</option>${peopleOnBoard(b).map(p => `<option value="${esc(p)}" ${p === S.person ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>` : ''}
-        ${filterCount() ? `<button class="btn" data-act="clear-filters">Filtered · ${filterCount()} ✕</button>` : ''}
-        ${S.sort ? `<button class="btn" data-act="clear-sort">Sorted: ${esc(S.sort.col === 'name' ? 'Name' : ((b.columns.find(c => c.id === S.sort.col) || {}).title || ''))} ${S.sort.dir === 'desc' ? '↓' : '↑'} ✕</button>` : ''}
-        ${S.hidden.size ? `<button class="btn" data-act="hidden-cols">Hidden columns · ${S.hidden.size}</button>` : ''}
+        ${personFilter(b)}
+        ${viewControls(b)}
+        ${filterChips(b)}
         ${S.view === 'table' && S.canWrite && (filterCount() || S.sort || S.person || S.hidden.size) ? '<button class="btn" data-act="save-view">Save as view</button>' : ''}
         ${curView() && curView().source !== 'monday' && S.canWrite ? `<button class="btn" data-act="delete-view">${S.confirmDelete === 'v:' + S.viewId ? 'Click again to delete view' : 'Delete view'}</button>` : ''}
-        <span class="group-count">${visibleItems().length} of ${S.items.length} items</span>
+        ${count}
         <span class="spacer"></span>
         ${S.isOwner ? `<button class="btn" data-act="access" title="Who can see this board">${b.access && b.access.private ? `Private · ${(b.access.members || []).length}` : 'Open to everyone'} · Access</button>` : b.access && b.access.private ? '<span class="pill" title="Only the people this board is shared with can see it">Private board</span>' : ''}
         ${S.isGuest ? '' : `<button class="btn" data-act="automations">Automations · ${(b.automations || []).filter(r => r.on !== false).length}</button>`}
         ${S.canWrite ? '<button class="btn" data-act="add-column">+ Column</button>' : ''}
       </div>`;
+  }
+  // the ⋯ sheet on phones: every board action the compact header leaves out
+  function boardSheet(b) {
+    const row = (inner) => `<div class="sheet-list glass">${inner}</div>`;
+    const it = (attrs, label, sub) => `<button class="li" ${attrs}><span class="li-main"><b>${label}</b>${sub ? `<span>${sub}</span>` : ''}</span><span class="chev">›</span></button>`;
+    const vc = (b.automations || []).filter(r => r.on !== false).length;
+    return `<h3>${esc(b.name)}</h3>
+      <p>${visibleItems().length.toLocaleString('en-CA')} of ${S.items.length.toLocaleString('en-CA')} items${S.person ? ' · ' + esc(S.person) : ''}</p>
+      ${personFilter(b) ? `<div class="form-row">${personFilter(b)}</div>` : ''}
+      ${row(`${S.isGuest ? '' : it('data-fx="activity"', 'Activity', 'Every change on this board')}
+        ${S.isGuest ? '' : it('data-act="automations"', 'Automations', vc + ' on')}
+        ${S.canWrite ? it('data-act="add-column"', '+ Column', 'Add a column to this board') : ''}
+        ${it('data-act="export-menu" data-sheet="1"', 'Export', 'Download this view as a spreadsheet')}
+        ${S.canWrite ? it('data-act="import"', 'Import', 'Add items from a CSV or Excel file') : ''}
+        ${S.isOwner ? it('data-act="access"', 'Access', b.access && b.access.private ? `Private · ${(b.access.members || []).length} people` : 'Open to everyone') : ''}
+        ${S.isGuest ? '' : it('data-fx="search"', 'Search every board', '')}
+        ${S.isGuest ? '' : it('data-fx="board-menu"', 'More', 'Duplicate, templates, connect boards, forms, recycle bin')}`)}
+      ${S.view === 'table' && S.canWrite && (filterCount() || S.sort || S.person || S.hidden.size) ? '<div class="form-row"><button class="btn" data-act="save-view">Save as view</button></div>' : ''}
+      ${curView() && curView().source !== 'monday' && S.canWrite ? `<div class="form-row"><button class="btn" data-act="delete-view">${S.confirmDelete === 'v:' + S.viewId ? 'Tap again to delete view' : 'Delete view'}</button></div>` : ''}
+      <div><button class="btn" data-act="close-modal-btn">Close</button></div>`;
   }
 
   function peopleOnBoard(b) {
@@ -1047,6 +1232,9 @@ td.currency::before, td.percent::after { color: var(--muted); }
 
   function renderContent() {
     const b = board(), el = $('#content');
+    const isTable = !!b && S.page === 'board' && !(S.view === 'kanban' || S.view === 'calendar' || (window.KSViews && KSViews.has(S.view)));
+    el.classList.toggle('tv', isTable);
+    if (!isTable && el.scrollLeft) el.scrollLeft = 0;
     if (S.status === 'offline') { el.innerHTML = `<div class="empty"><h3>Can’t reach the server</h3>Check your connection, then reload the page.</div>`; return; }
     if (S.page === 'dash' && window.KSViews && S.boards.length) { el.innerHTML = KSViews.renderDash(); return; }
     if (S.page === 'home' && S.boards.length) { el.innerHTML = renderHome(); return; }
@@ -1064,48 +1252,159 @@ td.currency::before, td.percent::after { color: var(--muted); }
     el.innerHTML = imp + dl + (S.view === 'kanban' ? renderKanban(b) : S.view === 'calendar' ? renderCalendar(b) : window.KSViews && KSViews.has(S.view) ? KSViews.render(b) : renderTable(b));
   }
 
-  function renderTable(b) {
-    const items = visibleItems();
-    const narrow = window.matchMedia('(max-width: 780px)').matches;
-    const cols = visCols(b);
-    const sortMark = id => S.sort && S.sort.col === id ? `<span class="th-sort">${S.sort.dir === 'desc' ? '↓' : '↑'}</span>` : '';
-    const head = cols.map(c => `<th class="w-${c.type}"><button class="col-head" data-act="col-menu" data-col="${esc(c.id)}" title="${isLocked(c, b) ? (colEditable(c, b) ? 'Locked: you can still change it' : 'Locked: only admins can change it') + '. ' : ''}Sort, filter or hide">${isLocked(c, b) ? IC.lock : ''}${esc(c.title)} ${sortMark(c.id)}${(S.filters[c.id] || []).length ? '<span class="th-filter" title="Filtered"></span>' : ''}</button></th>`).join('');
-    const addColTh = S.canWrite ? '<th class="add-col"><button data-act="add-column" aria-label="Add column" title="Add column">+</button></th>' : '<th class="add-col"></th>';
-    const subCols = b.subColumns || [];
-    const span = cols.length + 2;
-    const groups = b.groups.map(g => {
-      const gi = items.filter(i => i.group === g.id);
-      const open = !S.collapsed.has(g.id);
-      const limit = S.shown[g.id] || PAGE;
-      const allSel = gi.length && gi.every(i => S.selected.has(i.id));
-      const rows = gi.slice(0, limit).map(i => {
-        const subs = i.subitems || [];
-        const exp = S.expanded.has(i.id) && subs.length;
-        const sel = S.selected.has(i.id);
-        const row = `<tr data-row="${esc(i.id)}" data-group="${esc(g.id)}" class="${sel ? 'sel' : ''}">
+  // ---------- table view ----------
+  // Every group shares one sideways scroller (#content) and the same fixed column widths, so columns line up from
+  // group to group. On big boards only the columns near the screen and only the groups near the screen are built;
+  // the rest are filled in as you scroll (Mark's 1,200 leads x 160 columns would otherwise be ~115,000 elements).
+  const COLW = { status: 150, text: 200, person: 130, date: 140, phone: 140, email: 210, number: 140, formula: 140, button: 130, checkbox: 90, dropdown: 170, link: 200, item_id: 130, created: 130, board_relation: 180, mirror: 180, ai: 220, doc: 200, time_tracking: 150 };
+  const colW = c => isFileCol(c) ? 220 : c.long ? 240 : (COLW[c.type] || 170);
+  const isNarrow = () => window.matchMedia('(max-width: 780px)').matches;
+  const nameW = () => isNarrow() ? 200 : 300;
+  const TV = { cols: [], xs: [], total: 0, win: [0, 0], lazy: false, items: [] };
+  const GROUP_HEAD_H = 46, ROW_H = 38;
+  function tvLayout(b) {
+    TV.cols = visCols(b); TV.xs = []; let x = 0; for (const c of TV.cols) { TV.xs.push(x); x += colW(c); } TV.total = x;
+  }
+  // which columns to build: the ones within about a screen of what's showing
+  function tvWindow() {
+    const n = TV.cols.length; if (n <= 40) return [0, n];
+    const el = $('#content'), sl = el ? el.scrollLeft : 0, cw = el ? el.clientWidth : innerWidth, nw = nameW();
+    const lo = sl - cw, hi = sl + 2 * cw;
+    let from = 0; while (from < n - 1 && nw + TV.xs[from] + colW(TV.cols[from]) < lo) from++;
+    let to = from; while (to < n && nw + TV.xs[to] < hi) to++;
+    return [from, Math.max(to, from + 1)];
+  }
+  function tvNeedsNewWindow() {
+    const n = TV.cols.length; if (n <= 40) return false;
+    const el = $('#content'); if (!el) return false;
+    const sl = el.scrollLeft, cw = el.clientWidth, nw = nameW(), [from, to] = TV.win;
+    const left = from > 0 ? nw + TV.xs[from] : -Infinity, right = to < n ? nw + TV.xs[to] : Infinity;
+    return sl - 200 < left || sl + cw + 200 > right;
+  }
+  // the column slots for the current window: null = one spacer cell standing in for the columns not built
+  function tvCells() { const [from, to] = TV.win, n = TV.cols.length; return [...(from > 0 ? [null] : []), ...TV.cols.slice(from, to), ...(to < n ? [null] : [])]; }
+  function tvRow(b, g, i, cells, span) {
+    const narrow = isNarrow(), subs = i.subitems || [], exp = S.expanded.has(i.id) && subs.length, sel = S.selected.has(i.id);
+    const row = `<tr data-row="${esc(i.id)}" data-group="${esc(g.id)}" class="${sel ? 'sel' : ''}">
           <td class="name-cell"><div class="name-wrap">${S.canWrite ? `<span class="grip" draggable="true" data-rowdrag="${esc(i.id)}" title="Drag to move" aria-hidden="true">⋮⋮</span>` : ''}<input type="checkbox" class="rowcheck" data-sel="${esc(i.id)}" ${sel ? 'checked' : ''} aria-label="Select ${esc(i.name)}">${(subs.length || (b.subColumns || []).length) ? `<button class="sub-toggle" data-act="subs" data-item="${esc(i.id)}" aria-expanded="${!!exp}" title="Subitems">${exp ? '▾' : '▸'} ${subs.length}</button>` : ''}${narrow ? `<button class="name-open" data-act="open" data-item="${esc(i.id)}">${esc(i.name)}${(i.updates || []).length ? `<span class="upd-count">${i.updates.length}</span>` : ''}</button>` : `<input class="cell-input" data-edit="name" data-item="${esc(i.id)}" value="${esc(i.name)}" aria-label="Item name" ${S.canWrite ? '' : 'readonly'} style="padding-left:2px"><button class="open-btn" data-act="open" data-item="${esc(i.id)}">Open${(i.updates || []).length ? ' · ' + i.updates.length : ''}</button>`}</div></td>
-          ${cols.map(c => `<td class="c-${c.type} ${c.type === 'number' ? 'num-cell' : ''} ${c.format || ''}">${cellEditor(c, i)}</td>`).join('')}<td></td>
+          ${cells.map(c => c ? `<td class="c-${c.type} ${c.type === 'number' ? 'num-cell' : ''} ${c.format || ''}">${cellEditor(c, i)}</td>` : '<td class="tsp"></td>').join('')}<td></td>
         </tr>`;
-        const subRow = exp ? `<tr class="sub-row"><td colspan="${span}">${subTable(b, i)}</td></tr>` : '';
-        return row + subRow;
-      }).join('');
-      const more = gi.length > limit ? `<tr class="more-row"><td class="name-cell" colspan="${Math.min(span, 3)}"><button data-act="more" data-group="${esc(g.id)}">Show ${Math.min(PAGE, gi.length - limit)} more · ${gi.length - limit} hidden</button></td>${cols.slice(1).map(() => '<td></td>').join('')}</tr>` : '';
-      const addRow = (S.canWrite ? `<tr class="add-row"><td class="name-cell"><input class="cell-input" data-act-key="add-item" data-group="${esc(g.id)}" placeholder="+ Add item" aria-label="Add item to ${esc(g.name)}" style="padding-left:40px"></td>${cols.map(() => '<td></td>').join('')}<td></td></tr>` : '') + more;
-      const sum = `<tr class="sum-row"><td class="name-cell"></td>${cols.map(c => `<td>${summaryCell(c, gi)}</td>`).join('')}<td></td></tr>`;
-      return `<section class="group" style="--gc:${esc(g.color)}">
-        <div class="group-head" data-dropgroup="${esc(g.id)}">
+    return row + (exp ? `<tr class="sub-row" data-subof="${esc(i.id)}"><td colspan="${span}"><div class="sub-stick">${subTable(b, i)}</div></td></tr>` : '');
+  }
+  function tvSumRow(gi, cells) { return `<tr class="sum-row"><td class="name-cell"></td>${cells.map(c => `<td>${c ? summaryCell(c, gi) : ''}</td>`).join('')}<td></td></tr>`; }
+  const tvGroupItems = g => TV.items.filter(i => i.group === g.id);
+  function tvTable(b, g, gi) {
+    const [from, to] = TV.win, n = TV.cols.length, cells = tvCells(), span = cells.length + 2;
+    const padL = from > 0 ? TV.xs[from] : 0, padR = to < n ? TV.total - TV.xs[to] : 0;
+    const colgroup = `<colgroup><col style="width:${nameW()}px">${cells.map((c, k) => `<col style="width:${c ? colW(c) : (k === 0 && from > 0 ? padL : padR)}px">`).join('')}<col></colgroup>`;
+    const sortMark = id => S.sort && S.sort.col === id ? `<span class="th-sort">${S.sort.dir === 'desc' ? '↓' : '↑'}</span>` : '';
+    const head = cells.map(c => c ? `<th class="w-${c.type}"><button class="col-head" data-act="col-menu" data-col="${esc(c.id)}" title="${isLocked(c, b) ? (colEditable(c, b) ? 'Locked: you can still change it' : 'Locked: only admins can change it') + '. ' : ''}${esc(c.title)}: sort, filter or hide">${isLocked(c, b) ? IC.lock : ''}<span class="col-t">${esc(c.title)}</span> ${sortMark(c.id)}${(S.filters[c.id] || []).length ? '<span class="th-filter" title="Filtered"></span>' : ''}</button></th>` : '<th class="tsp"></th>').join('');
+    const addColTh = S.canWrite ? '<th class="add-col"><button data-act="add-column" aria-label="Add column" title="Add column">+</button></th>' : '<th class="add-col"></th>';
+    const limit = S.shown[g.id] || PAGE, allSel = gi.length && gi.every(i => S.selected.has(i.id));
+    const rows = gi.slice(0, limit).map(i => tvRow(b, g, i, cells, span)).join('');
+    const more = gi.length > limit ? `<tr class="more-row"><td class="name-cell"><button data-act="more" data-group="${esc(g.id)}">Show ${Math.min(PAGE, gi.length - limit)} more · ${gi.length - limit} hidden</button></td><td colspan="${span - 1}"></td></tr>` : '';
+    const addRow = (S.canWrite ? `<tr class="add-row"><td class="name-cell"><input class="cell-input" data-act-key="add-item" data-group="${esc(g.id)}" placeholder="+ Add item" aria-label="Add item to ${esc(g.name)}" style="padding-left:40px"></td><td colspan="${span - 1}"></td></tr>` : '') + more;
+    return `<div class="tablewrap" data-tw="${esc(g.id)}"><table class="board" style="width:${nameW() + TV.total + 44}px">${colgroup}<thead><tr><th class="name-cell"><div class="name-wrap" style="padding-left:14px"><input type="checkbox" class="rowcheck" data-selgroup="${esc(g.id)}" ${allSel ? 'checked' : ''} aria-label="Select all in ${esc(g.name)}"><button class="col-head" data-act="col-menu" data-col="name" style="justify-content:flex-start">Item ${sortMark('name')}</button></div></th>${head}${addColTh}</tr></thead><tbody>${rows}${addRow}${tvSumRow(gi, cells)}</tbody></table></div>`;
+  }
+  const tvEstimate = (g, gi) => { const limit = S.shown[g.id] || PAGE, shown = Math.min(gi.length, limit); return 40 + (shown + (S.canWrite ? 1 : 0) + (gi.length > limit ? 1 : 0)) * ROW_H + 30; };
+  const tvPlaceholder = (g, gi, h) => `<div class="tablewrap tv-ph" data-ph="${esc(g.id)}" style="height:${h || tvEstimate(g, gi)}px" aria-busy="true"></div>`;
+  function tvGroupHead(g, gi, open) {
+    return `<div class="group-head" data-dropgroup="${esc(g.id)}">
           <button class="caret" data-act="collapse" data-group="${esc(g.id)}" aria-expanded="${open}" aria-label="Show or hide ${esc(g.name)}"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2"/></svg></button>
           <input class="group-name" data-edit="group-name" data-group="${esc(g.id)}" value="${esc(g.name)}" aria-label="Group name" ${S.canWrite ? '' : 'readonly'}>
           <span class="group-count">${gi.length} ${gi.length === 1 ? 'item' : 'items'}</span>
           ${S.canWrite ? `<button class="icon-btn" data-act="group-color" data-group="${esc(g.id)}">Colour</button>
-          <button class="icon-btn" data-act="delete-group" data-group="${esc(g.id)}">${S.confirmDelete === 'g:' + g.id ? ((n => n ? `Delete group and ${n} lead${n === 1 ? '' : 's'}` : 'Click again to delete')(S.items.filter(x => x.group === g.id).length)) : 'Delete'}</button>` : ''}
-        </div>
-        ${open ? `<div class="tablewrap"><table class="board"><thead><tr><th class="name-cell"><div class="name-wrap" style="padding-left:14px"><input type="checkbox" class="rowcheck" data-selgroup="${esc(g.id)}" ${allSel ? 'checked' : ''} aria-label="Select all in ${esc(g.name)}"><button class="col-head" data-act="col-menu" data-col="name" style="justify-content:flex-start">Item ${sortMark('name')}</button></div></th>${head}${addColTh}</tr></thead><tbody>${rows}${addRow}${sum}</tbody></table></div>` : ''}
-      </section>`;
+          <button class="icon-btn" data-act="delete-group" data-group="${esc(g.id)}">${S.confirmDelete === 'g:' + g.id ? (gi.length ? `Delete group and ${gi.length} lead${gi.length === 1 ? '' : 's'}` : 'Click again to delete') : 'Delete'}</button>` : ''}
+        </div>`;
+  }
+  function renderTable(b) {
+    TV.items = visibleItems(); tvLayout(b); TV.win = tvWindow();
+    TV.lazy = TV.items.length * Math.min(TV.cols.length, 40) > 6000;
+    // on big boards build only the groups near the screen now; the scroll check fills in the rest
+    const el = $('#content'), top = el ? el.scrollTop : 0, bottom = top + (el ? el.clientHeight : innerHeight) + 900;
+    let y = 0;
+    const groups = b.groups.map(g => {
+      const gi = tvGroupItems(g), open = !S.collapsed.has(g.id), h = GROUP_HEAD_H + (open ? tvEstimate(g, gi) : 0);
+      const fill = !TV.lazy || (y + h > top - 900 && y < bottom); y += h + 26;
+      return `<section class="group" data-g="${esc(g.id)}" style="--gc:${esc(g.color)}">${tvGroupHead(g, gi, open)}${open ? (fill ? tvTable(b, g, gi) : tvPlaceholder(g, gi)) : ''}</section>`;
     }).join('');
-    const orphans = items.filter(i => !b.groups.some(g => g.id === i.group));
-    const orphanNote = orphans.length ? `<p class="rail-note">${orphans.length} item(s) belong to a deleted group. Open one to move it.</p>` : '';
-    return groups + orphanNote + (S.canWrite ? `<button class="btn add-group" data-act="add-group">+ Add group</button>` : '');
+    const orphans = TV.items.filter(i => !b.groups.some(g => g.id === i.group));
+    const orphanNote = orphans.length ? `<p class="rail-note tv-stick">${orphans.length} item(s) belong to a deleted group. Open one to move it.</p>` : '';
+    if (TV.lazy) requestAnimationFrame(tvCheck);
+    return `<div class="tv-groups">${groups}</div>` + orphanNote + (S.canWrite ? `<button class="btn add-group tv-stick" data-act="add-group">+ Add group</button>` : '');
+  }
+  const tvOn = () => S.page === 'board' && S.view === 'table' && !!document.querySelector('#content .tv-groups') && !!board();
+  // Scroll check: fill groups coming into view, empty ones far away, and rebuild the column window when needed.
+  function tvCheck() {
+    if (!tvOn()) return;
+    const b = board(), el = $('#content'), vr = el.getBoundingClientRect(), act = document.activeElement;
+    const keep = tw => act && tw.contains(act) && act !== document.body;
+    if (tvNeedsNewWindow()) {
+      TV.win = tvWindow();
+      document.querySelectorAll('#content .tablewrap[data-tw]').forEach(tw => {
+        if (keep(tw)) return;
+        const g = b.groups.find(x => x.id === tw.dataset.tw); if (g) tw.outerHTML = tvTable(b, g, tvGroupItems(g));
+      });
+    }
+    if (!TV.lazy) return;
+    document.querySelectorAll('#content .tv-ph').forEach(ph => {
+      const r = ph.getBoundingClientRect(); if (r.bottom < vr.top - 900 || r.top > vr.bottom + 900) return;
+      const g = b.groups.find(x => x.id === ph.dataset.ph); if (g) ph.outerHTML = tvTable(b, g, tvGroupItems(g));
+    });
+    document.querySelectorAll('#content .tablewrap[data-tw]').forEach(tw => {
+      const r = tw.getBoundingClientRect(); if (r.bottom > vr.top - 2600 && r.top < vr.bottom + 2600) return;
+      if (keep(tw)) return;
+      const g = b.groups.find(x => x.id === tw.dataset.tw); if (g) tw.outerHTML = tvPlaceholder(g, null, Math.round(r.height));
+    });
+  }
+  let tvQueued = false;
+  function onContentScroll() {
+    if (tvQueued) return; tvQueued = true;
+    requestAnimationFrame(() => { tvQueued = false; try { tvCheck(); } catch (e) { console.error(e); } });
+  }
+  // A live change to a few items: rebuild only their rows (or their group, when they moved), not the whole board.
+  function tvPatch(ids) {
+    const b = board(); if (!b) return;
+    const vis = visibleItems(); TV.items = vis;
+    const rebuild = new Set(), touched = new Set(), act = document.activeElement;
+    const byGroup = new Map(); vis.forEach(i => { if (!byGroup.has(i.group)) byGroup.set(i.group, []); byGroup.get(i.group).push(i); });
+    for (const id of ids) {
+      const it = itemById(id), tr = document.querySelector(`#content tr[data-row="${CSS.escape(id)}"]`);
+      const list = it ? byGroup.get(it.group) || [] : [], k = it ? list.indexOf(it) : -1;
+      if (it) touched.add(it.group); if (tr) touched.add(tr.dataset.group);
+      const shouldShow = it && k >= 0 && k < (S.shown[it.group] || PAGE);
+      if (!tr) { if (shouldShow) rebuild.add(it.group); continue; }
+      if (!shouldShow || tr.dataset.group !== it.group) { rebuild.add(tr.dataset.group); if (it) rebuild.add(it.group); continue; }
+      let prev = tr.previousElementSibling; while (prev && !prev.dataset.row) prev = prev.previousElementSibling;
+      if ((prev ? prev.dataset.row : null) !== (k > 0 ? list[k - 1].id : null)) { rebuild.add(it.group); continue; }
+      if (act && tr.contains(act) && isEditing()) { S.pendingRender = true; continue; }
+      const g = b.groups.find(x => x.id === it.group); if (!g) continue;
+      const cells = tvCells(), next = tr.nextElementSibling;
+      if (next && next.dataset.subof === id) next.remove();
+      tr.outerHTML = tvRow(b, g, it, cells, cells.length + 2);
+    }
+    for (const gid of touched) {
+      const g = b.groups.find(x => x.id === gid), sec = document.querySelector(`#content section.group[data-g="${CSS.escape(gid)}"]`); if (!g || !sec) continue;
+      const gi = byGroup.get(gid) || [], tw = sec.querySelector('.tablewrap[data-tw]'), ph = sec.querySelector('.tv-ph');
+      if (tw && rebuild.has(gid)) { if (act && tw.contains(act) && isEditing()) S.pendingRender = true; else tw.outerHTML = tvTable(b, g, gi); }
+      else if (tw) { const sr = tw.querySelector('tr.sum-row'); if (sr) sr.outerHTML = tvSumRow(gi, tvCells()); }
+      else if (ph) ph.style.height = tvEstimate(g, gi) + 'px';
+      const cnt = sec.querySelector('.group-head .group-count'); if (cnt) cnt.textContent = `${gi.length} ${gi.length === 1 ? 'item' : 'items'}`;
+    }
+    const hc = $('#item-count'); if (hc) hc.textContent = `${vis.length} of ${S.items.length} items`;
+  }
+  // Live changes from other people, gathered for a moment: table rows are patched in place; other views re-render once.
+  const liveQ = new Set(); let liveTimer = null;
+  function liveChanged(ids) {
+    ids.forEach(x => liveQ.add(x));
+    if (!liveTimer) liveTimer = setTimeout(flushLive, 60);
+  }
+  function flushLive() {
+    liveTimer = null; const ids = [...liveQ]; liveQ.clear(); if (!ids.length) return;
+    if (S.openItem && ids.includes(S.openItem)) { const d = document.querySelector('#layer .drawer'); if (d && d.contains(document.activeElement) && isEditing()) S.pendingRender = true; else renderLayer(); }
+    if (S.page !== 'board') return;
+    if (!tvOn() || ids.length > 200) { scheduleRender(); return; }
+    try { tvPatch(ids); } catch (e) { console.error(e); scheduleRender(); }
   }
 
   function calColId(b) {
@@ -1128,6 +1427,16 @@ td.currency::before, td.percent::after { color: var(--muted); }
       return `<div class="cal-day ${d.getMonth() !== m ? 'out' : ''} ${key === today ? 'today' : ''}"><span class="cal-num">${d.getDate()}</span><div class="cal-list">${list.map(i => { const l = sc && labelOf(sc, (i.values || {})[sc.id]); return `<button class="cal-chip ${l ? '' : 'plain'}" style="${l ? '--c:' + esc(l.color) : ''}" data-act="open" data-item="${esc(i.id)}" title="${esc(i.name)}${l ? ' · ' + esc(l.label) : ''}">${esc(i.name)}</button>`; }).join('')}</div></div>`;
     }).join('');
     const inMonth = Object.entries(byDay).filter(([k]) => k.startsWith(`${y}-${pad(m + 1)}`)).reduce((a, [, v]) => a + v.length, 0);
+    if (isNarrow()) {
+      // phones: an agenda of the month's days that have something on them
+      const keys = Object.keys(byDay).filter(k => k.startsWith(`${y}-${pad(m + 1)}`)).sort();
+      const chip = i => { const l = sc && labelOf(sc, (i.values || {})[sc.id]); return `<button class="cal-chip ${l ? '' : 'plain'}" style="${l ? '--c:' + esc(l.color) : ''}" data-act="open" data-item="${esc(i.id)}">${esc(i.name)}${l ? ` · ${esc(l.label)}` : ''}</button>`; };
+      const days2 = keys.map(k => `<div class="ag-day ${k === today ? 'today' : ''}"><div class="ag-date">${esc(new Date(k + 'T12:00:00').toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' }))}${k === today ? ' · Today' : ''}</div>${byDay[k].map(chip).join('')}</div>`).join('');
+      return `<div class="cal-head"><h3>${esc(first.toLocaleString('en-CA', { month: 'long', year: 'numeric' }))}</h3>
+      <button class="btn" data-act="cal-nav" data-d="-1" aria-label="Previous month">‹</button><button class="btn" data-act="cal-nav" data-d="0">Today</button><button class="btn" data-act="cal-nav" data-d="1" aria-label="Next month">›</button>
+      <span class="group-count">${inMonth} by ${esc(col.title)}</span></div>
+      <div class="agenda">${days2 || `<div class="empty"><h3>Nothing this month</h3>Items show up here on their ${esc(col.title)} date.</div>`}</div>`;
+    }
     return `<div class="cal-head"><h3>${esc(first.toLocaleString('en-CA', { month: 'long', year: 'numeric' }))}</h3>
       <button class="btn" data-act="cal-nav" data-d="-1" aria-label="Previous month">‹</button><button class="btn" data-act="cal-nav" data-d="0">Today</button><button class="btn" data-act="cal-nav" data-d="1" aria-label="Next month">›</button>
       <span class="group-count">${inMonth} items this month by ${esc(col.title)}</span></div>
@@ -1171,6 +1480,9 @@ td.currency::before, td.percent::after { color: var(--muted); }
     return `<div class="kanban">${lanes}</div>`;
   }
 
+  // where focus goes back to when the drawer closes (a selector, since the board re-renders underneath)
+  let drawerReturn = null;
+  const opener = el => { const o = el.closest && el.closest('[data-act="open"][data-item], .card[data-item]'); if (o) return `[data-act="open"][data-item="${CSS.escape(o.dataset.item)}"]`; return el.id ? '#' + CSS.escape(el.id) : null; };
   function renderLayer() {
     let html = '';
     const b = board();
@@ -1180,17 +1492,19 @@ td.currency::before, td.percent::after { color: var(--muted); }
       else {
         const fields = b.columns.map(c => `<div class="f-label">${isLocked(c, b) ? IC.lock : ''}${esc(c.title)}</div><div class="f-value ${c.format === 'currency' ? 'currency' : ''}" ${c.format === 'currency' ? 'style="position:relative"' : ''}>${c.format === 'currency' ? '<span style="position:absolute;left:10px;color:var(--muted);font-family:var(--f-data)">$</span>' : ''}${cellEditor(c, i, true)}</div>`).join('');
         const groupSel = `<div class="f-label">Group</div><div class="f-value"><select class="kbd-select" data-edit="group" data-item="${esc(i.id)}" ${S.canWrite ? '' : 'disabled'} aria-label="Group">${b.groups.map(g => `<option value="${esc(g.id)}" ${g.id === i.group ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}${b.groups.some(g => g.id === i.group) ? '' : '<option selected>Pick a group</option>'}</select></div>`;
-        const updates = (i.updates || []).slice().reverse().map(u => `<div class="update"><div class="u-meta"><b data-uid="${esc(u.by)}">${esc(u.byName || 'Someone')}</b><span>${esc(fmtTime(u.at))}</span></div>${u.text ? `<div class="u-text">${esc(u.text)}</div>` : ''}${(u.files || []).length ? `<div class="file-cell" style="flex-wrap:wrap;padding:0;min-height:0">${u.files.map(f => f.url ? `<span class="file-chip" style="padding-right:10px"><a href="${esc(f.url)}" target="_blank" rel="noopener" title="${esc(f.name)}" ${String(f.url).startsWith('/api/files/') ? 'download' : ''}>📎 ${esc(f.name)}</a></span>` : `<span class="file-chip" style="padding-right:10px">📎 ${esc(f.name)}</span>`).join('')}</div>` : ''}${(u.replies || []).map(rp => `<div class="update" style="margin:6px 0 0 18px"><div class="u-meta"><b>${esc(rp.byName || 'Someone')}</b><span>${esc(fmtTime(rp.at))}</span></div><div class="u-text">${esc(rp.text)}</div></div>`).join('')}</div>`).join('');
+        const updates = (i.updates || []).slice().reverse().map(u => `<div class="update"><div class="u-meta"><b data-uid="${esc(u.by)}">${esc(u.byName || 'Someone')}</b><span>${esc(fmtTime(u.at))}</span></div>${u.text ? `<div class="u-text">${esc(u.text)}</div>` : ''}${(u.files || []).length ? `<div class="file-cell" style="flex-wrap:wrap;padding:0;min-height:0">${u.files.map(f => safeUrl(f.url) ? `<span class="file-chip" style="padding-right:10px"><a href="${esc(f.url)}" target="_blank" rel="noopener" title="${esc(f.name)}" ${String(f.url).startsWith('/api/files/') ? 'download' : ''}>📎 ${esc(f.name)}</a></span>` : `<span class="file-chip" style="padding-right:10px">📎 ${esc(f.name)}</span>`).join('')}</div>` : ''}${(u.replies || []).map(rp => `<div class="update" style="margin:6px 0 0 18px"><div class="u-meta"><b>${esc(rp.byName || 'Someone')}</b><span>${esc(fmtTime(rp.at))}</span></div><div class="u-text">${esc(rp.text)}</div></div>`).join('')}</div>`).join('');
         const sys = a => a.by === 'automation' || a.by === 'import' || a.by === 'seed';
+        if (S.drawerTab === 'activity') S.drawerTab = 'history'; // the old "Activity log" tab is part of History now
+        const dtab = S.drawerTab;
         const log = (i.activity || []).map(a => `<li><time>${esc(fmtTime(a.at))}</time><span class="${sys(a) ? 'auto' : ''}">${sys(a) ? '' : `<span data-uid="${esc(a.by)}">Someone</span>: `}${esc(a.text)}</span></li>`).join('');
         const sc = b.subColumns || [];
         const subs = (i.subitems || []).map(s => `<div class="subcard"><b>${esc(s.name)}</b><span class="card-meta">${sc.map(c => { const v = (s.values || {})[c.id]; if (v == null || v === '') return ''; const l = c.type === 'status' && labelOf(c, v); return l ? `<span class="pill" style="--c:${esc(l.color)}">${esc(l.label)}</span>` : `<span>${esc(c.title)}: ${esc(describe(c, v))}</span>`; }).join('')}</span></div>`).join('');
         html += `<div class="scrim" data-act="close-item"></div>
-        <aside class="drawer" role="dialog" aria-label="${esc(i.name)}">
+        <aside class="drawer" role="dialog" aria-modal="true" tabindex="-1" data-key="${esc(i.id + '|' + dtab)}" aria-label="${esc(i.name)}">
           <div class="drawer-head"><input class="drawer-title" data-edit="name" data-item="${esc(i.id)}" value="${esc(i.name)}" aria-label="Item name" ${S.canWrite ? '' : 'readonly'}>
             <div class="drawer-actions">${S.canWrite ? `<button class="btn" data-act="dup-item" data-item="${esc(i.id)}">Duplicate</button>` : ''}<button class="btn" data-act="close-item">Close</button></div></div>
           <div class="drawer-tabs" role="tablist">
-            ${[...(b.form ? [['fact', 'Fact find']] : []), ['updates', `Updates · ${(i.updates || []).length}`], ['info', 'Info'], ...(window.SolverExt ? SolverExt.drawerTabs(b, i) : []), ['activity', 'Activity log'], ...(window.SolverFeatures ? [['history', 'History']] : [])].map(([k, l]) => `<button class="drawer-tab" role="tab" data-act="dtab" data-tab="${k}" aria-selected="${S.drawerTab === k}">${l}</button>`).join('')}
+            ${[...(b.form ? [['fact', 'Fact find']] : []), ['updates', `Updates · ${(i.updates || []).length}`], ['info', 'Info'], ...(window.SolverExt ? SolverExt.drawerTabs(b, i) : []), ['history', 'History']].map(([k, l]) => `<button class="drawer-tab" role="tab" data-act="dtab" data-tab="${k}" aria-selected="${dtab === k}">${l}</button>`).join('')}
           </div>
           <div class="drawer-body">
             ${S.drawerTab === 'info' ? `<div class="fields">${fields}${groupSel}</div>
@@ -1202,9 +1516,9 @@ td.currency::before, td.percent::after { color: var(--muted); }
                 <div class="form-row"><button class="btn primary" data-act="post-update" data-item="${esc(i.id)}">Post update</button><button class="btn" data-act="attach-update" data-item="${esc(i.id)}">${S.uploading ? 'Uploading…' : 'Attach file'}</button></div></div>` : ''}
               <div style="margin-top:12px">${updates || '<p class="rail-note">No updates yet. Post the first one above.</p>'}</div></div>` : ''}
             ${S.drawerTab === 'fact' && b.form ? renderFactFind(b, i) : ''}
-            ${S.drawerTab === 'activity' ? `<ul class="log">${log || '<li>No activity yet.</li>'}</ul>` : ''}
+
             ${window.SolverExt ? (SolverExt.drawerBody(S.drawerTab, b, i) || '') : ''}
-            ${S.drawerTab === 'history' ? fx('historyTab', b, i) || '' : ''}
+            ${dtab === 'history' ? (window.SolverFeatures ? (fx('historyTab', b, i) || '') + `<details class="log-sec" open><summary class="sec-title">Activity log · ${(i.activity || []).length}</summary><ul class="log">${log || '<li>No activity yet.</li>'}</ul></details>` : `<ul class="log">${log || '<li>No activity yet.</li>'}</ul>`) : ''}
           </div>
         </aside>`;
       }
@@ -1222,8 +1536,22 @@ td.currency::before, td.percent::after { color: var(--muted); }
     if (S.pop && b) html += renderPop(b);
     const layer = $('#layer');
     const draft = $('#update-text') ? $('#update-text').value : '';
+    const oldDrawer = layer.querySelector('.drawer'), oldKey = oldDrawer ? oldDrawer.dataset.key : '', oldBody = layer.querySelector('.drawer-body');
+    const keepScroll = oldBody ? oldBody.scrollTop : 0, hadFocus = !!(oldDrawer && oldDrawer.contains(document.activeElement));
+    if (!oldDrawer && S.openItem) drawerReturn = document.activeElement && document.activeElement !== document.body ? opener(document.activeElement) : drawerReturn;
     layer.innerHTML = html;
     if (draft && $('#update-text')) $('#update-text').value = draft;
+    const dw = layer.querySelector('.drawer');
+    if (dw) {
+      const key = dw.dataset.key, body = dw.querySelector('.drawer-body');
+      if (key === oldKey && body) body.scrollTop = keepScroll; // a live update: stay where you were
+      const tab = dw.querySelector('.drawer-tab[aria-selected="true"]'); if (tab && key !== oldKey && tab.scrollIntoView) tab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      if (!S.modal && !S.pop && (!oldDrawer || hadFocus) && !dw.contains(document.activeElement)) dw.focus({ preventScroll: true });
+    } else if (oldDrawer && !S.openItem) {
+      // closed: put focus back on what opened it
+      const back = drawerReturn && document.querySelector(drawerReturn); drawerReturn = null;
+      if (back && (!document.activeElement || document.activeElement === document.body)) back.focus({ preventScroll: true });
+    }
     if (window.SolverExt) SolverExt.afterLayer(); // mounts the doc editor and other live panels
   }
 
@@ -1397,6 +1725,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
         <div class="form-row"><label class="pop-check"><input type="checkbox" id="ii-dedupe" checked>Skip if the phone number is already on the board</label><button class="btn primary" data-act="int-in">Create lead link</button></div>
         <div><button class="btn" data-act="close-modal-btn">Done</button></div>`;
     }
+    if (m.type === 'board-sheet') return b ? boardSheet(b) : '';
     if (m.type === 'boards') {
       const link = x => `<button class="li" data-act="board" data-id="${esc(x.id)}"><span class="li-ic">${esc(initials(x.name))}</span><span class="li-main"><b>${esc(x.name)}</b></span><span class="chev">›</span></button>`;
       return `<h3>Boards</h3>
@@ -1409,6 +1738,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
       return `<h3>${esc((S.me && S.me.name) || 'Signed in')}</h3><p>${esc((S.me && S.me.email) || '')} · ${S.isGuest ? '<span class="pill guest-badge">Guest</span>' : roleLabel()}</p>
         <div class="form-row"><button class="btn" data-act="security">Security${S.me && S.me.twofa ? ' · two-factor on' : ''}</button></div>
         ${window.SolverExt ? SolverExt.profile() : ''}
+        <div class="form-row settings-slot" data-slot="settings"></div>
         <div class="form-row"><button class="btn primary" data-act="notifs">Notifications${S.notifs.unread ? ' · ' + S.notifs.unread + ' new' : ''}</button>${S.isOwner ? '<button class="btn" data-act="team">Team &amp; settings</button><button class="btn" data-act="integrations">Integrations</button>' : ''}<button class="btn" data-act="logout">Sign out</button><button class="btn" data-act="close-modal-btn">Close</button></div>`;
     }
     if (m.type === 'notifs') {
@@ -1464,9 +1794,13 @@ td.currency::before, td.percent::after { color: var(--muted); }
         <div><button class="btn" data-act="close-modal-btn">Done</button></div>`;
     }
     if (m.type === 'add-column') {
+      const ty = m.ctype || 'text';
       return `<h3>Add a column</h3>
-        <div class="form-row"><label for="c-title">Name</label><input class="field-input" id="c-title" placeholder="e.g. Lender" style="flex:1 1 180px"></div>
-        <div class="form-row"><label for="c-type">Type</label><select class="field-input" id="c-type">${Object.entries(TYPES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}<option value="currency">Money ($)</option></select></div>
+        <div class="form-row"><label for="c-title">Name</label><input class="field-input" id="c-title" placeholder="e.g. Lender" value="${esc(m.ctitle || '')}" style="flex:1 1 180px"></div>
+        <div class="form-row"><label for="c-type">Type</label><select class="field-input" id="c-type">${Object.entries(TYPES).filter(([k]) => k !== 'time_tracking' || window.SolverFeatures).map(([k, v]) => `<option value="${k}" ${k === ty ? 'selected' : ''}>${v}</option>`).join('')}<option value="currency" ${ty === 'currency' ? 'selected' : ''}>Money ($)</option></select></div>
+        ${ty === 'formula' ? `<div class="form-row"><label for="c-formula">Formula</label><input class="field-input" id="c-formula" placeholder="e.g. {Loan amount} * 0.01" style="flex:1 1 240px"></div><p>Use column names in braces. IF, ROUND, SUM, DAYS and the other Monday functions work.</p>` : ''}
+        ${ty === 'dropdown' ? `<div class="form-row"><label for="c-options">Options</label><input class="field-input" id="c-options" placeholder="Comma-separated, e.g. Purchase, Refinance, Equity" style="flex:1 1 240px"></div>` : ''}
+        ${ty === 'board_relation' || ty === 'mirror' ? `<p>${ty === 'mirror' ? 'A mirror shows a column from items linked through a Connect boards column.' : 'Links items here to items on another board.'} Next you pick ${ty === 'mirror' ? 'the connect column and the column to show' : 'the board'}.</p>` : ''}
         <div class="form-row"><button class="btn primary" data-act="save-column">Add column</button><button class="btn" data-act="close-modal-btn">Cancel</button></div>`;
     }
     if (m.type === 'col-menu') {
@@ -1476,6 +1810,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
         ${S.canWrite ? `<div class="form-row"><label for="c-rename">Rename</label><input class="field-input" id="c-rename" value="${esc(c.title)}" style="flex:1 1 180px"><button class="btn primary" data-act="rename-column">Save</button></div>
         <div class="form-row"><button class="btn" data-act="move-col" data-dir="-1">Move left</button><button class="btn" data-act="move-col" data-dir="1">Move right</button><span class="spacer"></span>
         <button class="btn danger" data-act="delete-column">${S.confirmDelete === 'c:' + c.id ? 'Click again to delete' : 'Delete column'}</button></div>` : ''}
+        ${c.type === 'formula' && S.canWrite ? `<div class="form-row"><label for="c-formula-edit">Formula</label><input class="field-input" id="c-formula-edit" value="${esc(String(c.formula || '').replace(/\{([^}]+)\}/g, (m0, id) => { const x = b.columns.find(k => k.id === id); return x ? `{${x.title}}` : m0; }))}" style="flex:1 1 240px"><button class="btn primary" data-act="save-formula">Save formula</button></div>` : ''}
         ${window.SolverExt ? SolverExt.colSettings(c, b) : ''}
         <div><button class="btn" data-act="close-modal-btn">Close</button></div>`;
     }
@@ -1513,13 +1848,19 @@ td.currency::before, td.percent::after { color: var(--muted); }
   }
 
   // ---------- events ----------
+  // the ⋯ sheet steps aside when one of its add-on actions (Activity, search, the More menu's items) opens its own window
+  function closeSheetAfterFx(e) {
+    const f = e.target.closest && e.target.closest('[data-fx]');
+    if (f && f.dataset.fx !== 'board-menu' && S.modal && S.modal.type === 'board-sheet') setTimeout(() => { if (S.modal && S.modal.type === 'board-sheet') { S.modal = null; renderLayer(); } }, 0);
+  }
   document.addEventListener('click', e => {
+    if (!e.target.closest('[data-act]')) closeSheetAfterFx(e);
     const t = e.target.closest('[data-act]');
     const OPENERS = ['status', 'person', 'col-menu', 'hidden-cols', 'bulk-status', 'group-color', 'dropdown', 'sub-status', 'export-menu'];
     if (S.pop && !e.target.closest('[data-pop]') && !(t && OPENERS.includes(t.dataset.act))) { S.pop = null; if (!t) { renderLayer(); return; } }
     if (!t) return;
     const a = t.dataset.act, b = board();
-    if (a === 'close-modal' && e.target !== t) return; // clicks inside the modal box
+    if (a === 'close-modal' && e.target !== t) { closeSheetAfterFx(e); return; } // clicks inside the modal box
     if (window.SolverExt && SolverExt.onAct(a, t, e, b)) return; // add-ons: automation editor, docs, AI, alerts
     if (!['delete-item', 'delete-group', 'delete-column', 'bulk-del', 'delete-view', 'reset-2fa'].includes(a)) S.confirmDelete = null;
     switch (a) {
@@ -1621,6 +1962,9 @@ td.currency::before, td.percent::after { color: var(--muted); }
         patchItem(i.id, { $append: { updates: [u], activity: [activity[0]] } }, { guest: true }); renderLayer(); renderContent(); fillNames(); break;
       }
       case 'automations': S.modal = { type: 'automations', draft: {} }; renderLayer(); break;
+      case 'board-sheet': S.pop = null; S.modal = { type: 'board-sheet' }; renderLayer(); break;
+      case 'm-search': S.mSearch = !(S.mSearch || S.search); if (!S.mSearch && S.search) { S.search = ''; S.shown = {}; renderContent(); } renderHead(); if (S.mSearch) setTimeout(() => $('#search') && $('#search').focus(), 0); break;
+      case 'm-search-close': S.mSearch = false; if (S.search) { S.search = ''; S.shown = {}; renderContent(); } renderHead(); break;
       case 'add-column': S.modal = { type: 'add-column' }; renderLayer(); setTimeout(() => $('#c-title') && $('#c-title').focus(), 0); break;
       case 'col-menu': { const r = t.getBoundingClientRect(); S.pop = { type: 'colmenu', col: t.dataset.col, x: r.left, y: r.bottom + 4 }; renderLayer(); break; }
       case 'col-settings': S.pop = null; S.modal = { type: 'col-menu', col: t.dataset.col }; renderLayer(); break;
@@ -1696,12 +2040,18 @@ td.currency::before, td.percent::after { color: var(--muted); }
       case 'delete-rule': { const automations = (b.automations || []).filter(r => r.id !== t.dataset.id); patchBoard({ automations }); localBoard({ automations }); break; }
       case 'save-column': {
         const title = $('#c-title').value.trim(); let type = $('#c-type').value; if (!title) { toast('Give the column a name.'); return; }
+        // Connect boards and Mirror columns need a board and a column picked: go straight to their setup
+        if (type === 'board_relation' || type === 'mirror') { S.modal = null; renderLayer(); const x = document.createElement('button'); x.dataset.fx = 'links'; x.hidden = true; document.body.appendChild(x); x.click(); x.remove(); toast(type === 'mirror' ? 'Pick the connect column and the column to show' : 'Pick the board to connect'); break; }
         const c = { id: rid('c'), title, type };
         if (type === 'currency') { c.type = 'number'; c.format = 'currency'; }
+        if (type === 'long_text') { c.type = 'text'; c.long = true; }
+        if (type === 'formula') { const f = ($('#c-formula') && $('#c-formula').value.trim()) || ''; if (!f) { toast('Write the formula, like {Amount} * 0.01'); return; } c.formula = f.replace(/\{([^}]+)\}/g, (m0, ref) => { const hit = b.columns.find(x => x.id === ref) || b.columns.find(x => x.title.toLowerCase() === ref.trim().toLowerCase()); return hit ? `{${hit.id}}` : m0; }); }
+        if (type === 'dropdown') c.options = (($('#c-options') && $('#c-options').value) || '').split(',').map(x => x.trim()).filter(Boolean);
         if (type === 'status') c.labels = [{ id: rid('l'), label: 'Not started', color: '#6b7280' }, { id: rid('l'), label: 'Working on it', color: '#c2852b' }, { id: rid('l'), label: 'Done', color: '#2f8f6f' }];
         if (type === 'ai') { c.prompt = ''; c.autorun = false; }
         const columns = [...b.columns, c]; patchBoard({ columns }); localBoard({ columns }); S.modal = type === 'ai' ? { type: 'col-menu', col: c.id } : null; if (type === 'ai') renderLayer(); toast(type === 'ai' ? `Added ${title}. Write its prompt below.` : `Added ${title}`); break;
       }
+      case 'save-formula': { const f = ($('#c-formula-edit').value || '').trim(); if (!f) return; const formula = f.replace(/\{([^}]+)\}/g, (m0, ref) => { const hit = b.columns.find(x => x.id === ref) || b.columns.find(x => x.title.toLowerCase() === ref.trim().toLowerCase()); return hit ? `{${hit.id}}` : m0; }); const columns = b.columns.map(c => c.id === S.modal.col ? { ...c, formula } : c); patchBoard({ columns }); localBoard({ columns }); toast('Formula saved'); break; }
       case 'rename-column': { const v = $('#c-rename').value.trim(); if (!v) return; const columns = b.columns.map(c => c.id === S.modal.col ? { ...c, title: v } : c); patchBoard({ columns }); localBoard({ columns }); S.modal = null; break; }
       case 'move-col': {
         const cols = b.columns.slice(), ix = cols.findIndex(c => c.id === S.modal.col), to = ix + Number(t.dataset.dir);
@@ -1757,6 +2107,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     if (window.SolverExt && SolverExt.onChange(e)) return;
     const t = e.target, b = board();
     if (t.id === 'board-select') return selectBoard(t.value);
+    if (t.id === 'c-type' && S.modal && S.modal.type === 'add-column') { S.modal.ctype = t.value; S.modal.ctitle = ($('#c-title') || {}).value || ''; renderLayer(); return; }
     if (t.id === 'kanban-col') { S.kanbanCol = t.value; return renderContent(); }
     if (t.id === 'cal-col') { S.calCol = t.value; return renderContent(); }
     if (t.id === 'ws-select') { S.ws = t.value; try { localStorage.setItem('ks-ws', S.ws); } catch (x) {} const first = wsBoards()[0]; S.summary = null; if (first) selectBoard(first.id); loadSummary(true); render(); return; }
@@ -1823,7 +2174,24 @@ td.currency::before, td.percent::after { color: var(--muted); }
 
   document.addEventListener('keydown', e => {
     const t = e.target;
-    if (e.key === 'Escape') { if (S.pop) { S.pop = null; renderLayer(); } else if (S.modal) { S.modal = null; renderLayer(); } else if (S.openItem) { S.openItem = null; renderLayer(); } else if (S.selected.size) { S.selected = new Set(); render(); } return; }
+    if (e.key === 'Escape') {
+      if (document.querySelector('#fx-layer .modal-wrap, #fx-layer .fx-search-wrap, body > .modal-wrap')) return; // an add-on window closes itself
+      // in the automation editor, Escape goes back to the list of automations (not out of the whole window)
+      if (!S.pop && S.modal && S.modal.type === 'automations' && S.modal.view === 'edit') { const c = document.querySelector('#layer [data-act="rx-cancel"], #layer [data-act="rx-back"]'); if (c) { c.click(); return; } }
+      if (S.pop) { S.pop = null; renderLayer(); } else if (S.modal) { S.modal = null; renderLayer(); } else if (S.openItem) { S.openItem = null; renderLayer(); } else if (S.selected.size) { S.selected = new Set(); render(); } return; }
+    // Tab stays inside the open drawer (or window) until it's closed
+    if (e.key === 'Tab') {
+      const box = S.modal ? document.querySelector('#layer .modal') : S.openItem ? document.querySelector('#layer .drawer') : null;
+      if (box && !document.querySelector('#fx-layer .modal-wrap, body > .modal-wrap')) {
+        const f = [...box.querySelectorAll('button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), [contenteditable="true"]')].filter(x => x.offsetParent !== null);
+        if (!f.length) { e.preventDefault(); box.focus && box.focus(); return; }
+        const first = f[0], last = f[f.length - 1], a = document.activeElement;
+        if (!box.contains(a)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); return; }
+        if (e.shiftKey && (a === first || a === box)) { e.preventDefault(); last.focus(); return; }
+        if (!e.shiftKey && a === last) { e.preventDefault(); first.focus(); return; }
+      }
+      return;
+    }
     if (e.key !== 'Enter') return;
     if (t.classList && t.classList.contains('card')) { S.openItem = t.dataset.item; renderLayer(); fillNames(); return; }
     if (t.dataset && t.dataset.actKey === 'add-item') { const v = t.value; const g = t.dataset.group; t.value = ''; t.blur(); addItem(g, v, false); return; }
@@ -1922,17 +2290,32 @@ td.currency::before, td.percent::after { color: var(--muted); }
     if (!S.boards.some(b => b.id === id)) return;
     if (S.boardId === id && S.itemsUnsub) { render(); return; }
     S.boardId = id; S.openItem = null; S.modal = null; S.pop = null; S.search = ''; S.person = ''; S.shown = {}; S.expanded = new Set();
-    S.sort = null; S.filters = {}; S.selected = new Set(); S.viewId = null; loadHidden();
+    S.sort = null; S.filters = {}; S.selected = new Set(); S.viewId = null; S.mSearch = false; loadHidden();
+    { const c = $('#content'); c.scrollTop = 0; c.scrollLeft = 0; c.parentElement.classList.remove("head-up"); document.body.classList.remove("head-up"); }
     S.ws = wsOf(S.boards.find(b => b.id === id)).id; try { localStorage.setItem('ks-ws', S.ws); } catch (e) {}
     try { localStorage.setItem('ks-board', id); } catch (e) {}
     if (S.itemsUnsub) S.itemsUnsub();
     S.items = []; S.itemsLoaded = false;
     S.itemsUnsub = S.db.collection('boards/' + id + '/items').onSnapshot(snap => {
       if (S.boardId !== id) return;
-      S.items = snap.docs.map(d => withDefaults(S.boards.find(x => x.id === id), { id: d.id, ...structuredClone(d.data()) }));
-      if (!snap.metadata.fromCache) S.itemsLoaded = true;
-      if (S.pendingOpen && S.itemsLoaded) { if (S.items.some(i => i.id === S.pendingOpen)) { S.openItem = S.pendingOpen; S.drawerTab = 'updates'; S.draftFiles = []; } else toast('That item is no longer on this board.'); S.pendingOpen = null; }
-      scheduleRender();
+      const bd = S.boards.find(x => x.id === id);
+      if (snap.changes && S.itemsLoaded && !snap.metadata.fromCache) {
+        // live changes: copy only the items that changed, then patch the screen (not the whole board)
+        const at = new Map(S.items.map((x, k) => [x.id, k])); let gone = false;
+        for (const cid of snap.changes) {
+          const d = snap.get(cid), k = at.get(cid);
+          if (d === undefined) { if (k !== undefined) { S.items[k] = null; gone = true; } continue; }
+          const it = withDefaults(bd, { id: cid, ...structuredClone(d) });
+          if (k !== undefined) S.items[k] = it; else { at.set(cid, S.items.length); S.items.push(it); }
+        }
+        if (gone) S.items = S.items.filter(Boolean);
+        liveChanged(snap.changes);
+      } else {
+        S.items = snap.docs.map(d => withDefaults(bd, { id: d.id, ...structuredClone(d.data()) }));
+        if (!snap.metadata.fromCache) S.itemsLoaded = true;
+        scheduleRender();
+      }
+      if (S.pendingOpen && S.itemsLoaded) { if (S.items.some(i => i.id === S.pendingOpen)) { S.openItem = S.pendingOpen; S.drawerTab = 'updates'; S.draftFiles = []; } else toast('That item is no longer on this board.'); S.pendingOpen = null; scheduleRender(); }
     }, () => { S.itemsLoaded = true; toast('This board stopped updating. Reload the page to reconnect.'); });
     render();
   }
@@ -2178,15 +2561,15 @@ td.currency::before, td.percent::after { color: var(--muted); }
         <button class="qa" data-act="go-calendar"><span class="qa-ic">${IC.cal}</span>Follow-ups</button>
         <button class="qa" data-act="sheet-boards"><span class="qa-ic">${IC.more}</span>More</button>
       </div>
-      <div class="sec"><h2>Boards</h2>${sm.boards.length > 5 ? `<button data-act="sheet-boards">See all ${sm.boards.length}</button>` : ''}</div>
-      <div class="glass list">${list || '<p class="home-skel">No boards yet.</p>'}</div>
-      <div class="sec"><h2>Follow-ups</h2></div>
+      <div class="home-boards"><div class="sec"><h2>Boards</h2>${sm.boards.length > 5 ? `<button data-act="sheet-boards">See all ${sm.boards.length}</button>` : ''}</div>
+      <div class="glass list">${list || '<p class="home-skel">No boards yet.</p>'}</div></div>
+      <div class="home-fu"><div class="sec"><h2>Follow-ups</h2></div>
       <section class="glass ov">
         <div class="ov-main"><div class="k">Due in the next 7 days</div><div class="v">${(f.dueToday + f.upcoming).toLocaleString('en-CA')}</div>
           <div class="ov-rows"><span><span>Due today</span><b>${f.dueToday.toLocaleString('en-CA')}</b></span><span><span>Overdue</span><b>${f.overdue.toLocaleString('en-CA')}</b></span></div></div>
         ${ringSvg(onTrack)}
       </section>
-      <p class="eyebrow" style="text-align:center">Ring shows how many follow-ups are still on time.</p>
+      <p class="eyebrow" style="text-align:center">Ring shows how many follow-ups are still on time.</p></div>
     </div>`;
   }
   function renderNav() {

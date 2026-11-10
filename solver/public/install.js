@@ -22,16 +22,17 @@
   }
   function addButtons() {
     if (standalone()) return;
+    // only the sidebar and the Profile sheet have the settings slot (Motion, Flair, Install app)
     for (const root of [document.getElementById('rail'), document.querySelector('#layer .modal')]) {
       if (!root || root.querySelector('[data-install]')) continue;
-      const row = root.querySelector('.form-row:last-of-type'); if (!row) continue;
+      const row = root.querySelector('[data-slot="settings"]'); if (!row) continue;
       const b = document.createElement('button'); b.type = 'button'; b.className = 'btn'; b.dataset.install = '1'; b.textContent = 'Install app';
       b.title = 'Add Solver.ca to this computer or phone, with its own icon and window';
       b.addEventListener('click', ev => { ev.stopPropagation(); install(); });
       row.appendChild(b);
     }
   }
-  const watch = el => el && new MutationObserver(addButtons).observe(el, { childList: true, subtree: el.id === 'layer' });
+  const watch = el => el && new MutationObserver(addButtons).observe(el, { childList: true });
   addEventListener('DOMContentLoaded', () => { watch(document.getElementById('rail')); watch(document.getElementById('layer')); addButtons(); });
   window.SolverInstall = install;
 })();

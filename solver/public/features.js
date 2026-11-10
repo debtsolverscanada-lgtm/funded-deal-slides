@@ -178,13 +178,25 @@
   function openSearch() { openModal({ type: 'search' }); setTimeout(() => { const i = document.getElementById('fx-q'); if (i) { i.focus(); i.select(); } }, 0); }
   function flatResults() { const out = []; if (!SR.res) return out; (SR.res.boardHits || []).forEach(b => out.push({ b: b.id })); (SR.res.boards || []).forEach(g => g.items.forEach(i => out.push({ b: g.id, i: i.id }))); return out; }
   function mark(text, q) { const t = String(text || ''), i = t.toLowerCase().indexOf(q.toLowerCase()); if (!q || i < 0) return esc(t); return esc(t.slice(0, i)) + '<mark>' + esc(t.slice(i, i + q.length)) + '</mark>' + esc(t.slice(i + q.length)); }
+  // second line of a result: board · group · status · phone/email (group and the rest when the board is open here,
+  // or when the server sends them along as i.group / i.status / i.contact)
+  function resMeta(g, i) {
+    const s = S(), b = (s.boards || []).find(x => x.id === g.id), it = s.boardId === g.id ? (s.items || []).find(x => x.id === i.id) : null;
+    const parts = [g.name];
+    const gid = (it && it.group) || i.group, grp = b && gid && (b.groups || []).find(x => x.id === gid); if (grp) parts.push(grp.name); else if (i.groupName) parts.push(i.groupName);
+    if (it && b) {
+      const v = it.values || {}, st = (b.columns || []).find(c => c.type === 'status' && v[c.id]); if (st) { const l = (st.labels || []).find(x => x.id === v[st.id]); if (l) parts.push(l.label); }
+      const ct = (b.columns || []).find(c => (c.type === 'phone' || c.type === 'email') && v[c.id]); if (ct) parts.push(String(v[ct.id]));
+    } else { if (i.status) parts.push(i.status); if (i.contact) parts.push(i.contact); }
+    return parts.filter(Boolean).join(' · ');
+  }
   function resultsHtml() {
     if (SR.q.trim().length < 2) return '<div class="fx-empty">Type at least two letters. Names, phone numbers, emails, notes and updates on every board you can open.</div>';
     if (!SR.res) return '<div class="fx-empty">Searching…</div>';
     if (!SR.res.total && !(SR.res.boardHits || []).length) return `<div class="fx-empty">Nothing matches “${esc(SR.q)}”.</div>`;
     let k = -1; const q = SR.res.q;
     const bh = (SR.res.boardHits || []).length ? `<div class="fx-res-board">Boards</div>` + SR.res.boardHits.map(b => { k++; return `<button class="fx-res" role="option" data-fx="open-res" data-k="${k}" aria-selected="${k === SR.sel}"><b>${mark(b.name, q)}</b><span>Open board</span></button>`; }).join('') : '';
-    return bh + SR.res.boards.map(g => `<div class="fx-res-board"><span>${esc(g.name)}</span><span>${g.count > g.items.length ? `${g.items.length} of ${g.count}` : g.count}</span></div>` + g.items.map(i => { k++; return `<button class="fx-res" role="option" data-fx="open-res" data-k="${k}" aria-selected="${k === SR.sel}"><b>${mark(i.name, q)}</b>${i.where ? `<span>${esc(i.where)}: ${mark(i.snip, q)}</span>` : ''}</button>`; }).join('')).join('');
+    return bh + SR.res.boards.map(g => `<div class="fx-res-board"><span>${esc(g.name)}</span><span>${g.count > g.items.length ? `${g.items.length} of ${g.count}` : g.count}</span></div>` + g.items.map(i => { k++; return `<button class="fx-res" role="option" data-fx="open-res" data-k="${k}" aria-selected="${k === SR.sel}"><b>${mark(i.name, q)}</b>${i.where ? `<span>${esc(i.where)}: ${mark(i.snip, q)}</span>` : ''}<span>${esc(resMeta(g, i))}</span></button>`; }).join('')).join('');
   }
   function paintResults() { const el = document.getElementById('fx-results'); if (el) { el.innerHTML = resultsHtml(); const s = el.querySelector('[aria-selected="true"]'); if (s) s.scrollIntoView({ block: 'nearest' }); } }
   function runSearch() {
