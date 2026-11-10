@@ -440,8 +440,12 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
         const u = safeUrl(b.url); if (!u) throw new HttpError(400, 'Enter a public https:// address.');
         try { await netguard.checkUrl(u); } catch (e) { throw new HttpError(400, e.message + ' Enter a public https:// address.'); }
         const ev = (Array.isArray(b.events) ? b.events : []).filter(e => EVENTS.includes(e));
-        const secret = crypto.randomBytes(24).toString('base64url');
+        // several webhooks to one tool (e.g. n8n) can share one signing secret, so the tool checks them all with one key
+        const twin = b.sameSecretAs ? db.prepare("SELECT name, secret FROM hooks WHERE id = ? AND kind = 'out'").get(String(b.sameSecretAs)) : null;
+        if (b.sameSecretAs && !twin) throw new HttpError(400, 'That webhook to share a secret with doesn’t exist.');
+        const secret = twin ? twin.secret : crypto.randomBytes(24).toString('base64url');
         db.prepare("INSERT INTO hooks (id, kind, name, url, secret, events, board, created_at) VALUES (?, 'out', ?, ?, ?, ?, ?, ?)").run(rid('h_'), name, u, secret, JSON.stringify(ev), b.board || null, now());
+        if (twin) return send(res, 201, { ok: true, sharedWith: twin.name, note: `Signed with the same secret as “${twin.name}”.` });
         return send(res, 201, { ok: true, secret, note: 'Use this secret to check the X-Solver-Signature header. It won’t be shown again.' });
       }
     }
