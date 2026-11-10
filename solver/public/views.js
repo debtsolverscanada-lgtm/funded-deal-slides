@@ -58,7 +58,8 @@
 
   // ---------- styles ----------
   const CSS = `
-  .head select.kbd-select { max-width:100%; }
+  .head select.kbd-select { max-width:220px; }
+  @media (max-width: 780px) { .head select.kbd-select { max-width:100%; } }
   .head .tab { white-space:nowrap; }
   .head .tabs { flex-wrap:wrap; }
   .vx-opts { display:contents; }
@@ -74,6 +75,16 @@
     .vx-opts .vx-optrow { display:flex; flex-wrap:wrap; gap:8px; }
   }
   .vx-optrow { display:contents; }
+  .vx-note { white-space:nowrap; }
+  /* desktop up to very wide screens: the view's options open as a panel under "View options", so the toolbar stays
+     two rows (tabs and search, then filters and board buttons) on Timeline, Workload, Chart and Map */
+  @media (min-width: 781px) and (max-width: 1699px) {
+    .vx-opts { display:block; position:relative; }
+    .vx-opts > summary { display:inline-flex; list-style:none; cursor:pointer; }
+    .vx-opts > summary::-webkit-details-marker { display:none; }
+    .vx-opts[open] > summary { background:rgba(255,255,255,0.14); }
+    .vx-opts[open] > .vx-optrow { position:absolute; top:calc(100% + 6px); left:0; z-index:30; display:flex; flex-wrap:wrap; gap:8px; align-items:center; width:max-content; max-width:min(760px, calc(100vw - 300px)); padding:12px; background:rgba(18,18,20,0.97); border:1px solid var(--line); border-radius:18px; box-shadow:var(--shadow); }
+  }
   .vx-bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:12px; }
   .vx-note { color:var(--muted); font-size:12.5px; }
   .vx-panel { background:var(--surface); border:1px solid var(--line); border-radius:var(--r-lg); backdrop-filter:var(--blur); -webkit-backdrop-filter:var(--blur); box-shadow:var(--glow); }
@@ -329,10 +340,15 @@
     const v = savedView();
     if (A.S.canWrite && !v) h += `<button class="btn" data-act="save-view">Save as view</button>`;
     if (A.S.canWrite && v && v.type === t && dirty(t)) h += `<button class="btn primary" data-vx="update-view">Update view</button>`;
-    if (h) h = `<details class="vx-opts" ${optsOpen || !narrow() ? 'open' : ''}><summary class="btn">View options</summary><div class="vx-optrow">${h}</div></details>`;
+    if (h) h = `<details class="vx-opts" ${optsOpen || wideOpts() ? 'open' : ''}><summary class="btn">View options</summary><div class="vx-optrow">${h}</div></details>`;
     return h;
   }
   let optsOpen = false;
+  const wideOpts = () => window.matchMedia('(min-width: 1700px)').matches;
+  // the options panel closes on a click outside it or Escape (it stays open while you change its settings)
+  const panelMode = () => window.matchMedia('(min-width: 781px) and (max-width: 1699px)').matches;
+  document.addEventListener('click', e => { const d = document.querySelector('.vx-opts[open]'); if (d && panelMode() && !d.contains(e.target)) { d.open = false; optsOpen = false; } }, true);
+  document.addEventListener('keydown', e => { const d = document.querySelector('.vx-opts[open]'); if (e.key === 'Escape' && d && panelMode()) { d.open = false; optsOpen = false; e.stopPropagation(); } }, true);
   document.addEventListener('toggle', e => { if (e.target.classList && e.target.classList.contains('vx-opts')) optsOpen = e.target.open; }, true);
   function byOptions(b) {
     return [...statusCols(b).map(x => ['status:' + x.id, 'By ' + x.title]), ['group', 'By group'], ...personCols(b).map(x => ['person:' + x.id, 'By ' + x.title]),

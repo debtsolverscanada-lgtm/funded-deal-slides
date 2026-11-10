@@ -100,10 +100,16 @@
   let menu = null; // { x, y, items: [[act, label, danger?]] }
   function showMenu(btn, items) {
     const r = btn.getBoundingClientRect();
-    menu = { items, x: Math.max(8, Math.min(r.left, innerWidth - 248)), y: Math.min(r.bottom + 4, innerHeight - 40 - items.length * 38) };
-    const el = document.createElement('div'); el.className = 'pop fx-menu'; el.dataset.fxMenu = '1'; el.style.left = menu.x + 'px'; el.style.top = Math.max(8, menu.y) + 'px'; el.style.maxHeight = 'none';
+    menu = { items, x: Math.max(8, Math.min(r.left, innerWidth - 248)), y: r.bottom + 4 };
+    const el = document.createElement('div'); el.className = 'pop fx-menu'; el.dataset.fxMenu = '1'; el.style.left = menu.x + 'px'; el.style.top = menu.y + 'px';
     el.innerHTML = items.map(([a, l, d]) => `<button class="pop-btn" data-fx="${a}" ${d ? 'style="color:var(--danger)"' : ''}>${esc(l)}</button>`).join('');
-    closeMenu(); document.body.appendChild(el);
+    const m0 = menu; closeMenu(); menu = m0; document.body.appendChild(el);
+    // measure it: it stays on the screen (above the phone's bottom bar) and scrolls if it's taller than the room left
+    const bot = innerHeight - (matchMedia('(max-width: 780px)').matches ? 92 : 8), room = bot - 8;
+    el.style.maxHeight = room + 'px'; el.style.overflowY = 'auto';
+    const h = Math.min(el.getBoundingClientRect().height, room);
+    let top = menu.y; if (top + h > bot) top = r.top - 4 - h >= 8 ? r.top - 4 - h : Math.max(8, bot - h);
+    el.style.top = top + 'px'; const w = el.getBoundingClientRect().width; if (menu.x + w > innerWidth - 8) el.style.left = Math.max(8, innerWidth - 8 - w) + 'px';
   }
   function closeMenu() { document.querySelectorAll('[data-fx-menu]').forEach(x => x.remove()); menu = null; }
 

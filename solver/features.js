@@ -494,6 +494,17 @@ module.exports = function features(ctx) {
     const boards = [...byBoard.values()].map(g => { g.items.sort((a, b) => (b.nameHit - a.nameHit) || String(a.name).localeCompare(String(b.name))); g.items = g.items.slice(0, 8); return g; })
       .sort((a, b) => b.items.filter(x => x.nameHit).length - a.items.filter(x => x.nameHit).length || b.count - a.count).slice(0, 25);
     for (const g of boards) for (const it of g.items) if (!it.nameHit) snippet(g.id, it);
+    // a second line for every result: its group, its status and a phone or email (the person can open the item, so
+    // they can already see these)
+    const about = (bid, it) => {
+      const d = itemDoc(bid, it.id), info = infos.get(bid); if (!d || !info) return;
+      const v = d.values || {}, cols = info.columns || [];
+      if (d.group) it.group = String(d.group); const grp = (info.groups || []).find(x => x.id === d.group); if (grp && grp.name) it.groupName = String(grp.name).slice(0, 80);
+      const sc = cols.find(c => c.type === 'status' && v[c.id] !== undefined && v[c.id] !== '');
+      if (sc) { const l = (sc.labels || []).find(x => String(x.id) === String(v[sc.id])); if (l && l.label && l.label !== '(blank)') { it.status = String(l.label).slice(0, 60); if (l.color) it.statusColor = String(l.color).slice(0, 20); } }
+      for (const type of ['phone', 'email']) { const c = cols.find(x => x.type === type && typeof v[x.id] === 'string' && v[x.id].trim()); if (c) { it.contact = v[c.id].trim().slice(0, 80); break; } }
+    };
+    for (const g of boards) for (const it of g.items) about(g.id, it);
     // boards whose names match
     const boardHits = q.docsInCol.all('boards').map(r => ({ id: r.id, d: J(r.data) })).filter(x => x.d && canSee(user, x.d.access) && String(x.d.name || '').toLowerCase().includes(ql)).slice(0, 8).map(x => ({ id: x.id, name: x.d.name }));
     return { q: qs, total, boards, boardHits };
