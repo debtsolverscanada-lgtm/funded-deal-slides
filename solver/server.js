@@ -318,6 +318,7 @@ function notifyUsers(users, { kind, text, board, item }, exceptId) {
     const row = { id: newId('n_'), at: now(), kind, text: String(text).slice(0, 400), board: board || null, item: item || null, read: 0 };
     nq.insert.run(row.id, u.id, row.at, row.kind, row.text, row.board, row.item);
     broadcast({ op: 'notify', user: u.id, n: row }); n++;
+    if (ext) ext.onNotify(u, row); // phone/desktop push and email alerts, for people who turned them on
   }
   return n;
 }
@@ -471,7 +472,10 @@ function throttled(ip) {
   return r.n >= 10;
 }
 
-const integ = require('./integrations.js')({ db, q, now, broadcast, HttpError, readBody, send, merge, notifyNames, itemNotifications, fillTemplate, buzz, lockedCols, lockError });
+const integHooks = {};
+const integ = require('./integrations.js')({ db, q, now, broadcast, HttpError, readBody, send, merge, notifyNames, itemNotifications, fillTemplate, buzz, lockedCols, lockError, hooks: integHooks });
+// automations editor, AI columns, docs, push and email alerts, calls & texts (see ext.js)
+const ext = require('./ext.js')({ db, q, now, broadcast, HttpError, readBody, send, merge, integ, integHooks, boardInfo, canSee, mustSee, itemVisible, lockedCols, lockError, canWrite });
 module.exports.integ = integ;
 module.exports.setGuestBoards = (...a) => setGuestBoards(...a);
 
@@ -607,6 +611,8 @@ async function api(req, res, url) {
     req.on('close', () => clients.delete(res));
     return;
   }
+
+  if (await ext.handle(req, res, url, user)) return;
 
   // ---- people ----
   if (p === '/api/users' && method === 'GET') {
@@ -886,6 +892,7 @@ async function api(req, res, url) {
         data = merge(JSON.parse(prev.data), body);
       }
       if (newPerms) data.perms = cleanPerms(newPerms, data); // replaced as a whole, so a lock can be removed
+      if (isBoard && (method === 'PUT' || 'automations' in body)) ext.checkBoard(data, before); // rules are checked on save
       let stripped = [];
       if (isItem) {
         if (user.role === 'guest') checkGuestEdit(before, data, user);
@@ -903,6 +910,7 @@ async function api(req, res, url) {
       broadcast({ op: 'set', col, id, data, ...(isBoard ? { prevAccess: before ? before.access || null : null } : {}) });
       integ.itemChanged(dp, before, data, user.id);
       try { itemNotifications(dp, before, data, user); } catch (e) { console.error('notifications:', e.message); }
+      if (isItem) ext.itemSaved(dp, before, data, user);
       return send(res, 200, stripped.length ? { ok: true, stripped: stripped.map(c => colTitle(info, c)) } : { ok: true });
     }
     if (method === 'DELETE') {

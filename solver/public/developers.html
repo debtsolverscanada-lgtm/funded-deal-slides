@@ -69,6 +69,7 @@ curl -X PATCH https://YOUR-SITE/api/v1/boards/Setter%20Desk%20(Jan)/items/ITEM_I
 <tr><td><code>item.created</code></td><td>A new item, from the app, the API, an automation or a lead link</td><td></td></tr>
 <tr><td><code>item.updated</code></td><td>Any column or the name changed</td><td><code>changes: [{column, from, to}]</code></td></tr>
 <tr><td><code>item.status_changed</code></td><td>A status column changed</td><td><code>change: {column, from, to}</code></td></tr>
+<tr><td><code>automation.webhook</code></td><td>An automation with the action “Send to a connected tool” ran on an item. Only sent for rules that opt in, and only to the tool the rule picks (or every tool listening).</td><td><code>automation: {id, title, note, via}</code></td></tr>
 <tr><td><code>button.pressed</code></td><td>Someone pressed a button column (Build Application, Send to Scarlett, Send Reminder…). Solver.ca only logs the press and sends this; your tool does the work.</td><td><code>button: {column_id, title}</code>, <code>pressed_by: {name, email}</code></td></tr>
 <tr><td><code>item.moved</code></td><td>Moved to another group</td><td><code>change: {from, to}</code></td></tr>
 <tr><td><code>update.created</code></td><td>Someone posted an update</td><td><code>update: {text, at, byName}</code></td></tr>

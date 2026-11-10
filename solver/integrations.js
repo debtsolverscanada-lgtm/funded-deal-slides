@@ -3,7 +3,8 @@
 'use strict';
 const crypto = require('node:crypto');
 
-module.exports = function integrations({ db, q, now, broadcast, HttpError, readBody, send, merge, notifyNames = () => 0, itemNotifications = () => {}, fillTemplate = t => t, buzz = () => {}, lockedCols = () => new Set(), lockError = null }) {
+module.exports = function integrations({ db, q, now, broadcast, HttpError, readBody, send, merge, notifyNames = () => 0, itemNotifications = () => {}, fillTemplate = t => t, buzz = () => {}, lockedCols = () => new Set(), lockError = null, hooks = {} }) {
+  // hooks (filled in by ext.js): ruleRan(board, rule, itemId, itemName, result, via), onEvent(event, hits)
   db.exec(`
     CREATE TABLE IF NOT EXISTS api_keys (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, prefix TEXT NOT NULL, hash TEXT NOT NULL UNIQUE,
@@ -18,7 +19,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
   `);
   const sha = s => crypto.createHash('sha256').update(s).digest('hex');
   const rid = p => p + crypto.randomBytes(9).toString('base64url');
-  const EVENTS = ['item.created', 'item.updated', 'item.moved', 'item.status_changed', 'item.deleted', 'update.created', 'reminder.due', 'button.pressed'];
+  const EVENTS = ['item.created', 'item.updated', 'item.moved', 'item.status_changed', 'item.deleted', 'update.created', 'reminder.due', 'button.pressed', 'automation.webhook'];
 
   // ---------- helpers: boards and readable fields ----------
   const boardDoc = id => { const r = q.doc.get('boards/' + id); return r ? JSON.parse(r.data) : null; };
@@ -73,32 +74,50 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
   // Monday "notify" actions become in-app notifications for the Solver.ca people they name (sent after the item saves).
   function sendNotes(b, iid, item, notes) {
     for (const n of notes) {
+      // "Send to a connected tool": a signed automation.webhook event (opt-in per rule)
+      if (n.webhook) { try { const sent = hooks.sendWebhook ? hooks.sendWebhook(b.id, iid, n.rule, item, n.via || 'api') : 0; if (hooks.ruleRan) hooks.ruleRan(b.id, n.rule.id, iid, item.name, sent ? `Sent to ${sent === 1 ? 'a connected tool' : sent + ' connected tools'}` : 'No connected tool is listening', 'webhook'); } catch (e) { console.error('automation webhook:', e.message); } continue; }
       const names = fillTemplate(n.to || '', b, item).split(',').map(x => x.trim()).filter(Boolean);
       const msg = fillTemplate(n.message || '', b, item).replace(/\s+/g, ' ').trim();
       try { notifyNames(names, { kind: n.kind || 'automation', text: `${item.name || 'Item'}: ${msg || String(n.title || 'Reminder').replace(/\s*→.*$/, '')}`.slice(0, 400), board: b.id, item: iid }); } catch (e) { console.error('notify:', e.message); }
     }
   }
-  function runRules(b, item, ev, actorName, notes = []) {
+  // Same condition rules as the app: status is / column empty / person is / group is, and a few more.
+  const splitNames = v => String(v || '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
+  function condOk(b, item, c) {
+    if (c.col === '__group') { const gid = c.value === '__top__' ? (b.groups[0] || {}).id : c.value; return c.op === 'is_not' ? item.group !== gid : item.group === gid; }
+    const v = (item.values || {})[c.col], empty = v === '' || v == null || v === false, list = Array.isArray(c.value) ? c.value.map(String) : [String(c.value ?? '')];
+    switch (c.op) {
+      case 'empty': return empty; case 'not_empty': return !empty;
+      case 'is_not': case 'is_not_any': return !list.includes(String(v ?? ''));
+      case 'contains': return String(v ?? '').toLowerCase().includes(String(c.value ?? '').toLowerCase());
+      case 'has_person': { const ps = splitNames(v); return list.some(x => ps.includes(String(x).trim().toLowerCase())); }
+      default: return list.includes(String(v ?? ''));
+    }
+  }
+  function runRules(b, item, ev, actorName, notes = [], iid = null) {
     const rules = (b.automations || []).filter(r => r.on !== false && r.trigger && (
       (ev.type === 'created' && r.trigger === 'created' && (!r.group || r.group === ev.group)) ||
-      (ev.type === 'moved_group' && r.trigger === 'moved_group' && (r.group === ev.group || (r.group === '__top__' && (b.groups[0] || {}).id === ev.group))) ||
+      (ev.type === 'moved_group' && r.trigger === 'moved_group' && (!r.group || r.group === ev.group || (r.group === '__top__' && (b.groups[0] || {}).id === ev.group))) ||
       (ev.type === 'value' && (r.trigger === 'status' || r.trigger === 'column') && r.col === ev.col && (r.value == null || r.value === '' || String(r.value) === String(ev.value)))));
     const today = new Intl.DateTimeFormat('en-CA', { timeZone: process.env.KS_TIMEZONE || 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()), log = [];
+    const plus = (n) => { const [y, m, d] = today.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d + Number(n || 0))).toISOString().slice(0, 10); };
     for (const r of rules) {
-      const ok = (r.conditions || []).every(c => c.col === '__group' ? item.group === (c.value === '__top__' ? (b.groups[0] || {}).id : c.value)
-        : c.op === 'empty' ? !(item.values || {})[c.col] : c.op === 'not_empty' ? !!(item.values || {})[c.col] : String((item.values || {})[c.col] ?? '') === String(c.value ?? ''));
-      if (!ok) continue;
+      if (!(r.conditions || []).every(c => condOk(b, item, c))) continue;
+      const did = [];
       for (const a of r.actions || []) {
         item.values = item.values || {};
-        if (a.type === 'set_status' || a.type === 'set_value') item.values[a.col] = a.value;
-        else if (a.type === 'set_date') item.values[a.col] = today;
-        else if (a.type === 'clear') item.values[a.col] = '';
-        else if (a.type === 'assign') item.values[a.col] = [...new Set([...String(item.values[a.col] || '').split(',').map(s => s.trim()).filter(Boolean), a.value])].join(', ');
-        else if (a.type === 'move_group') { const g = a.group === '__top__' ? b.groups[0] : b.groups.find(x => x.id === a.group); if (g) item.group = g.id; }
-        else if (a.type === 'notify') notes.push({ to: a.to, message: a.message, title: r.title });
+        if (a.type === 'set_status' || a.type === 'set_value') { item.values[a.col] = a.value; did.push('set a column'); }
+        else if (a.type === 'set_date') { item.values[a.col] = a.offset ? plus(a.offset) : today; did.push('set a date'); }
+        else if (a.type === 'clear') { item.values[a.col] = ''; did.push('cleared a column'); }
+        else if (a.type === 'assign') { item.values[a.col] = [...new Set([...String(item.values[a.col] || '').split(',').map(s => s.trim()).filter(Boolean), a.value])].join(', '); did.push('assigned ' + a.value); }
+        else if (a.type === 'move_group') { const g = a.group === '__top__' ? b.groups[0] : b.groups.find(x => x.id === a.group); if (g) { item.group = g.id; did.push('moved it to ' + g.name); } }
+        else if (a.type === 'notify') { notes.push({ to: a.to, message: a.message, title: r.title }); did.push('notified ' + (a.to || 'someone')); }
+        else if (a.type === 'webhook') notes.push({ webhook: true, rule: r });
+        else if (a.type === 'create_update') { item.updates = [...(item.updates || []), { at: now(), by: 'automation', byName: 'Automation', text: String(a.value || '') }]; did.push('posted an update'); }
         else continue;
       }
       log.push({ at: now(), by: 'automation', text: `“${r.title || 'Automation'}” ran (via ${actorName})` });
+      if (hooks.ruleRan && iid) try { hooks.ruleRan(b.id, r.id, iid, item.name, did.length ? 'Ran: ' + did.join(', ') : 'Ran (nothing to change here)', 'api · ' + actorName); } catch (e) {}
     }
     if (log.length) item.activity = [...log, ...(item.activity || [])].slice(0, 40);
   }
@@ -122,8 +141,9 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
       return 0;
     }
   }
-  function emit(event, boardId, itemId, b, item, extra = {}) {
-    const hooks = outHooks().filter(h => { const ev = JSON.parse(h.events || '[]'); return (!ev.length || ev.includes(event)) && (!h.board || h.board === boardId); });
+  // opts.hook: only that webhook (an automation can pick one connected tool)
+  function emit(event, boardId, itemId, b, item, extra = {}, opts = {}) {
+    const hooks = outHooks().filter(h => { const ev = JSON.parse(h.events || '[]'); return (!ev.length || ev.includes(event)) && (!h.board || h.board === boardId) && (!opts.hook || h.id === opts.hook); });
     if (!hooks.length) return 0;
     const payload = { event, delivery: rid('d_'), at: now(), board: { id: boardId, name: b ? b.name : null }, item: item && b ? itemOut({ id: boardId, ...b }, itemId, item) : { id: itemId }, ...extra };
     hooks.forEach(h => deliver(h, payload));
@@ -188,7 +208,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
       activity: [{ at: now(), by: actor.id, text: `Created by ${actor.name}` }] };
     if (body.update) item.updates.push({ at: now(), by: '', byName: actor.name, text: String(body.update).slice(0, 4000) });
     const notes = [];
-    runRules(b, item, { type: 'created', group: grp }, actor.name, notes);
+    runRules(b, item, { type: 'created', group: grp }, actor.name, notes, iid);
     saveItem(b.id, iid, item, actor, opts);
     sendNotes(b, iid, item, notes);
     return { id: iid, item };
@@ -250,6 +270,8 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
           for (const r of q.docsInCol.all(`boards/${br.id}/items`)) { const v = (JSON.parse(r.data).values || {}); if ((phone && pc.some(c => String(v[c] || '').replace(/\D/g, '').slice(-10) === phone)) || (email && ec.some(c => String(v[c] || '').toLowerCase() === email))) hits.push({ bid: br.id, iid: r.id }); } }
       }
       for (const h of hits.slice(0, 5)) { const r = q.doc.get(`boards/${h.bid}/items/${h.iid}`); if (!r) continue; const d = JSON.parse(r.data); buzz(h.bid, h.iid, null, d, user.id, { kind: k[0], text: k[1](String(d.name || 'A client').slice(0, 60)) }); }
+      // kept for the item's "Calls & texts" timeline
+      if (hooks.onEvent) try { hooks.onEvent(body, hits.slice(0, 5), user); } catch (e) { console.error('events:', e.message); }
       return send(res, 200, { ok: true, matched: hits.length });
     }
     if (p === '/api/v1/boards' && method === 'GET') return send(res, 200, q.docsInCol.all('boards').map(r => boardOut(r.id, JSON.parse(r.data))).sort((a, c) => a.name.localeCompare(c.name)));
@@ -302,8 +324,8 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
       const next = { ...item, values: { ...(item.values || {}), ...values }, group: grp, ...(body.name ? { name: String(body.name) } : {}) };
       next.activity = [{ at: now(), by: user.id, text: `Changed by ${user.name}` }, ...(item.activity || [])].slice(0, 40);
       const notes = [];
-      for (const [cid, v] of Object.entries(values)) runRules(b, next, { type: 'value', col: cid, value: v }, user.name, notes);
-      if (grp !== item.group) runRules(b, next, { type: 'moved_group', group: grp }, user.name, notes);
+      for (const [cid, v] of Object.entries(values)) runRules(b, next, { type: 'value', col: cid, value: v }, user.name, notes, iid);
+      if (grp !== item.group) runRules(b, next, { type: 'moved_group', group: grp }, user.name, notes, iid);
       saveItem(b.id, iid, next, user);
       sendNotes(b, iid, next, notes);
       return send(res, 200, itemOut(b, iid, next));
@@ -381,7 +403,8 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
           d.activity = [{ at: now(), by: 'automation', text: `Reminder: ${r.title || 'date arrived'}` }, ...(d.activity || [])].slice(0, 40);
           q.upsertDoc.run(`boards/${b.id}/items/${ir.id}`, `boards/${b.id}/items`, ir.id, JSON.stringify(d), now(), 'reminder');
           broadcast({ op: 'set', col: `boards/${b.id}/items`, id: ir.id, data: d });
-          sendNotes(b, ir.id, d, (r.actions || []).filter(a => a.type === 'notify').map(a => ({ to: a.to, message: a.message, title: r.title || 'Reminder', kind: 'reminder' })));
+          sendNotes(b, ir.id, d, [...(r.actions || []).filter(a => a.type === 'notify').map(a => ({ to: a.to, message: a.message, title: r.title || 'Reminder', kind: 'reminder' })), ...((r.actions || []).some(a => a.type === 'webhook') && r.on !== false ? [{ webhook: true, rule: r, via: 'reminder' }] : [])]);
+          if (hooks.ruleRan) try { hooks.ruleRan(b.id, r.id, ir.id, d.name, `Reminder for ${target}`, 'reminder'); } catch (e) {}
           emit('reminder.due', b.id, ir.id, b, d, { reminder: { rule: r.title, column: ((b.columns || []).find(c => c.id === r.col) || {}).title, date: target, notify: (r.actions || []).filter(a => a.type === 'notify').map(a => ({ to: a.to, message: a.message })) } });
         }
       }
@@ -389,5 +412,5 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
   }
   if (process.env.KS_REMINDERS !== 'off') { setInterval(() => { try { checkReminders(); } catch (e) { console.error('reminders:', e.message); } }, 10 * 60 * 1000).unref(); setTimeout(() => { try { checkReminders(); } catch (e) {} }, 30000).unref(); }
 
-  return { handleV1, handleAdmin, itemChanged, EVENTS, checkReminders, createItem, pressButton };
+  return { handleV1, handleAdmin, itemChanged, EVENTS, checkReminders, createItem, pressButton, emit, safeUrl };
 };
