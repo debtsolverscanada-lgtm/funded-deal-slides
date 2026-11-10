@@ -118,8 +118,12 @@ const DOC_RE = new RegExp(`^(boards/${SEG}|boards/${SEG}/items/${SEG}|meta/${SEG
 function splitDoc(p) { const i = p.lastIndexOf('/'); return { col: p.slice(0, i), id: p.slice(i + 1) }; }
 
 // Deep merge: nested plain objects merge, everything else (arrays included) replaces.
+// keys that would reach Object.prototype (prototype pollution): never copied from anything a person sends
+const BAD_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const safeJson = text => JSON.parse(text, (k, v) => BAD_KEYS.has(k) ? undefined : v);
 function merge(target, patch) {
   for (const [k, v] of Object.entries(patch)) {
+    if (BAD_KEYS.has(k)) continue;
     if (v && typeof v === 'object' && !Array.isArray(v) && target[k] && typeof target[k] === 'object' && !Array.isArray(target[k])) merge(target[k], v);
     else target[k] = v;
   }
@@ -415,7 +419,7 @@ function readBody(req, limit = MAX_BODY) {
     req.on('data', c => { size += c.length; if (size > limit) { reject(new HttpError(413, 'That change is too large.')); req.destroy(); } else chunks.push(c); });
     req.on('end', () => {
       if (!chunks.length) return resolve({});
-      try { const v = JSON.parse(Buffer.concat(chunks).toString('utf8')); if (!v || typeof v !== 'object' || Array.isArray(v)) throw 0; resolve(v); }
+      try { const v = safeJson(Buffer.concat(chunks).toString('utf8')); if (!v || typeof v !== 'object' || Array.isArray(v)) throw 0; resolve(v); }
       catch { reject(new HttpError(400, 'Send a JSON object.')); }
     });
     req.on('error', reject);
@@ -975,11 +979,13 @@ async function api(req, res, url) {
     if (method === 'PUT' || method === 'PATCH') {
       const body = await readBody(req);
       let data = body;
+      if (method === 'PUT') { delete body.$append; delete body.$remove; } // list operations only work on PATCH
       // Only admins decide who can see a board and who can change which columns.
       if (isBoard && user.role !== 'admin') {
-        for (const k of ['access', 'perms']) {
+        // where a board comes from (the Monday copy switch, which Monday board, which workspace) is admin-only too
+        for (const k of ['access', 'perms', 'source', 'mondayId', 'workspace']) {
           const was = before ? before[k] : undefined;
-          if (method === 'PATCH' && k in body && JSON.stringify(body[k]) !== JSON.stringify(was)) throw new HttpError(403, k === 'access' ? 'Only admins can change who sees a board.' : 'Only admins can change a board’s permissions.');
+          if (method === 'PATCH' && k in body && JSON.stringify(body[k]) !== JSON.stringify(was)) throw new HttpError(403, k === 'access' ? 'Only admins can change who sees a board.' : k === 'perms' ? 'Only admins can change a board’s permissions.' : 'Only admins can change where a board is copied from.');
           delete body[k];
           if (method === 'PUT' && was !== undefined) data[k] = was;
         }
@@ -991,12 +997,27 @@ async function api(req, res, url) {
         // { $append: { updates: [...], subitems: [...], activity: [...] } } adds to what's stored right now, so two
         // people posting at the same moment both keep their comment (the page never sends the whole list back)
         const add = isItem && body.$append && typeof body.$append === 'object' ? body.$append : null; delete body.$append;
+        // new comments, replies and activity lines are always signed as the person sending them (no posting as someone else)
+        if (add) {
+          const stamp = x => (x && typeof x === 'object' ? { ...x, by: user.id, byName: user.name, at: now() } : x);
+          if (Array.isArray(add.updates)) add.updates = add.updates.map(u => ({ ...stamp(u), replies: Array.isArray(u && u.replies) ? u.replies.map(stamp) : u && u.replies }));
+          if (Array.isArray(add.activity)) add.activity = add.activity.map(a2 => a2 && a2.by === 'automation' && user.role !== 'guest' ? { ...a2, at: now() } : stamp(a2));
+        }
         const rem = isItem && body.$remove && typeof body.$remove === 'object' ? body.$remove : null; delete body.$remove;
         data = merge(JSON.parse(prev.data), body);
         if (add || rem) appendToItem(data, add || {}, rem || {});
       }
       if (newPerms) data.perms = cleanPerms(newPerms, data); // replaced as a whole, so a lock can be removed
       if (isBoard && user.role !== 'admin' && Array.isArray(data.automations)) checkRuleLocks(user, before, data.automations);
+      // locked columns can't be deleted, retyped or relabelled by someone they're locked for
+      if (isBoard && user.role !== 'admin' && before && Array.isArray(data.columns)) {
+        const locked = lockedCols(user, before);
+        for (const c of before.columns || []) {
+          if (!locked.has(c.id)) continue;
+          const now2 = data.columns.find(x => x && x.id === c.id);
+          if (!now2 || now2.type !== c.type || JSON.stringify(now2.labels || null) !== JSON.stringify(c.labels || null)) { const e = new HttpError(403, `“${c.title}” is locked for you, so only an admin can delete or change that column.`); e.code = 'locked'; throw e; }
+        }
+      }
       if (isBoard && (method === 'PUT' || 'automations' in body)) ext.checkBoard(data, before); // rules are checked on save
       let stripped = [];
       if (isItem) {
@@ -1098,8 +1119,16 @@ const RULE_SETTERS = new Set(['set_status', 'set_value', 'set_date', 'clear', 'a
 function checkRuleLocks(user, before, list) {
   const b = before || {}, locked = lockedCols(user, b); if (!locked.size) return;
   const old = new Map(((b.automations) || []).map(r => [r && r.id, JSON.stringify(r)]));
+  // a rule that sets a locked column can't be removed by someone that column is locked for (switching it on/off is fine)
+  const ids = new Set(list.map(r => r && r.id));
+  for (const r of b.automations || []) {
+    if (!r || ids.has(r.id)) continue;
+    const hit = (Array.isArray(r.actions) ? r.actions : []).filter(a => a && RULE_SETTERS.has(a.type) && locked.has(String(a.col)));
+    if (hit.length) { const e = new HttpError(403, `“${String(r.title || 'This automation').slice(0, 120)}” sets a column that is locked for you, so only an admin can delete it.`); e.code = 'locked'; throw e; }
+  }
   for (const r of list) {
     if (!r || typeof r !== 'object' || old.get(r.id) === JSON.stringify(r)) continue;
+    { const was = (b.automations || []).find(x => x && x.id === r.id); if (was && JSON.stringify({ ...was, on: r.on }) === JSON.stringify(r)) continue; } // only switched on/off
     const hit = (Array.isArray(r.actions) ? r.actions : []).filter(a => a && RULE_SETTERS.has(a.type) && r.trigger !== 'sub_status' && locked.has(String(a.col)));
     if (hit.length) { const e = new HttpError(403, `“${String(r.title || 'This automation').slice(0, 120)}” sets ${[...new Set(hit.map(a => '“' + colTitle(b, a.col) + '”'))].join(', ')}, which ${hit.length === 1 ? 'is' : 'are'} locked for you on this board. Only admins can add or change automations that set locked columns.`); e.code = 'locked'; throw e; }
   }

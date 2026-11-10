@@ -635,6 +635,39 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
   .field-input, .kbd-select, .search, .rail-input { min-height: 40px; }
   .file-chip .icon-btn { min-height: 0; }
 }
+
+/* profile sheet (iPhone settings style) */
+.modal:has(.pf-head) { padding-top: 18px; }
+.pf-head { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+.pf-avatar { width: 46px; height: 46px; flex: none; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 16px; background: rgba(255,255,255,.1); box-shadow: inset 0 0 0 1px rgba(255,255,255,.14); }
+.pf-who { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pf-who b { font-size: 18px; font-weight: 600; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-who span { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-title { flex: 1; margin: 0; text-align: center; }
+.pf-back { background: none; border: 0; color: inherit; font: inherit; font-size: 16px; padding: 10px 4px; cursor: pointer; }
+.pf-x { width: 40px; height: 40px; flex: none; font-size: 15px; }
+.pf-sec { margin: 16px 4px 6px; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.pf-head, .pf-sec, .pf-group, .pf-signout, .pf-row, .pf-group > .btn { flex-shrink: 0; }
+.pf-group { display: flex; flex-direction: column; border-radius: 16px; overflow: hidden; background: rgba(255,255,255,.05); border: 1px solid var(--line); }
+.pf-group.settings-slot:empty { display: none; }
+.pf-row, .pf-group.settings-slot > .btn { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 12px; width: 100%; min-height: 54px; padding: 10px 14px; cursor: pointer; font-size: 15px; color: inherit; }
+.pf-row + .pf-row, .pf-group.settings-slot > .btn + .btn { border-top: 1px solid var(--line); }
+.pf-row:hover, .pf-group.settings-slot > .btn:hover { background: rgba(255,255,255,.05); }
+.pf-row:focus-visible, .pf-group.settings-slot > .btn:focus-visible, .pf-signout:focus-visible { outline: 2px solid rgba(255,255,255,.6); outline-offset: -2px; }
+.pf-group.settings-slot > .btn::before { content: ""; width: 30px; height: 30px; flex: none; border-radius: 9px; background: rgba(255,255,255,.08) center / 17px no-repeat; }
+.pf-group.settings-slot > [data-mx-toggle]::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round'%3E%3Cpath d='M4 12h3l2-6 4 12 2-6h5'/%3E%3C/svg%3E"); }
+.pf-group.settings-slot > [data-fx-open]::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='1.8' stroke-linejoin='round'%3E%3Cpath d='M12 3l2.2 5.6L20 9.5l-4.5 3.8 1.4 5.8L12 16l-4.9 3.1 1.4-5.8L4 9.5l5.8-.9z'/%3E%3C/svg%3E"); }
+.pf-group.settings-slot > [data-install]::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 4v11M7 10l5 5 5-5M5 20h14'/%3E%3C/svg%3E"); }
+.pf-group.settings-slot > .btn::after { content: "›"; margin-left: auto; color: var(--muted); font-size: 20px; }
+.pf-ic { width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: 9px; background: rgba(255,255,255,.08); }
+.pf-ic svg { width: 17px; height: 17px; }
+.pf-label { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.pf-label small { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+.pf-warn { color: #f5c26b; }
+.pf-chev { color: var(--muted); font-size: 20px; }
+.pf-signout { all: unset; box-sizing: border-box; margin-top: 18px; width: 100%; min-height: 52px; display: flex; align-items: center; justify-content: center; gap: 8px; border-radius: 16px; cursor: pointer; font-weight: 600; font-size: 16px; color: #ff6b6b; background: rgba(255,80,80,.1); border: 1px solid rgba(255,107,107,.35); }
+.pf-signout:hover { background: rgba(255,80,80,.18); }
+.pf-signout svg { width: 18px; height: 18px; }
 </style>
 </head>
 <body>
@@ -1735,11 +1768,29 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
         <div><button class="btn" data-act="close-modal-btn">Close</button></div>`;
     }
     if (m.type === 'profile') {
-      return `<h3>${esc((S.me && S.me.name) || 'Signed in')}</h3><p>${esc((S.me && S.me.email) || '')} · ${S.isGuest ? '<span class="pill guest-badge">Guest</span>' : roleLabel()}</p>
-        <div class="form-row"><button class="btn" data-act="security">Security${S.me && S.me.twofa ? ' · two-factor on' : ''}</button></div>
-        ${window.SolverExt ? SolverExt.profile() : ''}
-        <div class="form-row settings-slot" data-slot="settings"></div>
-        <div class="form-row"><button class="btn primary" data-act="notifs">Notifications${S.notifs.unread ? ' · ' + S.notifs.unread + ' new' : ''}</button>${S.isOwner ? '<button class="btn" data-act="team">Team &amp; settings</button><button class="btn" data-act="integrations">Integrations</button>' : ''}<button class="btn" data-act="logout">Sign out</button><button class="btn" data-act="close-modal-btn">Close</button></div>`;
+      // an iPhone-settings style sheet: who you are, then grouped rows, Sign out on its own in red
+      const svg = d => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      const PI = { shield: svg('M12 3l7 3v6c0 4.5-3 7.6-7 9-4-1.4-7-4.5-7-9V6z M9 12l2 2 4-4'), phone: svg('M8 3h8a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z M11 18h2'),
+        team: svg('M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z M3 20c.6-3.4 3-5 6-5s5.4 1.6 6 5 M16 4.5a3.3 3.3 0 0 1 0 6.3 M18 15c1.8.6 3 2.2 3.4 5'), plug: svg('M9 3v5 M15 3v5 M7 8h10v3a5 5 0 0 1-10 0z M12 16v5'),
+        out: svg('M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3 M10 8l-4 4 4 4 M6 12h10') };
+      if (m.page === 'alerts') return `<div class="pf-head"><button class="pf-back" data-act="pf-page" data-page="">‹ Back</button><h3 class="pf-title">Alerts</h3><button class="icon-round pf-x" data-act="close-modal-btn" aria-label="Close">✕</button></div>${window.SolverExt ? SolverExt.profile() : ''}`;
+      const row = (act, ic, label, sub, attrs = '') => `<button class="pf-row" data-act="${act}" ${attrs}><span class="pf-ic">${ic}</span><span class="pf-label">${label}${sub ? `<small>${sub}</small>` : ''}</span><span class="pf-chev" aria-hidden="true">›</span></button>`;
+      const name = (S.me && S.me.name) || 'Signed in', twofa = S.me && S.me.twofa;
+      return `<div class="pf-head"><span class="pf-avatar" aria-hidden="true">${esc(initials(name))}</span><div class="pf-who"><b>${esc(name)}</b><span>${esc((S.me && S.me.email) || '')} · ${S.isGuest ? 'Guest' : roleLabel()}</span></div><button class="icon-round pf-x" data-act="close-modal-btn" aria-label="Close">✕</button></div>
+        <div class="pf-sec">Account</div>
+        <div class="pf-group">
+          ${row('security', PI.shield, 'Security', twofa ? 'Two-factor is on' : '<span class="pf-warn">Two-factor is off · turn it on</span>')}
+          ${row('notifs', IC.bell, 'Notifications', S.notifs.unread ? `${S.notifs.unread} new` : 'All caught up')}
+          ${window.SolverExt ? row('pf-page', PI.phone, 'Alerts', 'Phone, desktop and email', 'data-page="alerts"') : ''}
+        </div>
+        ${S.isOwner ? `<div class="pf-sec">Admin</div>
+        <div class="pf-group">
+          ${row('team', PI.team, 'Team &amp; settings', 'People, roles, passwords')}
+          ${row('integrations', PI.plug, 'Integrations', 'API keys, webhooks, lead links')}
+        </div>` : ''}
+        <div class="pf-sec">Look &amp; feel</div>
+        <div class="pf-group settings-slot" data-slot="settings"></div>
+        <button class="pf-signout" data-act="logout">${PI.out}Sign out</button>`;
     }
     if (m.type === 'notifs') {
       const bname = id => (S.boards.find(x => x.id === id) || {}).name || '';
@@ -1872,6 +1923,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
       case 'go-calendar': { if (!board()) return; S.page = 'board'; S.view = 'calendar'; savePage(); S.modal = null; render(); break; }
       case 'sheet-boards': S.modal = { type: 'boards' }; renderLayer(); break;
       case 'sheet-profile': S.modal = { type: 'profile' }; renderLayer(); break;
+      case 'pf-page': if (S.modal && S.modal.type === 'profile') { S.modal.page = t.dataset.page || ''; renderLayer(); } break;
       case 'quick-new': { const b2 = board(); if (b2 && b2.groups[0]) { S.page = 'board'; savePage(); render(); addItem(b2.groups[0].id, 'New lead', true); } else toast('Open a board first.'); break; }
       case 'saved-view': { const sv = b && (b.views || []).find(v => v.id === t.dataset.id); S.viewId = t.dataset.id; S.view = sv && sv.type && (['kanban', 'calendar'].includes(sv.type) || (window.KSViews && KSViews.has(sv.type))) ? sv.type : 'table'; } S.shown = {}; render(); break;
       case 'save-view': S.modal = { type: 'save-view' }; renderLayer(); setTimeout(() => $('#sv-name') && $('#sv-name').focus(), 0); break;
