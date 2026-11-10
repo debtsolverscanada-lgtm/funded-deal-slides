@@ -724,6 +724,43 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
 @media (max-width: 780px) { .board td.name-cell .sub-toggle.sub-empty { display: none; } }
 .board td.name-cell .name-wrap > .cell-input { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .board td.name-cell .upd-count, .board td.name-cell .open-btn, .board td.name-cell .rowcheck, .board td.name-cell .sub-toggle { flex: 0 0 auto; }
+
+/* ---- desktop board header, laid out like Monday: name + actions / view tabs / toolbar ---- */
+.head:not(.compact) { padding-bottom: 0; }
+.head:not(.compact) .head-row { gap: 8px; }
+.head .hd-title { align-items: center; margin-bottom: 2px; }
+.head .hd-title .board-title { font-size: 28px; font-weight: 600; letter-spacing: -0.02em; background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 2px 8px; margin-left: -8px; min-width: 0; width: auto; max-width: 46vw; flex: 0 1 auto; }
+.head .hd-title .board-title:hover { border-color: var(--line); }
+.head .hd-title .board-title:focus { border-color: var(--line-2); outline: none; }
+.head .hd-switch { display: block; flex: none; width: 30px; min-width: 30px; height: 30px; padding: 0; color: transparent; border-radius: 8px; background: transparent url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%23a1a1aa" stroke-width="2" stroke-linecap="round"><path d="m7 10 5 5 5-5"/></svg>') center / 18px no-repeat; border: 1px solid transparent; cursor: pointer; appearance: none; -webkit-appearance: none; }
+.head .hd-switch:hover { border-color: var(--line); background-color: rgba(255,255,255,0.05); }
+.head .hd-switch option, .head .hd-switch optgroup { color: var(--fg); background: #18181b; }
+.head .hd-actions { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; justify-content: flex-end; }
+.head .hd-actions .btn { background: transparent; border-color: transparent; color: var(--muted); font-weight: 500; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; }
+.head .hd-actions .btn:hover { color: var(--fg); background: rgba(255,255,255,0.06); }
+.head .hd-actions .hd-share { border-color: var(--line); color: var(--fg); margin-left: 6px; }
+.head .hd-actions .pill { display: inline-flex; align-items: center; gap: 6px; }
+.hd-ic { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.head .hd-tabs { border-bottom: 1px solid var(--line); margin: 0; padding: 0; }
+.head .hd-tabs .tabs { background: none; border: 0; border-radius: 0; padding: 0; gap: 2px; backdrop-filter: none; box-shadow: none; flex-wrap: wrap; }
+.head .hd-tabs .tab { background: none !important; border: 0; border-radius: 0; color: var(--muted); padding: 8px 12px 9px; min-height: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; font-weight: 500; box-shadow: none; }
+.head .hd-tabs .tab:hover { color: var(--fg); }
+.head .hd-tabs .tab[aria-pressed="true"] { color: var(--fg); border-bottom-color: var(--fg); }
+.head .hd-tools { padding: 10px 0 12px; align-items: center; }
+.head .hd-tools .btn.primary { font-weight: 600; }
+.head .hd-tools .hd-ghost { background: transparent; border-color: transparent; color: var(--muted); }
+.head .hd-tools .hd-ghost:hover { color: var(--fg); background: rgba(255,255,255,0.06); }
+.head .hd-search { display: inline-flex; align-items: center; gap: 6px; border: 1px solid transparent; border-radius: 8px; padding: 0 8px; color: var(--muted); transition: border-color .15s; }
+.head .hd-search:focus-within, .head .hd-search:hover { border-color: var(--line); }
+.head .hd-search svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.head .hd-search .search { border: 0 !important; background: transparent !important; width: 150px; padding: 0; height: 34px; box-shadow: none; }
+.head .hd-search .search:focus { width: 220px; outline: none; }
+.head .hd-tools .kbd-select { background-color: transparent; border-color: transparent; color: var(--muted); }
+.head .hd-tools .kbd-select:hover { border-color: var(--line); color: var(--fg); }
+.head .hd-tools .group-count { color: var(--muted); font-size: 12px; }
+/* group headers: Colour / Delete only when you point at the group (always there on touch screens) */
+@media (hover: hover) { .group-head .icon-btn[data-act="group-color"], .group-head .icon-btn[data-act="delete-group"] { opacity: 0; transition: opacity .15s; }
+  .group-head:hover .icon-btn, .group-head:focus-within .icon-btn { opacity: 1; } }
 </style>
 </head>
 <body>
@@ -1174,6 +1211,11 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
   // ⋯ sheet holding everything else; the view tabs scroll sideways underneath. It tucks away while you scroll down.
   const compactHead = () => window.matchMedia('(max-width: 780px), (max-height: 500px) and (pointer: coarse)').matches;
   const IC_SEARCH = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>';
+  const IC_BOLT = '<svg class="hd-ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12h.01M15 12h.01M9 16h6"/></svg>';
+  const IC_IMPORT = '<svg class="hd-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 20h14"/></svg>';
+  const IC_EXPORT = '<svg class="hd-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4m0 0L8 8m4-4 4 4M5 20h14"/></svg>';
+  const IC_LOCK = '<svg class="hd-ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
+  const IC_PEOPLE = '<svg class="hd-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="9" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M15.5 6.2a3 3 0 1 1 0 5.6M17 14.2a5 5 0 0 1 3.5 4.8"/></svg>';
   function viewTabs(b) {
     return `<div class="tabs" role="group" aria-label="View">
           <button class="tab" data-act="view" data-v="table" aria-pressed="${S.view === 'table' && !S.viewId}">Main table</button>
@@ -1218,30 +1260,45 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
       ${chips || ctrls ? `<div class="head-row">${chips}${ctrls}</div>` : ''}`;
       return;
     }
+    const nAuto = (b.automations || []).filter(r => r.on !== false).length, priv = b.access && b.access.private;
+    // Desktop header, laid out like Monday: name and board actions / view tabs / one toolbar for this view
     head.innerHTML = `
-      <div class="head-row">
-        <select class="board-select" id="board-select" aria-label="Board">${opts}</select>
-        <input class="board-title" id="board-title" value="${esc(b.name)}" aria-label="Board name" ${S.canWrite ? '' : 'readonly'}>
+      <div class="head-row hd-title">
+        <input class="board-title" id="board-title" value="${esc(b.name)}" size="${Math.max(4, Math.min(40, String(b.name || '').length + 1))}" aria-label="Board name" ${S.canWrite ? '' : 'readonly'}>
+        <select class="board-select hd-switch" id="board-select" aria-label="Switch board" title="Switch board">${opts}</select>
         ${S.isGuest ? '<span class="pill guest-badge" title="You see only the boards shared with you">Guest</span>' : ''}
-        ${fx('head', b) || ''}
-        <button class="btn" data-act="export-menu" title="Download this view as a spreadsheet">Export</button>
-        ${S.canWrite ? '<button class="btn" data-act="import" title="Add items from a CSV or Excel file">Import</button><button class="btn primary" data-act="new-item">+ New item</button>' : ''}
+        <span class="spacer"></span>
+        <div class="hd-actions">
+          ${S.isGuest ? '' : `<button class="btn" data-act="automations" title="Automations on this board">${IC_BOLT}Automate · ${nAuto}</button>`}
+          ${S.canWrite ? `<button class="btn" data-act="import" title="Add items from a CSV or Excel file">${IC_IMPORT}Import</button>` : ''}
+          <button class="btn" data-act="export-menu" title="Download this view as a spreadsheet">${IC_EXPORT}Export</button>
+          ${fx('head', b) || ''}
+          ${S.isOwner ? `<button class="btn hd-share" data-act="access" title="Who can see this board">${priv ? `${IC_LOCK}Private · ${(b.access.members || []).length}` : `${IC_PEOPLE}Everyone`}</button>` : priv ? `<span class="pill" title="Only the people this board is shared with can see it">${IC_LOCK}Private</span>` : ''}
+        </div>
       </div>
-      <div class="head-row">
-        ${viewTabs(b)}
-        <input class="search" id="search" type="search" placeholder="Search this board" value="${esc(S.search)}" aria-label="Search this board">
+      <div class="head-row hd-tabs">${viewTabs(b)}</div>
+      <div class="head-row hd-tools">
+        ${S.canWrite ? '<button class="btn primary" data-act="new-item">+ New item</button>' : ''}
+        <label class="hd-search">${IC_SEARCH}<input class="search" id="search" type="search" placeholder="Search" value="${esc(S.search)}" aria-label="Search this board"></label>
         ${personFilter(b)}
         ${viewControls(b)}
         ${filterChips(b)}
         ${S.view === 'table' && S.canWrite && (filterCount() || S.sort || S.person || S.hidden.size) ? '<button class="btn" data-act="save-view">Save as view</button>' : ''}
         ${curView() && curView().source !== 'monday' && S.canWrite ? `<button class="btn" data-act="delete-view">${S.confirmDelete === 'v:' + S.viewId ? 'Click again to delete view' : 'Delete view'}</button>` : ''}
-        ${count}
+        ${S.canWrite ? '<button class="btn hd-ghost" data-act="add-column">+ Column</button>' : ''}
         <span class="spacer"></span>
-        ${S.isOwner ? `<button class="btn" data-act="access" title="Who can see this board">${b.access && b.access.private ? `Private · ${(b.access.members || []).length}` : 'Open to everyone'} · Access</button>` : b.access && b.access.private ? '<span class="pill" title="Only the people this board is shared with can see it">Private board</span>' : ''}
-        ${S.isGuest ? '' : `<button class="btn" data-act="automations">Automations · ${(b.automations || []).filter(r => r.on !== false).length}</button>`}
-        ${S.canWrite ? '<button class="btn" data-act="add-column">+ Column</button>' : ''}
+        ${count}
       </div>`;
+    fitTitle();
   }
+  // the board name box is as wide as the name, so the switch arrow sits right after it (like Monday)
+  function fitTitle() {
+    const t = $('#board-title'); if (!t || !t.closest('.hd-title')) return;
+    const cs = getComputedStyle(t), c = fitTitle.c || (fitTitle.c = document.createElement('canvas').getContext('2d'));
+    c.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    t.style.width = Math.ceil(c.measureText(t.value || ' ').width + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + 6) + 'px';
+  }
+  document.addEventListener('input', e => { if (e.target && e.target.id === 'board-title') fitTitle(); });
   // the ⋯ sheet on phones: every board action the compact header leaves out
   function boardSheet(b) {
     const row = (inner) => `<div class="sheet-list glass">${inner}</div>`;
