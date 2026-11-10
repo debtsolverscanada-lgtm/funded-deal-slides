@@ -15,13 +15,20 @@
 }
 process.removeAllListeners('warning');
 const http = require('node:http');
+const net = require('node:net');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const zlib = require('node:zlib');
 const { DatabaseSync } = require('node:sqlite');
 const { syncFromMonday, pullFromMonday } = require('./monday.js');
 const sec = require('./security.js');
 const sheets = require('./sheets.js');
+const netguard = require('./netguard.js');
+
+// A stray promise or exception is logged instead of passing unnoticed (or taking every open page down with it).
+process.on('unhandledRejection', e => console.error('Unhandled promise rejection:', e && e.stack || e));
+process.on('uncaughtException', e => console.error('Uncaught exception:', e && e.stack || e));
 
 const PORT = Number(process.env.PORT || 3000);
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
@@ -40,6 +47,9 @@ fs.mkdirSync(FILES_DIR, { recursive: true });
 const db = new DatabaseSync(path.join(DATA_DIR, 'solver.db'));
 db.exec(`
   PRAGMA journal_mode = WAL;
+  PRAGMA synchronous = NORMAL;
+  PRAGMA busy_timeout = 5000;
+  PRAGMA journal_size_limit = 33554432;
   PRAGMA foreign_keys = ON;
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
@@ -54,6 +64,7 @@ db.exec(`
     data TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT
   );
   CREATE INDEX IF NOT EXISTS docs_col ON docs(col);
+  CREATE INDEX IF NOT EXISTS docs_id ON docs(id);
   CREATE TABLE IF NOT EXISTS notifications (
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, at TEXT NOT NULL,
     kind TEXT NOT NULL, text TEXT NOT NULL, board TEXT, item TEXT, read INTEGER NOT NULL DEFAULT 0
@@ -232,15 +243,21 @@ class HttpError extends Error { constructor(status, message) { super(message); t
 // ---------- live updates (server-sent events) ----------
 // Each open page is tracked with its signed-in person, so private boards' changes only reach people who can see them.
 const clients = new Map(); // res -> { id, email, role, name }  (each open page and its signed-in person)
+// A page that stopped reading (asleep, bad network) is dropped once 5 MB is waiting for it; it reconnects and reloads.
+const SSE_MAX_BUFFER = 5 * 1024 * 1024;
+function sseWrite(res, line) {
+  if (res.writableLength > SSE_MAX_BUFFER || res.destroyed) { clients.delete(res); try { res.destroy(); } catch (e) {} return; }
+  res.write(line);
+}
 function broadcast(evt) {
   // evt.prevAccess (not sent): the board's access before this change, so only people who just lost it are told it's gone
   const prevAccess = evt.prevAccess; if ('prevAccess' in evt) { evt = { ...evt }; delete evt.prevAccess; }
   const line = `data: ${JSON.stringify(evt)}\n\n`;
-  if (evt.op === 'notify') { for (const [res, u] of clients) if (u.id === evt.user) res.write(line); return; }
-  if (evt.op === 'reload') { for (const res of clients.keys()) res.write(line); return; }
+  if (evt.op === 'notify') { for (const [res, u] of clients) if (u.id === evt.user) sseWrite(res, line); return; }
+  if (evt.op === 'reload') { for (const res of clients.keys()) sseWrite(res, line); return; }
   const bid = evt.col === 'boards' ? evt.id : boardOfPath(evt.col);
   if (evt.col === 'boards') boardCache.delete(evt.id);
-  if (!bid) { for (const [res, u] of clients) if (u.role !== 'guest') res.write(line); return; } // workspace settings: never to guests
+  if (!bid) { for (const [res, u] of clients) if (u.role !== 'guest') sseWrite(res, line); return; } // workspace settings: never to guests
   const isBoard = evt.col === 'boards';
   const access = isBoard && evt.op === 'set' ? (evt.data || {}).access : (boardInfo(bid) || {}).access;
   const gone = isBoard && evt.op === 'set' ? `data: ${JSON.stringify({ op: 'delete', col: 'boards', id: evt.id })}\n\n` : null;
@@ -250,17 +267,17 @@ function broadcast(evt) {
   const itemNow = () => { if (itemData === undefined) { itemData = evt.data || null; if (!itemData && evt.op !== 'delete') { const r = q.doc.get(`${evt.col}/${evt.id}`); itemData = r ? JSON.parse(r.data) : null; } } return itemData; };
   const hide = `data: ${JSON.stringify({ op: 'delete', col: evt.col, id: evt.id })}\n\n`;
   for (const [res, u] of clients) {
-    if (!canSee(u, access)) { if (gone && (prevAccess !== undefined ? canSee(u, prevAccess) : u.role !== 'guest')) res.write(gone); continue; }
-    if (isBoard && u.role === 'guest' && evt.op === 'set') { res.write(`data: ${JSON.stringify({ ...evt, data: boardForUser(u, evt.data) })}\n\n`); continue; }
-    if (!isBoard && restricted(u, info) && evt.op !== 'delete' && !itemVisible(u, info, itemNow())) { if (evt.op === 'set') res.write(hide); continue; }
-    res.write(line);
+    if (!canSee(u, access)) { if (gone && (prevAccess !== undefined ? canSee(u, prevAccess) : u.role !== 'guest')) sseWrite(res, gone); continue; }
+    if (isBoard && u.role === 'guest' && evt.op === 'set') { sseWrite(res, `data: ${JSON.stringify({ ...evt, data: boardForUser(u, evt.data) })}\n\n`); continue; }
+    if (!isBoard && restricted(u, info) && evt.op !== 'delete' && !itemVisible(u, info, itemNow())) { if (evt.op === 'set') sseWrite(res, hide); continue; }
+    sseWrite(res, line);
   }
 }
 function refreshClients(userId) {
   const row = q.userById.get(userId);
   for (const [res, u] of clients) if (u.id === userId) { if (!row || row.disabled) { clients.delete(res); res.end(); } else Object.assign(u, { email: row.email, role: row.role, name: row.name }); }
 }
-setInterval(() => { for (const res of clients.keys()) res.write(': ping\n\n'); }, 25000).unref();
+setInterval(() => { for (const res of [...clients.keys()]) sseWrite(res, ': ping\n\n'); }, 25000).unref();
 
 // ---------- Penny's heads-ups ("buzz"): small, friendly updates shown by the pet ----------
 // Sent like other live updates, so private boards only reach people who can see them. Nothing is stored or sent outside.
@@ -371,9 +388,24 @@ function itemNotifications(dp, before, after, actor) {
 
 // ---------- request handling ----------
 function send(res, status, body, headers = {}) {
-  const data = typeof body === 'string' ? body : JSON.stringify(body);
-  res.writeHead(status, { 'Content-Type': typeof body === 'string' ? 'text/plain; charset=utf-8' : 'application/json', 'Cache-Control': 'no-store', ...headers });
-  res.end(data);
+  const text = typeof body === 'string';
+  return sendData(res, status, text ? body : JSON.stringify(body), text ? 'text/plain; charset=utf-8' : 'application/json', headers);
+}
+// JSON that is already a string (stored documents are sent as stored, without parsing them again)
+const sendJson = (res, status, json, headers) => sendData(res, status, json, 'application/json', headers);
+// Bigger answers are gzipped for browsers that accept it (boards with thousands of items shrink ~8x).
+function sendData(res, status, data, type, headers = {}) {
+  const h = { 'Content-Type': type, 'Cache-Control': 'no-store', ...headers };
+  const ae = String((res.req && res.req.headers['accept-encoding']) || '');
+  if (data.length > 8192 && /\bgzip\b/i.test(ae) && !h['Content-Encoding']) {
+    zlib.gzip(data, { level: 5 }, (err, gz) => {
+      if (res.headersSent || res.destroyed) return;
+      if (err) { res.writeHead(status, h); return res.end(data); }
+      res.writeHead(status, { ...h, 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding', 'Content-Length': gz.length }); res.end(gz);
+    });
+    return;
+  }
+  res.writeHead(status, h); res.end(data);
 }
 function readBody(req, limit = MAX_BODY) {
   return new Promise((resolve, reject) => {
@@ -459,27 +491,46 @@ function serveStatic(req, res, file) {
   if (!full.startsWith(PUBLIC_DIR)) return send(res, 404, 'Not found');
   fs.readFile(full, (err, buf) => {
     if (err) return send(res, 404, 'Not found');
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(full)] || 'application/octet-stream', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin' });
+    const html = path.extname(full) === '.html';
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(full)] || 'application/octet-stream', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin',
+      ...(html ? { 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "frame-ancestors 'none'" } : {}) });
     res.end(buf);
   });
 }
 
-// crude per-IP login throttle
-const loginFails = new Map();
-function throttled(ip) {
-  const r = loginFails.get(ip); if (!r) return false;
-  if (Date.now() - r.at > 15 * 60 * 1000) { loginFails.delete(ip); return false; }
-  return r.n >= 10;
+// The address a request came from. Behind a proxy (TRUST_PROXY=1, or on Render) every request arrives from the proxy,
+// so the address the proxy recorded in X-Forwarded-For is used: the last entry, the one our own proxy added
+// (TRUST_PROXY=2 when there are two proxies in a row). Earlier entries are sent by the browser and can be anything.
+function clientIp(req) {
+  const sock = String((req.socket && req.socket.remoteAddress) || '').replace(/^::ffff:/, '');
+  const tp = String(process.env.TRUST_PROXY || '').trim();
+  const hops = tp ? (Number(tp) > 0 ? Math.min(5, Math.floor(Number(tp))) : /^(true|yes|on)$/i.test(tp) ? 1 : 0) : (process.env.RENDER ? 1 : 0);
+  if (!hops) return sock;
+  const xff = String(req.headers['x-forwarded-for'] || '').split(',').map(x => x.trim()).filter(Boolean);
+  const ip = xff.length ? xff[Math.max(0, xff.length - hops)] : '';
+  return net.isIP(ip.replace(/^::ffff:/, '')) ? ip.replace(/^::ffff:/, '') : sock;
 }
+// Sign-in throttle: 10 wrong tries from one address, or 15 for one account, in 15 minutes pause sign-in there for 15 minutes.
+const loginFails = new Map(); // 'ip:…' or 'acct:…' -> { n, at }
+const LOGIN_LIMIT = { ip: 10, acct: 15 };
+function throttled(key) {
+  const r = loginFails.get(key); if (!r) return false;
+  if (Date.now() - r.at > 15 * 60 * 1000) { loginFails.delete(key); return false; }
+  return r.n >= LOGIN_LIMIT[key.split(':')[0]];
+}
+function loginFailed(...keys) { for (const k of keys) { const r = loginFails.get(k) || { n: 0, at: Date.now() }; r.n++; r.at = Date.now(); loginFails.set(k, r); } }
+setInterval(() => { const t = Date.now(); for (const [k, r] of loginFails) if (t - r.at > 15 * 60 * 1000) loginFails.delete(k); }, 10 * 60 * 1000).unref();
+// An unknown email takes as long to refuse as a wrong password (no telling which emails have accounts).
+const DUMMY_HASH = hashPassword(crypto.randomBytes(16).toString('hex'));
 
 const integHooks = {};
-const integ = require('./integrations.js')({ db, q, now, broadcast, HttpError, readBody, send, merge, notifyNames, itemNotifications, fillTemplate, buzz, lockedCols, lockError, hooks: integHooks });
+const integ = require('./integrations.js')({ db, q, now, broadcast, HttpError, readBody, send, merge, notifyNames, itemNotifications, fillTemplate, buzz, lockedCols, lockError, hooks: integHooks, clientIp });
 // automations editor, AI columns, docs, push and email alerts, calls & texts (see ext.js)
 const ext = require('./ext.js')({ db, q, now, broadcast, HttpError, readBody, send, merge, integ, integHooks, boardInfo, canSee, mustSee, itemVisible, lockedCols, lockError, canWrite });
 module.exports.integ = integ;
 // ---- history, undo, recycle bin, search, templates, public forms, connected columns, time tracking (features.js) ----
 const features = require('./features.js')({ db, q, now, broadcast, HttpError, readBody, send, canSee, mustSee, boardInfo, boardCache, itemVisible, restricted, lockedCols, lockError,
-  canWrite, integ, cleanAccess, itemNotifications, publicDir: PUBLIC_DIR, clearSummary: () => summaryCache.clear(), startIndex: require.main === module,
+  canWrite, integ, cleanAccess, itemNotifications, publicDir: PUBLIC_DIR, clearSummary: () => summaryCache.clear(), startIndex: require.main === module, clientIp,
   formulaText: (b, c, item) => { const r = formulaResult(b, item, c); return r.error ? '' : KSFormula.format(r.value); } });
 module.exports.features = features;
 module.exports.setGuestBoards = (...a) => setGuestBoards(...a);
@@ -491,22 +542,25 @@ async function api(req, res, url) {
 
   if (p === '/api/auth/config' && method === 'GET') return send(res, 200, { google: sec.googleOn() });
   if (p === '/api/login' && method === 'POST') {
-    const ip = req.socket.remoteAddress;
-    if (throttled(ip)) throw new HttpError(429, 'Too many tries. Wait 15 minutes and try again.');
-    const { email, password } = await readBody(req);
-    const u = q.userByEmail.get(String(email || '').trim().toLowerCase());
-    if (!u || u.disabled || !checkPassword(String(password || ''), u.pw)) {
-      const r = loginFails.get(ip) || { n: 0, at: Date.now() }; r.n++; r.at = Date.now(); loginFails.set(ip, r);
+    const ipKey = 'ip:' + clientIp(req);
+    if (throttled(ipKey)) throw new HttpError(429, 'Too many tries. Wait 15 minutes and try again.');
+    const { email, password } = await readBody(req, 16 * 1024);
+    const em = String(email || '').trim().toLowerCase().slice(0, 320), acctKey = 'acct:' + em;
+    if (throttled(acctKey)) throw new HttpError(429, 'Too many tries for this account. Wait 15 minutes and try again.');
+    const u = q.userByEmail.get(em);
+    const pwOk = checkPassword(String(password || ''), u ? u.pw : DUMMY_HASH);
+    if (!u || u.disabled || !pwOk) {
+      loginFailed(ipKey, acctKey);
       throw new HttpError(401, 'That email and password don’t match.');
     }
-    loginFails.delete(ip);
+    loginFails.delete(ipKey); loginFails.delete(acctKey);
     // two-factor on: the password alone doesn't sign in; the next step asks for a code
     if (u.totp_on) return send(res, 200, { twofa: true, ticket: newTicket(u.id, 'pw') });
     return send(res, 200, { ...publicUser(u), setup2fa: needsTwoFactor(u, 'pw') }, { 'Set-Cookie': startSession(u, 'pw') });
   }
   if (p === '/api/login/2fa' && method === 'POST') {
-    const ip = req.socket.remoteAddress;
-    if (throttled(ip)) throw new HttpError(429, 'Too many tries. Wait 15 minutes and try again.');
+    const ipKey = 'ip:' + clientIp(req);
+    if (throttled(ipKey)) throw new HttpError(429, 'Too many tries. Wait 15 minutes and try again.');
     const { ticket, code } = await readBody(req);
     const t = tickets.get(String(ticket || ''));
     if (!t || t.exp < Date.now()) { tickets.delete(String(ticket || '')); throw new HttpError(401, 'That sign-in took too long. Start again.'); }
@@ -514,7 +568,7 @@ async function api(req, res, url) {
     const kind = checkSecondFactor(t.uid, code);
     if (!kind) {
       t.tries++; codeFailed(t.uid);
-      const r = loginFails.get(ip) || { n: 0, at: Date.now() }; r.n++; r.at = Date.now(); loginFails.set(ip, r);
+      loginFailed(ipKey);
       if (t.tries >= 5) { tickets.delete(String(ticket)); throw new HttpError(401, 'Too many wrong codes. Start again.'); }
       throw new HttpError(401, 'That code didn’t work. Check your authenticator app and try again.');
     }
@@ -613,7 +667,8 @@ async function api(req, res, url) {
 
   if (p === '/api/events' && method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
-    res.write(': connected\n\n');
+    // pages reconnect after 3-10 s (spread out, so a server restart isn't met by every page at once)
+    res.write(`retry: ${3000 + Math.floor(Math.random() * 7000)}\n: connected\n\n`);
     clients.set(res, { id: user.id, email: user.email, role: user.role, name: user.name });
     req.on('close', () => clients.delete(res));
     return;
@@ -623,6 +678,7 @@ async function api(req, res, url) {
 
   // ---- people ----
   if (p === '/api/users' && method === 'GET') {
+    if (user.role === 'guest') return send(res, 200, [{ id: user.id, name: user.name, role: user.role }]); // guests never get the team list
     const list = q.users.all().map(u => user.role === 'admin' ? u : { id: u.id, name: u.name, role: u.role });
     return send(res, 200, list);
   }
@@ -766,7 +822,11 @@ async function api(req, res, url) {
     // boards where this person only sees items assigned to them are counted for them alone
     const mine = hit.boards.filter(x => canSee(user, x.access)).map(x => {
       const info = boardInfo(x.id); if (!restricted(user, info)) return x;
-      const r = q.doc.get('boards/' + x.id); return r ? boardStats(x.id, JSON.parse(r.data), d => itemVisible(user, info, d)) : x;
+      const key = user.id + '|' + x.id, c = userSummary.get(key);
+      if (c && Date.now() - c.at < 60000) return c.v;
+      const r = q.doc.get('boards/' + x.id), v = r ? boardStats(x.id, JSON.parse(r.data), d => itemVisible(user, info, d)) : x;
+      if (userSummary.size > 5000) userSummary.clear();
+      userSummary.set(key, { at: Date.now(), v }); return v;
     });
     return send(res, 200, summaryFor(ws, mine));
   }
@@ -840,7 +900,8 @@ async function api(req, res, url) {
     importUploads.delete(String(body.token));
     const actor = { id: user.id, name: user.name, email: user.email, role: user.role };
     let created = 0; const errors = [];
-    up.rows.forEach((row, ri) => {
+    // 200 rows per transaction (one disk sync each instead of one per row), and other requests run between batches
+    const addRow = (row, ri) => {
       const item = { name: '', group: grp, values: {} };
       mapping.forEach((m, ci) => {
         const v = String(row[ci] ?? '').trim(); if (!m || v === '') return;
@@ -850,7 +911,13 @@ async function api(req, res, url) {
       });
       try { integ.createItem(b, item, actor, { quiet: true }); created++; }
       catch (e) { if (errors.length < 25) errors.push(`Row ${ri + 2}: ${e.message}`); }
-    });
+    };
+    for (let k = 0; k < up.rows.length; k += 200) {
+      db.exec('BEGIN');
+      try { up.rows.slice(k, k + 200).forEach((row, j) => addRow(row, k + j)); db.exec('COMMIT'); }
+      catch (e) { try { db.exec('ROLLBACK'); } catch (x) {} throw e; }
+      await new Promise(r => setImmediate(r));
+    }
     summaryCache.clear();
     console.log(`Import by ${user.email} into ${b.name}: ${created} created, ${up.rows.length - created} skipped`);
     return send(res, 200, { created, skipped: up.rows.length - created, errors });
@@ -864,10 +931,10 @@ async function api(req, res, url) {
     if (!COLLECTION_RE.test(col)) throw new HttpError(400, 'Unknown collection.');
     if (col === 'meta' && user.role === 'guest') throw new HttpError(403, 'Guests can’t open workspace settings.');
     const bid = boardOfPath(col), info = bid ? mustSee(user, bid) : null;
-    let rows = q.docsInCol.all(col).map(r => ({ id: r.id, data: JSON.parse(r.data) }));
-    if (col === 'boards') rows = rows.filter(r => canSee(user, r.data.access)).map(r => ({ id: r.id, data: boardForUser(user, r.data) }));
-    if (bid && restricted(user, info)) rows = rows.filter(r => itemVisible(user, info, r.data));
-    return send(res, 200, rows);
+    if (col === 'boards') return send(res, 200, q.docsInCol.all(col).map(r => ({ id: r.id, data: JSON.parse(r.data) })).filter(r => canSee(user, r.data.access)).map(r => ({ id: r.id, data: boardForUser(user, r.data) })));
+    let rows = q.docsInCol.all(col);
+    if (bid && restricted(user, info)) rows = rows.filter(r => itemVisible(user, info, JSON.parse(r.data)));
+    return sendJson(res, 200, '[' + rows.map(r => '{"id":' + JSON.stringify(r.id) + ',"data":' + r.data + '}').join(',') + ']');
   }
   if (p === '/api/doc') {
     const dp = url.searchParams.get('path') || '';
@@ -901,10 +968,13 @@ async function api(req, res, url) {
         data = merge(JSON.parse(prev.data), body);
       }
       if (newPerms) data.perms = cleanPerms(newPerms, data); // replaced as a whole, so a lock can be removed
+      if (isBoard && user.role !== 'admin' && Array.isArray(data.automations)) checkRuleLocks(user, before, data.automations);
       if (isBoard && (method === 'PUT' || 'automations' in body)) ext.checkBoard(data, before); // rules are checked on save
       let stripped = [];
       if (isItem) {
-        if (user.role === 'guest') checkGuestEdit(before, data, user);
+        if (user.role === 'guest') checkGuestEdit(before, data, user, info);
+        const badUrl = netguard.badLink(before, data, ((info && info.columns) || []).filter(c => c.type === 'link').map(c => c.id));
+        if (badUrl) throw new HttpError(400, 'Links must start with https:// (or be a file uploaded here).');
         const locked = lockedCols(user, info);
         if (locked.size) {
           if (before) { const bad = [...changedCols(before, data)].filter(c => locked.has(c)); if (bad.length) throw lockError(info, new Set(bad)); }
@@ -915,7 +985,7 @@ async function api(req, res, url) {
       if (json.length > 1024 * 1024) throw new HttpError(413, 'That record is too large.');
       q.upsertDoc.run(dp, col, id, json, now(), user.id);
       { const m = /^boards\/([^/]+)\/items\/([^/]+)$/.exec(dp); if (m) buzz(m[1], m[2], before, data, user.id); }
-      if (col === 'boards') boardCache.delete(id);
+      if (col === 'boards') { boardCache.delete(id); summaryCache.clear(); }
       broadcast({ op: 'set', col, id, data, ...(isBoard ? { prevAccess: before ? before.access || null : null } : {}) });
       integ.itemChanged(dp, before, data, user.id);
       try { itemNotifications(dp, before, data, user); } catch (e) { console.error('notifications:', e.message); }
@@ -923,9 +993,11 @@ async function api(req, res, url) {
       return send(res, 200, stripped.length ? { ok: true, stripped: stripped.map(c => colTitle(info, c)) } : { ok: true });
     }
     if (method === 'DELETE') {
+      // a whole board (and every item on it) goes only when an admin deletes it
+      if (isBoard && user.role !== 'admin') throw new HttpError(403, 'Only admins can delete boards.');
       q.deleteDoc.run(dp);
       if (prev) integ.itemChanged(dp, before, null, user.id);
-      if (isBoard) { q.deleteCol.run(dp + '/items'); boardCache.delete(id); }
+      if (isBoard) { q.deleteCol.run(dp + '/items'); boardCache.delete(id); summaryCache.clear(); }
       broadcast({ op: 'delete', col, id });
       return send(res, 200, { ok: true });
     }
@@ -935,7 +1007,9 @@ async function api(req, res, url) {
 
 // ---------- home summary ----------
 // Per-board numbers are cached per workspace; each person's summary adds up only the boards they can see.
-const summaryCache = new Map();
+const userSummary = new Map(); // 'userId|boardId' -> { at, v }: boards where someone sees only their own items
+class SummaryCache extends Map { clear() { super.clear(); userSummary.clear(); } }
+const summaryCache = new SummaryCache();
 function boardStats(id, b, keep) {
   const day = d => d.toISOString().slice(0, 10);
   const today = day(new Date()), weekAgo = Date.now() - 7 * 864e5, inWeek = day(new Date(Date.now() + 7 * 864e5));
@@ -991,11 +1065,26 @@ function cleanAccess(a) {
   const members = [...new Set((Array.isArray(a.members) ? a.members : []).map(e => String(e || '').trim().toLowerCase()).filter(e => /^[^@\s]+@[^@\s]+$/.test(e)))].sort();
   return { private: !!a.private, members, ...(a.kind ? { kind: String(a.kind) } : {}) };
 }
+// A member may not add (or change) an automation that sets a column locked for them: the rule would change it for them.
+const RULE_SETTERS = new Set(['set_status', 'set_value', 'set_date', 'clear', 'assign']);
+function checkRuleLocks(user, before, list) {
+  const b = before || {}, locked = lockedCols(user, b); if (!locked.size) return;
+  const old = new Map(((b.automations) || []).map(r => [r && r.id, JSON.stringify(r)]));
+  for (const r of list) {
+    if (!r || typeof r !== 'object' || old.get(r.id) === JSON.stringify(r)) continue;
+    const hit = (Array.isArray(r.actions) ? r.actions : []).filter(a => a && RULE_SETTERS.has(a.type) && r.trigger !== 'sub_status' && locked.has(String(a.col)));
+    if (hit.length) { const e = new HttpError(403, `“${String(r.title || 'This automation').slice(0, 120)}” sets ${[...new Set(hit.map(a => '“' + colTitle(b, a.col) + '”'))].join(', ')}, which ${hit.length === 1 ? 'is' : 'are'} locked for you on this board. Only admins can add or change automations that set locked columns.`); e.code = 'locked'; throw e; }
+  }
+}
 // Guests may post updates (as themselves) and change guest-editable columns. Nothing else on an item.
-function checkGuestEdit(before, after, user) {
+function checkGuestEdit(before, after, user, info) {
   if (!before) throw new HttpError(403, 'Guests can’t add items.');
   const no = msg => { const e = new HttpError(403, msg || 'Guests can post updates and fill in the columns the admin opened to guests, nothing else.'); e.code = 'locked'; return e; };
   const js = v => JSON.stringify(v ?? null);
+  // values: board columns are checked against the locks below; any other key (not a column) only via a guest-editable column's own keys
+  const colIds = new Set(((info && info.columns) || []).map(c => c.id)), ge = new Set(((info && info.perms) || {}).guestEdit || []);
+  const bv = before.values || {}, av = (after.values && typeof after.values === 'object') ? after.values : {};
+  for (const k of new Set([...Object.keys(bv), ...Object.keys(av)])) if (js(bv[k]) !== js(av[k]) && !colIds.has(baseCol(k)) && !ge.has(baseCol(k))) throw no();
   for (const k of new Set([...Object.keys(before), ...Object.keys(after)])) {
     if (js(before[k]) === js(after[k]) || k === 'values') continue; // values are checked against the board's guest-editable columns
     if (k === 'updates') {
@@ -1241,6 +1330,8 @@ if (require.main === module) {
     child.on('exit', code => console.log('Board access from Monday:', code === 0 ? 'done' : 'failed (' + code + ')'));
   }
   server.listen(PORT, () => console.log(`Solver.ca running on http://localhost:${PORT}  (data: ${DATA_DIR})`));
+  // the write-ahead log is folded into the database and cut back to nothing every 10 minutes
+  setInterval(() => { try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch (e) { console.error('checkpoint:', e.message); } }, 10 * 60 * 1000).unref();
   if (livePullOn()) {
     const every = 5 * 60 * 1000;
     setInterval(() => { runMondayPull(); }, every).unref();

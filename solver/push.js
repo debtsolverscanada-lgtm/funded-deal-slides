@@ -7,6 +7,7 @@
 // (mentions, assignments, reminders, automation alerts) are then pushed to those devices.
 'use strict';
 const crypto = require('node:crypto');
+const netguard = require('./netguard.js');
 
 const b64u = buf => Buffer.from(buf).toString('base64url');
 const unb64u = s => Buffer.from(String(s || ''), 'base64url');
@@ -103,7 +104,9 @@ module.exports = function push({ db, now, HttpError, readBody, send, safeUrl }) 
     const k = vapidKeys();
     const body = encrypt(JSON.stringify(data), sub.p256dh, sub.auth);
     try {
-      const r = await fetch(sub.endpoint, { method: 'POST', signal: AbortSignal.timeout(10000), body,
+      // only the push services browsers use; every address is checked when connecting and redirects aren't followed
+      if (!netguard.pushHostOk(sub.endpoint)) throw new Error('Not a push service address.');
+      const r = await netguard.safePost(sub.endpoint, { timeout: 10000, body,
         headers: { Authorization: vapidAuth(sub.endpoint, k, subject()), 'Content-Encoding': 'aes128gcm', 'Content-Type': 'application/octet-stream', TTL: '86400', Urgency: 'normal' } });
       if (r.status === 404 || r.status === 410) { db.prepare('DELETE FROM push_subs WHERE endpoint = ?').run(sub.endpoint); return r.status; }
       db.prepare('UPDATE push_subs SET last_ok = ?, last_error = ? WHERE endpoint = ?').run(r.ok ? now() : null, r.ok ? null : `Got ${r.status}`, sub.endpoint);
@@ -129,11 +132,14 @@ module.exports = function push({ db, now, HttpError, readBody, send, safeUrl }) 
     if (p === '/api/push/subscribe' && method === 'POST') {
       const b = await readBody(req); const sub = b.subscription || b;
       const endpoint = safeUrl(sub && sub.endpoint), keysIn = (sub && sub.keys) || {};
-      if (!endpoint || !/^https:/.test(endpoint) && process.env.KS_ALLOW_PRIVATE_WEBHOOKS !== '1') throw new HttpError(400, 'That browser gave an address push alerts can’t use.');
+      if (!endpoint || !netguard.pushHostOk(endpoint)) throw new HttpError(400, 'That browser gave an address push alerts can’t use.');
       if (unb64u(keysIn.p256dh).length !== 65 || unb64u(keysIn.auth).length < 16) throw new HttpError(400, 'That browser gave keys push alerts can’t use.');
       if (db.prepare('SELECT COUNT(*) AS n FROM push_subs WHERE user_id = ?').get(user.id).n >= 10) throw new HttpError(400, 'Alerts are on for 10 devices already. Turn one off first.');
+      // a device already turned on for someone else stays theirs (it is never moved to another account)
+      const owner = db.prepare('SELECT user_id FROM push_subs WHERE endpoint = ?').get(endpoint);
+      if (owner && owner.user_id !== user.id) throw new HttpError(409, 'Alerts on this device belong to another account. Turn them off there first.');
       db.prepare(`INSERT INTO push_subs (endpoint, user_id, p256dh, auth, device, created_at) VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth, device = excluded.device`).run(endpoint, user.id, keysIn.p256dh, keysIn.auth, String(b.device || '').slice(0, 80), now());
+        ON CONFLICT(endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth, device = excluded.device WHERE push_subs.user_id = excluded.user_id`).run(endpoint, user.id, keysIn.p256dh, keysIn.auth, String(b.device || '').slice(0, 80), now());
       return send(res, 200, { ok: true });
     }
     if (p === '/api/push/unsubscribe' && method === 'POST') {

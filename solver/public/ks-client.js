@@ -56,7 +56,9 @@
       notify(entry);
     };
     es.onerror = () => { hadError = true; };
-    es.onopen = () => { if (hadError) { hadError = false; cols.forEach((entry, path) => load(path, entry).catch(() => {})); emit('reconnect'); } };
+    // after a dropped connection, reload a moment later at a random point in the next 4 s, so a restarted
+    // server isn't asked for every board by every open page in the same instant
+    es.onopen = () => { if (hadError) { hadError = false; setTimeout(() => { cols.forEach((entry, path) => load(path, entry).catch(() => {})); emit('reconnect'); }, Math.floor(Math.random() * 4000)); } };
   }
 
   function docRef(path) {

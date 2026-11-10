@@ -1078,7 +1078,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
           <input class="group-name" data-edit="group-name" data-group="${esc(g.id)}" value="${esc(g.name)}" aria-label="Group name" ${S.canWrite ? '' : 'readonly'}>
           <span class="group-count">${gi.length} ${gi.length === 1 ? 'item' : 'items'}</span>
           ${S.canWrite ? `<button class="icon-btn" data-act="group-color" data-group="${esc(g.id)}">Colour</button>
-          <button class="icon-btn" data-act="delete-group" data-group="${esc(g.id)}">${S.confirmDelete === 'g:' + g.id ? 'Click again to delete' : 'Delete'}</button>` : ''}
+          <button class="icon-btn" data-act="delete-group" data-group="${esc(g.id)}">${S.confirmDelete === 'g:' + g.id ? ((n => n ? `Delete group and ${n} lead${n === 1 ? '' : 's'}` : 'Click again to delete')(S.items.filter(x => x.group === g.id).length)) : 'Delete'}</button>` : ''}
         </div>
         ${open ? `<div class="tablewrap"><table class="board"><thead><tr><th class="name-cell"><div class="name-wrap" style="padding-left:14px"><input type="checkbox" class="rowcheck" data-selgroup="${esc(g.id)}" ${allSel ? 'checked' : ''} aria-label="Select all in ${esc(g.name)}"><button class="col-head" data-act="col-menu" data-col="name" style="justify-content:flex-start">Item ${sortMark('name')}</button></div></th>${head}${addColTh}</tr></thead><tbody>${rows}${addRow}${sum}</tbody></table></div>` : ''}
       </section>`;

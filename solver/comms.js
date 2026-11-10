@@ -74,11 +74,14 @@ module.exports = function comms({ db, q, now, HttpError, send, boardInfo, mustSe
     const r = ID.test(iid) && q.doc.get(`boards/${bid}/items/${iid}`); if (!r) throw new HttpError(404, 'No such item.');
     const item = JSON.parse(r.data); if (!itemVisible(user, info, item)) throw new HttpError(404, 'No such item.');
     const phones = [...new Set((info.columns || []).filter(c => c.type === 'phone').map(c => digits((item.values || {})[c.id])).filter(x => x.length === 10))].slice(0, 3);
-    // this item's events, plus events for its phone number that weren't matched to any item
-    const rows = db.prepare(`SELECT * FROM comm_events WHERE (board = ? AND item = ?) ${phones.length ? `OR (board IS NULL AND phone IN (${phones.map(() => '?').join(',')}))` : ''} ORDER BY at DESC LIMIT 200`).all(bid, iid, ...phones);
+    // this item's events; admins also see events for its phone number that weren't matched to any item, and the
+    // RingCentral log. Those are matched by phone number alone, so they could belong to a lead on a board
+    // this person can't see: only admins (who see every board) get them.
+    const admin = user && user.role === 'admin', byPhone = admin ? phones : [];
+    const rows = db.prepare(`SELECT * FROM comm_events WHERE (board = ? AND item = ?) ${byPhone.length ? `OR (board IS NULL AND phone IN (${byPhone.map(() => '?').join(',')}))` : ''} ORDER BY at DESC LIMIT 200`).all(bid, iid, ...byPhone);
     let events = rows.map(e => ({ id: e.id, at: e.at, type: TYPE[e.type] || e.type, direction: e.direction, note: e.note || '', duration: e.duration, source: e.source || 'API' }));
-    const rc = { on: rcOn(), error: null };
-    if (rc.on && phones.length) {
+    const rc = { on: rcOn(), error: null, ...(rcOn() && !admin ? { adminsOnly: true } : {}) };
+    if (rc.on && admin && phones.length) {
       try { for (const ph of phones.slice(0, 2)) events.push(...await rcFetch(ph)); }
       catch (e) { rc.error = e.message; }
     }
