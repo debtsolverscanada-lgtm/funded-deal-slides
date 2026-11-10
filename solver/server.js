@@ -20,7 +20,22 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const zlib = require('node:zlib');
-const { DatabaseSync } = require('node:sqlite');
+const { DatabaseSync, StatementSync } = require('node:sqlite');
+// The search index (FTS5 with contentless_delete) writes "tombstone" rows whose row numbers start at 2^53. SQLite then
+// reports that number as the connection's last inserted row id, and node:sqlite throws ERR_OUT_OF_RANGE from run()
+// AFTER the statement has already done its work. Every later UPDATE/upsert then "failed" (saves, the Monday pull).
+// The fix: such a run() returns the real change count and resets the last row id so the next statement is clean.
+{ const orig = StatementSync.prototype.run; let fix = null;
+  StatementSync.prototype.run = function (...a) {
+    try { return orig.apply(this, a); }
+    catch (e) {
+      if (!e || e.code !== 'ERR_OUT_OF_RANGE' || !fix) throw e;
+      const changes = fix.changes.get().c; orig.call(fix.reset);
+      return { changes, lastInsertRowid: 0 };
+    }
+  };
+  StatementSync.setRowidFix = d => { d.exec('CREATE TEMP TABLE IF NOT EXISTS rowid_reset (id INTEGER PRIMARY KEY)'); fix = { changes: d.prepare('SELECT changes() AS c'), reset: d.prepare('INSERT OR REPLACE INTO rowid_reset (id) VALUES (1)') }; };
+}
 const { syncFromMonday, pullFromMonday } = require('./monday.js');
 const mondayMerge = require('./monday.js');
 const uploadCols = new Map(); // board id -> its Monday columns, from the board record of an uploaded Monday copy
@@ -47,6 +62,7 @@ fs.mkdirSync(FILES_DIR, { recursive: true });
 { const oldDb = path.join(DATA_DIR, 'keystone.db'), newDb = path.join(DATA_DIR, 'solver.db');
   if (!fs.existsSync(newDb) && fs.existsSync(oldDb)) for (const ext of ['', '-wal', '-shm']) if (fs.existsSync(oldDb + ext)) fs.renameSync(oldDb + ext, newDb + ext); }
 const db = new DatabaseSync(path.join(DATA_DIR, 'solver.db'));
+StatementSync.setRowidFix(db);
 db.exec(`
   PRAGMA journal_mode = WAL;
   PRAGMA synchronous = NORMAL;
