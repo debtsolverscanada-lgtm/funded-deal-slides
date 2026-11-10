@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <meta name="theme-color" content="#000000">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Solver">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="stylesheet" href="/motion.css">
 <link rel="stylesheet" href="/fun.css">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -509,6 +515,8 @@ td.currency::before, td.percent::after { color: var(--muted); }
 .imp-map td, .imp-map th { padding: 6px 10px; vertical-align: top; text-align: left; }
 .imp-map select { width: 100%; min-width: 160px; }
 .imp-errors { max-height: 160px; overflow: auto; font-size: 12.5px; color: var(--muted); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; }
+/* installed app (home screen / desktop window): keep clear of the phone's status bar */
+@media (display-mode: standalone) { .app { padding-top: env(safe-area-inset-top, 0px); box-sizing: border-box; } .modal-wrap { padding-top: env(safe-area-inset-top, 0px); } }
 </style>
 </head>
 <body>
@@ -2160,5 +2168,6 @@ td.currency::before, td.percent::after { color: var(--muted); }
 </script>
 <script src="/motion.js"></script>
 <script src="/fun.js"></script>
+<script src="/install.js"></script>
 </body>
 </html>

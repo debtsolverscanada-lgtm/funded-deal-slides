@@ -7,6 +7,12 @@
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600&display=swap">
 <meta name="theme-color" content="#000000">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Solver">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <style>
 :root { --line: rgba(255,255,255,0.10); --fg: #fff; --muted: rgba(255,255,255,0.55); --danger: #e3a8a8; color-scheme: dark; }
 * { box-sizing: border-box; }
@@ -33,6 +39,7 @@ h2 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -.01em; }
 .qr svg { width: min(220px, 64vw); height: auto; }
 .key, .codes code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; letter-spacing: .05em; padding: 8px 10px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,0.05); word-break: break-all; text-align: center; user-select: all; }
 .codes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+@media (display-mode: standalone) { body { padding-top: env(safe-area-inset-top, 0px); } }
 </style>
 </head>
 <body>
@@ -128,5 +135,6 @@ h2 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -.01em; }
   else show('pw');
 })();
 </script>
+<script src="/install.js"></script>
 </body>
 </html>
