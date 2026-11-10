@@ -539,10 +539,15 @@ td.currency::before, td.percent::after { color: var(--muted); }
 <script src="/ks-client.js"></script>
 <script src="/views.js"></script>
 <script src="/qr.js"></script>
+<link rel="stylesheet" href="/extras.css">
+<script src="/ext.js"></script>
+<script src="/automations.js"></script>
+<script src="/editor.js"></script>
+<script src="/extras.js"></script>
 <script>
 (() => {
   const PALETTE = ['#2f8f6f', '#3a78c2', '#c2852b', '#b44a5c', '#7a5bc0', '#5f7a2e', '#6b7280', '#c45f2c', '#2a8a9a'];
-  const TYPES = { text: 'Text', status: 'Status', person: 'Person', date: 'Date', phone: 'Phone', email: 'Email', number: 'Number' };
+  const TYPES = { text: 'Text', status: 'Status', person: 'Person', date: 'Date', phone: 'Phone', email: 'Email', number: 'Number', ai: 'AI', doc: 'Doc' };
   const S = {
     db: null, user: null, uid: '', canWrite: true, status: 'loading',
     boards: [], boardId: null, items: [], itemsLoaded: false, itemsUnsub: null,
@@ -702,6 +707,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
       case 'empty': return empty; case 'not_empty': return !empty;
       case 'is_not': return Array.isArray(c.value) ? !c.value.map(String).includes(String(v ?? '')) : String(v ?? '') !== String(c.value ?? '');
       case 'contains': return String(v ?? '').toLowerCase().includes(String(c.value ?? '').toLowerCase());
+      case 'has_person': { const ps = splitPeople(v).map(x => x.toLowerCase()); return (Array.isArray(c.value) ? c.value : [c.value]).some(x => ps.includes(String(x ?? '').trim().toLowerCase())); }
       default: return Array.isArray(c.value) ? c.value.map(String).includes(String(v ?? '')) : String(v ?? '') === String(c.value ?? '');
       case 'is_not_any': return !(Array.isArray(c.value) ? c.value.map(String) : [String(c.value)]).includes(String(v ?? ''));
     }
@@ -710,6 +716,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
   // Applies a rule's actions into `patch` (values/group) and `lines` (activity). Returns extra work to do after saving.
   function applyActions(b, item, rule, patch, lines, after) {
     const name = rule.title ? `“${rule.title}”` : 'Automation';
+    const n0 = lines.length;
     for (const a of rule.actions || []) {
       const col = a.col && b.columns.find(c => c.id === a.col);
       switch (a.type) {
@@ -724,9 +731,11 @@ td.currency::before, td.percent::after { color: var(--muted); }
         case 'duplicate': after.push({ kind: 'duplicate', name, withUpdates: !!a.withUpdates }); break;
         case 'external': lines.push({ auto: true, text: `${name} would ${a.label} in Monday. Not run in Solver.ca, so nothing was sent.` }); break;
         case 'notify': lines.push({ auto: true, text: `${name} notified ${fillTpl(b, { ...item, values: { ...(item.values || {}), ...patch.values } }, a.to || '') || 'someone'} in Solver.ca` }); after.push({ kind: 'notify', to: a.to, message: a.message, title: rule.title }); break;
+        case 'webhook': lines.push({ auto: true, text: `${name} sent this to a connected tool` }); if (!after.some(x => x.kind === 'webhook' && x.rule === rule.id)) after.push({ kind: 'webhook', rule: rule.id }); break;
         default: lines.push({ auto: true, text: `${name} would ${a.label || a.type.replace(/_/g, ' ')} in Monday. Not run in Solver.ca, so nothing was sent.` });
       }
     }
+    if (window.SolverExt) SolverExt.ruleRan(b, item, rule, lines.slice(n0).map(l => l.text.replace(name + ' ', ''))); // the rule's run log
   }
   // Finds rules for an event and applies them. event: { type, col, value, group }
   function fireRules(b, item, ev, patch, lines, after) {
@@ -764,6 +773,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
       if (x.kind === 'move_board') moveItemToBoard(b, item, x.board, x.group, x.name, true, x.map);
       if (x.kind === 'copy_board') moveItemToBoard(b, item, x.board, x.group, x.name, false, x.map);
       if (x.kind === 'duplicate') duplicateItem(item, false, x.withUpdates);
+      if (window.SolverExt) SolverExt.after(x, b, item); // "Send to a connected tool" (automations.js)
     }
   }
   function moveItemToBoard(b, item, targetBoardId, groupId, why, removeHere = true, map = null) {
@@ -842,7 +852,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
   function isEditing() {
     const a = document.activeElement;
     if (window.KSViews && KSViews.busy()) return true; // a timeline bar is being dragged
-    return a && a.matches && a.matches('input[type=text], input:not([type]), input[type=date], textarea') && a.closest('#app, #layer') && !a.matches('.search');
+    return a && a.matches && a.matches('input[type=text], input:not([type]), input[type=date], textarea, [contenteditable="true"]') && a.closest('#app, #layer') && !a.matches('.search');
   }
   let renderTimer = null;
   function scheduleRender() {
@@ -960,6 +970,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     const v = (item.values || {})[col.id] ?? '';
     const canEd = colEditable(col), ro = canEd ? '' : 'readonly';
     const base = `class="cell-input" data-edit="value" data-item="${esc(item.id)}" data-col="${esc(col.id)}" aria-label="${esc(col.title)}" ${ro}`;
+    { const x = window.SolverExt && SolverExt.cell(col, item, inDrawer); if (x != null) return x; } // AI and Doc columns (extras.js, editor.js)
     if (col.type === 'formula') { const r = formulaResult(board(), item, col); const t = r.error ? '⚠' : KSFormula.format(r.value); return `<div class="ro fx" title="${esc(r.error ? 'Formula problem: ' + r.error : col.formula)}">${esc(t)}</div>`; }
     if (col.type === 'item_id') return `<div class="ro">${esc(item.mondayId || item.id)}</div>`;
     if (col.type === 'created') return `<div class="ro">${esc(fmtTime(item.createdAt))}</div>`;
@@ -1151,7 +1162,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
           <div class="drawer-head"><input class="drawer-title" data-edit="name" data-item="${esc(i.id)}" value="${esc(i.name)}" aria-label="Item name" ${S.canWrite ? '' : 'readonly'}>
             <div class="drawer-actions">${S.canWrite ? `<button class="btn" data-act="dup-item" data-item="${esc(i.id)}">Duplicate</button>` : ''}<button class="btn" data-act="close-item">Close</button></div></div>
           <div class="drawer-tabs" role="tablist">
-            ${[...(b.form ? [['fact', 'Fact find']] : []), ['updates', `Updates · ${(i.updates || []).length}`], ['info', 'Info'], ['activity', 'Activity log']].map(([k, l]) => `<button class="drawer-tab" role="tab" data-act="dtab" data-tab="${k}" aria-selected="${S.drawerTab === k}">${l}</button>`).join('')}
+            ${[...(b.form ? [['fact', 'Fact find']] : []), ['updates', `Updates · ${(i.updates || []).length}`], ['info', 'Info'], ...(window.SolverExt ? SolverExt.drawerTabs(b, i) : []), ['activity', 'Activity log']].map(([k, l]) => `<button class="drawer-tab" role="tab" data-act="dtab" data-tab="${k}" aria-selected="${S.drawerTab === k}">${l}</button>`).join('')}
           </div>
           <div class="drawer-body">
             ${S.drawerTab === 'info' ? `<div class="fields">${fields}${groupSel}</div>
@@ -1164,6 +1175,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
               <div style="margin-top:12px">${updates || '<p class="rail-note">No updates yet. Post the first one above.</p>'}</div></div>` : ''}
             ${S.drawerTab === 'fact' && b.form ? renderFactFind(b, i) : ''}
             ${S.drawerTab === 'activity' ? `<ul class="log">${log || '<li>No activity yet.</li>'}</ul>` : ''}
+            ${window.SolverExt ? (SolverExt.drawerBody(S.drawerTab, b, i) || '') : ''}
           </div>
         </aside>`;
       }
@@ -1183,6 +1195,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     const draft = $('#update-text') ? $('#update-text').value : '';
     layer.innerHTML = html;
     if (draft && $('#update-text')) $('#update-text').value = draft;
+    if (window.SolverExt) SolverExt.afterLayer(); // mounts the doc editor and other live panels
   }
 
   function renderPop(b) {
@@ -1248,6 +1261,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
 
   function renderModal(b) {
     const m = S.modal;
+    { const x = window.SolverExt && SolverExt.renderModal(m, b); if (x != null) return x; } // automation editor and other add-ons
     const statusCols = b ? b.columns.filter(c => c.type === 'status') : [];
     if (m.type === 'automations') {
       const RUNS = ['move_group', 'set_status', 'set_value', 'set_date', 'clear', 'assign', 'create_update', 'move_board', 'copy_to_board', 'duplicate', 'notify'];
@@ -1326,8 +1340,8 @@ td.currency::before, td.percent::after { color: var(--muted); }
         <div class="form-row"><input class="field-input" id="sv-name" placeholder="View name, e.g. My follow-ups" style="flex:1 1 220px"><button class="btn primary" data-act="do-save-view">Save view</button><button class="btn" data-act="close-modal-btn">Cancel</button></div>`;
     }
     if (m.type === 'integrations') {
-      const I = m.data; const EV = ['item.created', 'item.updated', 'item.moved', 'item.status_changed', 'item.deleted', 'update.created', 'reminder.due', 'button.pressed'];
-      const evName = { 'item.created': 'New item', 'item.updated': 'Item changed', 'item.moved': 'Moved to a group', 'item.status_changed': 'Status changed', 'item.deleted': 'Item deleted', 'update.created': 'Update posted', 'reminder.due': 'Date reminder (Monday “when date arrives”)', 'button.pressed': 'Button pressed (Build Application, Send to Scarlett…)' };
+      const I = m.data; const EV = ['item.created', 'item.updated', 'item.moved', 'item.status_changed', 'item.deleted', 'update.created', 'reminder.due', 'button.pressed', 'automation.webhook'];
+      const evName = { 'item.created': 'New item', 'item.updated': 'Item changed', 'item.moved': 'Moved to a group', 'item.status_changed': 'Status changed', 'item.deleted': 'Item deleted', 'update.created': 'Update posted', 'reminder.due': 'Date reminder (Monday “when date arrives”)', 'button.pressed': 'Button pressed (Build Application, Send to Scarlett…)', 'automation.webhook': 'Automation sent to a tool' };
       const bname = id => (S.boards.find(x => x.id === id) || {}).name || 'All boards';
       const boardSel = (id, all) => `<select class="field-input" id="${id}" aria-label="Board">${all ? '<option value="">All boards</option>' : ''}${workspaces().map(w => `<optgroup label="${esc(w.name)}">${S.boards.filter(x => wsOf(x).id === w.id).map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')}</optgroup>`).join('')}</select>`;
       if (!I) return '<h3>Integrations</h3><p>Loading.</p>';
@@ -1365,6 +1379,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     if (m.type === 'profile') {
       return `<h3>${esc((S.me && S.me.name) || 'Signed in')}</h3><p>${esc((S.me && S.me.email) || '')} · ${S.isGuest ? '<span class="pill guest-badge">Guest</span>' : roleLabel()}</p>
         <div class="form-row"><button class="btn" data-act="security">Security${S.me && S.me.twofa ? ' · two-factor on' : ''}</button></div>
+        ${window.SolverExt ? SolverExt.profile() : ''}
         <div class="form-row"><button class="btn primary" data-act="notifs">Notifications${S.notifs.unread ? ' · ' + S.notifs.unread + ' new' : ''}</button>${S.isOwner ? '<button class="btn" data-act="team">Team &amp; settings</button><button class="btn" data-act="integrations">Integrations</button>' : ''}<button class="btn" data-act="logout">Sign out</button><button class="btn" data-act="close-modal-btn">Close</button></div>`;
     }
     if (m.type === 'notifs') {
@@ -1432,6 +1447,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
         ${S.canWrite ? `<div class="form-row"><label for="c-rename">Rename</label><input class="field-input" id="c-rename" value="${esc(c.title)}" style="flex:1 1 180px"><button class="btn primary" data-act="rename-column">Save</button></div>
         <div class="form-row"><button class="btn" data-act="move-col" data-dir="-1">Move left</button><button class="btn" data-act="move-col" data-dir="1">Move right</button><span class="spacer"></span>
         <button class="btn danger" data-act="delete-column">${S.confirmDelete === 'c:' + c.id ? 'Click again to delete' : 'Delete column'}</button></div>` : ''}
+        ${window.SolverExt ? SolverExt.colSettings(c, b) : ''}
         <div><button class="btn" data-act="close-modal-btn">Close</button></div>`;
     }
     return '';
@@ -1475,6 +1491,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     if (!t) return;
     const a = t.dataset.act, b = board();
     if (a === 'close-modal' && e.target !== t) return; // clicks inside the modal box
+    if (window.SolverExt && SolverExt.onAct(a, t, e, b)) return; // add-ons: automation editor, docs, AI, alerts
     if (!['delete-item', 'delete-group', 'delete-column', 'bulk-del', 'delete-view', 'reset-2fa'].includes(a)) S.confirmDelete = null;
     switch (a) {
       case 'board': S.page = 'board'; savePage(); S.modal = null; selectBoard(t.dataset.id); render(); break;
@@ -1651,7 +1668,8 @@ td.currency::before, td.percent::after { color: var(--muted); }
         const c = { id: rid('c'), title, type };
         if (type === 'currency') { c.type = 'number'; c.format = 'currency'; }
         if (type === 'status') c.labels = [{ id: rid('l'), label: 'Not started', color: '#6b7280' }, { id: rid('l'), label: 'Working on it', color: '#c2852b' }, { id: rid('l'), label: 'Done', color: '#2f8f6f' }];
-        const columns = [...b.columns, c]; patchBoard({ columns }); localBoard({ columns }); S.modal = null; toast(`Added ${title}`); break;
+        if (type === 'ai') { c.prompt = ''; c.autorun = false; }
+        const columns = [...b.columns, c]; patchBoard({ columns }); localBoard({ columns }); S.modal = type === 'ai' ? { type: 'col-menu', col: c.id } : null; if (type === 'ai') renderLayer(); toast(type === 'ai' ? `Added ${title}. Write its prompt below.` : `Added ${title}`); break;
       }
       case 'rename-column': { const v = $('#c-rename').value.trim(); if (!v) return; const columns = b.columns.map(c => c.id === S.modal.col ? { ...c, title: v } : c); patchBoard({ columns }); localBoard({ columns }); S.modal = null; break; }
       case 'move-col': {
@@ -1705,6 +1723,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
   }
 
   document.addEventListener('change', e => {
+    if (window.SolverExt && SolverExt.onChange(e)) return;
     const t = e.target, b = board();
     if (t.id === 'board-select') return selectBoard(t.value);
     if (t.id === 'kanban-col') { S.kanbanCol = t.value; return renderContent(); }
@@ -1764,6 +1783,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
   });
 
   document.addEventListener('input', e => {
+    if (window.SolverExt && SolverExt.onInput(e)) return;
     if (e.target.id === 'search') { S.search = e.target.value; S.shown = {}; renderContent(); }
     if (e.target.id === 'acc-email' && S.modal) S.modal.email = e.target.value; // survives live re-renders while typing
     if (e.target.id === 'board-filter') { S.boardFilter = e.target.value; renderRail(); }
@@ -2139,6 +2159,9 @@ td.currency::before, td.percent::after { color: var(--muted); }
   }
 
   if (window.KSViews) KSViews.init({ S, board, itemById, visibleItems, labelOf, splitPeople, fileList, isFileCol, describe, colEditable, setValue, patchItem, patchBoard, localBoard, formulaResult, hue, initials, toast, render, renderHead, renderContent, renderLayer, savePage });
+  // the page's internals the add-ons use (ext.js, automations.js, editor.js, extras.js)
+  window.SolverApp = { S, board, itemById, patchBoard, patchItem, localBoard, render, renderLayer, renderContent, scheduleRender, toast, esc, rid, normRule, describe, labelOf, fmtTime, splitPeople, colEditable, isLocked, fillNames, IC };
+
   async function init() {
     render();
     if (!(window.claude && window.claude.use)) { S.status = 'offline'; render(); return; }

@@ -163,6 +163,33 @@ two-factor**.
 - File columns and updates take attachments up to 25 MB. They're stored in `DATA_DIR/files` (on the same disk as
   `solver.db`, so back up the whole `/data` folder) and only people who can see the board can download them.
 
+## Automations, AI columns, docs, alerts
+
+- **Automations** (the board's **Automations** button): list, create, edit, duplicate, switch on/off and delete
+  rules with a sentence builder: *When* [status changes / column changes / item created / moved to a group /
+  button pressed / date arrives / subitem status changes / moved here from another board] *and only if*
+  [status is / column empty / person is / group is…] *then* [one or more actions]. Rules copied from Monday show
+  and can be edited. Every rule is checked by the server when it's saved, and each rule keeps a log of its last
+  50 runs (item and result). "Send to a connected tool" sends a signed `automation.webhook` event to your
+  outgoing webhooks (opt-in per rule); Solver.ca itself still never texts or emails anyone.
+- **AI columns** (+ Column, type AI): a prompt that uses other columns, like `Summarise {Updates} for {Name}`.
+  Run per cell, per group (column settings), or again when a column it uses changes. Needs `ANTHROPIC_API_KEY`
+  (model `claude-opus-5-5`, or set `AI_MODEL`); without it the column says "Add an Anthropic key to turn on AI
+  columns" and nothing is sent. Only that item's columns are sent, only for boards the person can see;
+  30 runs a minute per person, fields capped at 2,000 characters.
+- **Docs** (Doc columns and the item's Doc tab): headings, lists, bold/italic, links and checklists. Saves as you
+  type, shows others' changes live, keeps the last 20 versions. The server keeps only whitelisted HTML. Monday doc
+  columns (copied as links/text) open in the editor.
+- **Phone/desktop alerts** (Profile): Web Push for the installed app. Uses `VAPID_PUBLIC_KEY` /
+  `VAPID_PRIVATE_KEY` (base64url) if set; otherwise a key pair is made once and kept in the database
+  (`server_meta` table). Optional `VAPID_SUBJECT` (defaults to `PUBLIC_URL`).
+- **Email me my notifications** (Profile): off / instant / daily digest, only to the person's own sign-in email.
+  Off until `RESEND_API_KEY` and `ALERTS_FROM` are set ("Not set up yet"). `DIGEST_HOUR` (default 7).
+- **Calls & texts** (item drawer): events your phone tools post to `/api/v1/events` (`client_called`,
+  `client_texted`…), matched by phone number. Optional read-only RingCentral connector (call log and message
+  store) when `RINGCENTRAL_CLIENT_ID`, `RINGCENTRAL_CLIENT_SECRET` and `RINGCENTRAL_JWT` are all set. Nothing is
+  ever called or texted.
+
 ## What's not here yet
 
-Calls/texts, email sequences, dashboards, two-way sync with Monday (Solver.ca only reads Monday).
+Email sequences, dashboards, two-way sync with Monday (Solver.ca only reads Monday).
