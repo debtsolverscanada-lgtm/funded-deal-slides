@@ -623,7 +623,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
 /* ---------- phones: opaque bottom bar, landscape safe areas ---------- */
 @media (max-width: 780px) {
   .bnav.glass { background: rgba(10,10,12,0.97); left: max(12px, env(safe-area-inset-left, 0px)); right: max(12px, env(safe-area-inset-right, 0px)); }
-  .toasts { bottom: calc(86px + env(safe-area-inset-bottom, 0px)); }
+  .toasts { bottom: calc(100px + env(safe-area-inset-bottom, 0px)); }
 }
 
 /* ---------- touch screens: 16px fields (no zoom on iPhone), 40px tap targets ---------- */
@@ -668,6 +668,54 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
 .pf-signout { all: unset; box-sizing: border-box; margin-top: 18px; width: 100%; min-height: 52px; display: flex; align-items: center; justify-content: center; gap: 8px; border-radius: 16px; cursor: pointer; font-weight: 600; font-size: 16px; color: #ff6b6b; background: rgba(255,80,80,.1); border: 1px solid rgba(255,107,107,.35); }
 .pf-signout:hover { background: rgba(255,80,80,.18); }
 .pf-signout svg { width: 18px; height: 18px; }
+
+/* ---------- round 2: table, pickers, phone tap targets ---------- */
+.cell-lazy { display: block; box-sizing: border-box; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: text; line-height: 35px; }
+.name-wrap .cell-lazy { flex: 1 1 auto; min-width: 0; }
+.cell-lazy:focus { outline: none; }
+/* table cells don't clip (a clip per cell made every scroll step slow to draw); what's inside keeps to the cell */
+.tv .board td { overflow: visible; }
+.tv .board td > * { max-width: 100%; }
+.tv .board td > .file-cell, .tv .board td > .people-cell, .tv .board td > .link-cell { overflow: hidden; }
+/* the sticky column headers sit flush with the top of the scroller (no rows peeking above them) */
+.tv .board thead th { top: -18px; }
+/* totals row: a solid name cell, so columns scrolling under it don't show through */
+.tv .board .sum-row td.name-cell, .sum-row td.name-cell { background: #0c0c0e; }
+.board tr.tv-new td { background: rgba(255,255,255,0.07); }
+.g-grip { opacity: 0; padding: 0 4px; font-size: 12px; }
+.group-head:hover .g-grip, .g-grip:focus { opacity: 1; }
+/* pop-ups (status, labels, menus): items never squash; the list scrolls */
+.pop > * { flex: none; }
+.pop .chip[hidden] { display: none; }
+.pop { overscroll-behavior: contain; max-height: min(420px, calc(100dvh - 24px)); }
+.pop .pop-filter { position: sticky; top: -8px; z-index: 1; margin: -8px -8px 4px; padding: 8px; background: rgba(18,18,20,0.96); border-radius: 18px 18px 0 0; }
+.pop .pop-filter input { width: 100%; margin: 0; box-sizing: border-box; }
+/* lists inside windows keep their height; the window scrolls */
+.modal > *, .modal .perm-list { flex-shrink: 0; }
+.modal .form-row .toggle[aria-pressed="true"] { background: #fff; color: #000; border-color: #fff; font-weight: 600; }
+.modal .form-row .toggle[aria-pressed="true"]::before { content: "✓ "; }
+.src-warn { color: #ffd27a; }
+.cal-nav { display: inline-flex; gap: 6px; flex: none; }
+.cal-nav .btn { padding-left: 12px; padding-right: 12px; }
+.int-err { color: #ffb4b4; margin: -4px 0 6px; font-size: 13px; }
+@media (max-width: 780px) {
+  .board .name-cell { min-width: 0; }
+  .cal-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 8px; row-gap: 4px; }
+  .cal-head h3 { min-width: 0; font-size: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 0; }
+  .cal-head .group-count { grid-column: 1 / -1; }
+  .cal-head select { grid-column: 1 / -1; }
+}
+/* touch: 40px targets for the small controls people tap all day (desktop keeps its compact sizes) */
+@media (pointer: coarse) {
+  .head.compact .tabs-row .tab, .tabs .tab { min-height: 40px; }
+  .board td.c-status .chip { min-height: 40px; }
+  .board td.c-status { padding-top: 3px; padding-bottom: 3px; }
+  .sub-toggle { min-height: 40px; min-width: 40px; padding: 0 8px; font-size: 12px; }
+  .drawer-title { min-height: 40px; }
+  .doc-tb button { min-width: 40px; height: 40px; }
+  .pop .chip { height: 40px; }
+  .open-btn, .name-open { min-height: 40px; }
+}
 </style>
 </head>
 <body>
@@ -846,6 +894,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     const patch = { values: { [colId]: value } };
     const lines = [{ text: `${col.title}: ${describe(col, old)} → ${describe(col, value)}` }], after = [];
     fireRules(b, item, { type: 'value', col: colId, value }, patch, lines, after); // also runs the rules its own changes set off
+    S.quickIds = [...(S.quickIds || []), itemId]; // the render that follows only needs this row (see scheduleRender)
     commitAuto(b, item, patch, lines, after);
     refreshRowFormulas(item);
   }
@@ -1035,6 +1084,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     write(ref.path, () => ref.set(data).then(r => { saved = true; return r; })).then(() => { if (saved && after.length) finishAfter(b, itemById(ref.id) || { id: ref.id, ...data }, after); });
     S.items.push({ id: ref.id, ...data });
     if (open) S.openItem = ref.id;
+    S.flash = ref.id; // shown, scrolled to and highlighted once the table draws it (renderTable / tvShowFlash)
     scheduleRender();
   }
 
@@ -1046,6 +1096,8 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
   }
   let renderTimer = null;
   function scheduleRender() {
+    // your own change to a few items (setValue marks them): on the table, patch just their rows
+    if (S.quickIds) { const ids = S.quickIds; S.quickIds = null; if (!renderTimer && tvOn()) { liveChanged(ids); return; } }
     if (isEditing()) { S.pendingRender = true; return; }
     if (renderTimer) return;
     renderTimer = setTimeout(() => { renderTimer = null; if (isEditing()) { S.pendingRender = true; return; } render(); }, S.importing && !S.importing.finished ? 1500 : 40);
@@ -1064,7 +1116,9 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     if (!up && dy > 6 && t > 80 && !main.querySelector('.head').contains(document.activeElement)) { main.classList.add("head-up"); document.body.classList.add("head-up"); headFlip = Date.now(); }
     else if (up && (dy < -6 || t < 30)) { main.classList.remove("head-up"); document.body.classList.remove("head-up"); headFlip = Date.now(); }
   }, { passive: true });
-  document.addEventListener('focusout', () => setTimeout(() => { if (S.pendingRender && !isEditing()) { S.pendingRender = false; render(); } }, 0));
+  document.addEventListener('focusout', () => setTimeout(() => { if (S.pendingRender && !isEditing()) { S.pendingRender = false; render(); } else if (tvOn()) onContentScroll(); }, 0));
+  // a table cell got the focus (click, Tab, arrows): make sure the columns around it are built right away
+  document.addEventListener('focusin', e => { if (tvOn() && e.target.closest && e.target.closest('#content .tablewrap[data-tw]')) { try { tvCheck(); } catch (x) { console.error(x); } } });
 
   function render() {
     renderRail(); renderHead(); renderContent(); renderLayer(); renderNav();
@@ -1224,6 +1278,25 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     return list;
   }
 
+  // Big tables: a text box per cell is the slowest thing to draw (each one is its own little scroller), so table text
+  // cells start as plain text that looks the same and turn into the real box the moment they get the focus (click,
+  // tap or Tab). The change, Tab order and keyboard work as before.
+  let lazyCells = false;
+  const lazyCell = (col, item, shown, style) => `<span class="cell-input cell-lazy" tabindex="0" role="textbox" data-lazy="value" data-item="${esc(item.id)}" data-col="${esc(col.id)}" aria-label="${esc(col.title)}"${style ? ` style="${style}"` : ''}>${esc(shown ?? '')}</span>`;
+  function unlazy(sp) {
+    const td = sp.closest('td'), b = board(), item = itemById(sp.dataset.item); if (!td || !b || !item) return null;
+    if (sp.dataset.lazy === 'name') {
+      sp.insertAdjacentHTML('afterend', `<input class="cell-input" data-edit="name" data-item="${esc(item.id)}" value="${esc(item.name)}" aria-label="Item name" ${S.canWrite ? '' : 'readonly'} style="padding-left:2px">`);
+      const inp = sp.nextElementSibling; sp.remove(); return inp;
+    }
+    const col = b.columns.find(c => c.id === sp.dataset.col); if (!col) return null;
+    td.innerHTML = cellEditor(col, item); return td.querySelector('input, textarea');
+  }
+  document.addEventListener('focusin', e => {
+    const sp = e.target; if (!sp.classList || !sp.classList.contains('cell-lazy')) return;
+    const inp = unlazy(sp); if (!inp) return;
+    inp.focus({ preventScroll: true }); const n = inp.value.length; try { inp.setSelectionRange(n, n); } catch (x) {}
+  });
   function cellEditor(col, item, inDrawer) {
     { const h = fx('cell', col, item, inDrawer); if (h !== undefined) return h; }
     const v = (item.values || {})[col.id] ?? '';
@@ -1236,7 +1309,8 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     if (col.type === 'button') return `<button class="col-btn" data-act="col-button" data-item="${esc(item.id)}" data-col="${esc(col.id)}">${esc(col.title)}</button>`;
     if (col.type === 'checkbox') return `<label class="cb"><input type="checkbox" data-edit="check" data-item="${esc(item.id)}" data-col="${esc(col.id)}" ${v ? 'checked' : ''} ${canEd ? '' : 'disabled'} aria-label="${esc(col.title)}"></label>`;
     if (col.type === 'dropdown') { const vals = splitPeople(v); return `<button class="people-cell dd-cell" data-act="dropdown" data-item="${esc(item.id)}" data-col="${esc(col.id)}" ${canEd ? '' : 'disabled'}>${vals.length ? vals.map(x => `<span class="pill">${esc(x)}</span>`).join('') : `<span class="pempty">${inDrawer ? 'Choose' : ''}</span>`}</button>`; }
-    if (col.type === 'link') { const lp = linkParts(v); return `<div class="link-cell"><input type="text" ${base} value="${esc(v)}" placeholder="${inDrawer ? 'https://' : ''}">${lp.url ? `<a href="${esc(lp.url)}" target="_blank" rel="noopener" aria-label="Open link">↗</a>` : ''}</div>`; }
+    const lz = lazyCells && !inDrawer; // on the big table, text cells are drawn as plain text until they get the focus
+    if (col.type === 'link') { const lp = linkParts(v); return `<div class="link-cell">${lz ? lazyCell(col, item, v) : `<input type="text" ${base} value="${esc(v)}" placeholder="${inDrawer ? 'https://' : ''}">`}${lp.url ? `<a href="${esc(lp.url)}" target="_blank" rel="noopener" aria-label="Open link">↗</a>` : ''}</div>`; }
     if (isFileCol(col)) {
       const at = `data-item="${esc(item.id)}" data-col="${esc(col.id)}"`;
       const chips = fileList(v).map((f, k) => `<span class="file-chip"><a href="${esc(f.url)}" target="_blank" rel="noopener" title="${esc(f.name)}" ${String(f.url).startsWith('/api/files/') ? 'download' : ''}>${esc(f.name)}</a>${canEd && inDrawer ? `<button class="icon-btn" data-act="file-remove" ${at} data-k="${k}" aria-label="Remove ${esc(f.name)}" title="Remove">×</button>` : ''}</span>`).join('');
@@ -1250,15 +1324,16 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
         return `<button class="chip ${l ? '' : 'none'}" style="${l ? '--c:' + esc(l.color) : ''}" title="${esc(l && l.desc || '')}" data-act="status" data-item="${esc(item.id)}" data-col="${esc(col.id)}" ${canEd ? '' : 'aria-disabled="true"'}>${l ? esc(l.label) : inDrawer && canEd ? 'Set ' + esc(col.title.toLowerCase()) : ''}</button>`;
       }
       case 'date': return canEd ? `<input type="date" ${base} value="${esc(v)}" ${v && v < ymd(new Date()) && /follow|due|deadline|next|callback/i.test(col.title) ? 'data-overdue title="Overdue"' : ''}>` : `<input type="text" ${base} value="${esc(v)}">`;
-      case 'number': return `<input type="text" inputmode="decimal" ${base} value="${col.format === 'currency' ? esc(fmtMoney(v)) : esc(v)}" style="${col.format === 'currency' ? 'padding-left:20px' : ''}">`;
+      case 'number': if (lz) return lazyCell(col, item, col.format === 'currency' ? fmtMoney(v) : v, col.format === 'currency' ? 'padding-left:20px' : '');
+        return `<input type="text" inputmode="decimal" ${base} value="${col.format === 'currency' ? esc(fmtMoney(v)) : esc(v)}" style="${col.format === 'currency' ? 'padding-left:20px' : ''}">`;
       case 'person': {
         const ps = splitPeople(v);
         const avs = ps.slice(0, 3).map(n => `<span class="av" style="background:${hue(n)}" title="${esc(n)}">${esc(initials(n))}</span>`).join('');
         return `<button class="people-cell" data-act="person" data-item="${esc(item.id)}" data-col="${esc(col.id)}" aria-label="${esc(col.title)}: ${esc(ps.join(', ') || 'nobody')}" ${canEd ? '' : 'disabled'}>${ps.length ? avs + (inDrawer ? `<span class="pnames">${esc(ps.join(', '))}</span>` : ps.length > 3 ? `<span class="pmore">+${ps.length - 3}</span>` : '') : `<span class="pempty">${inDrawer ? 'Assign' : ''}</span>`}</button>`;
       }
-      case 'phone': return `<input type="text" inputmode="tel" ${base} value="${esc(v)}">`;
-      case 'email': return `<input type="text" inputmode="email" ${base} value="${esc(v)}">`;
-      default: return `<input type="text" ${base} value="${esc(v)}">`;
+      case 'phone': return lz ? lazyCell(col, item, v) : `<input type="text" inputmode="tel" ${base} value="${esc(v)}">`;
+      case 'email': return lz ? lazyCell(col, item, v) : `<input type="text" inputmode="email" ${base} value="${esc(v)}">`;
+      default: return lz ? lazyCell(col, item, v) : `<input type="text" ${base} value="${esc(v)}">`;
     }
   }
 
@@ -1305,58 +1380,94 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
   const COLW = { status: 150, text: 200, person: 130, date: 140, phone: 140, email: 210, number: 140, formula: 140, button: 130, checkbox: 90, dropdown: 170, link: 200, item_id: 130, created: 130, board_relation: 180, mirror: 180, ai: 220, doc: 200, time_tracking: 150 };
   const colW = c => isFileCol(c) ? 220 : c.long ? 240 : (COLW[c.type] || 170);
   const isNarrow = () => window.matchMedia('(max-width: 780px)').matches;
-  const nameW = () => isNarrow() ? 200 : 300;
-  const TV = { cols: [], xs: [], total: 0, win: [0, 0], lazy: false, items: [] };
+  const nameW = () => isNarrow() ? (innerWidth < 400 ? 140 : 160) : 300;
+  const TV = { cols: [], xs: [], ci: new Map(), total: 0, win: [0, 0], lazy: false, items: [] };
   const GROUP_HEAD_H = 46, ROW_H = 38;
   function tvLayout(b) {
-    TV.cols = visCols(b); TV.xs = []; let x = 0; for (const c of TV.cols) { TV.xs.push(x); x += colW(c); } TV.total = x;
+    TV.cols = visCols(b); TV.xs = []; TV.ci = new Map(); let x = 0; TV.cols.forEach((c, k) => { TV.xs.push(x); TV.ci.set(c.id, k); x += colW(c); }); TV.total = x;
   }
   // which columns to build: the ones within about a screen of what's showing
   function tvWindow() {
     const n = TV.cols.length; if (n <= 40) return [0, n];
     const el = $('#content'), sl = el ? el.scrollLeft : 0, cw = el ? el.clientWidth : innerWidth, nw = nameW();
-    const lo = sl - cw, hi = sl + 2 * cw;
+    const lo = sl - 1.5 * cw, hi = sl + 2.5 * cw;
     let from = 0; while (from < n - 1 && nw + TV.xs[from] + colW(TV.cols[from]) < lo) from++;
     let to = from; while (to < n && nw + TV.xs[to] < hi) to++;
     return [from, Math.max(to, from + 1)];
   }
   function tvNeedsNewWindow() {
     const n = TV.cols.length; if (n <= 40) return false;
+    { const [f, t] = tvWindow(), [f0, t0] = TV.win; if (Math.abs(f - f0) >= 5 || Math.abs(t - t0) >= 5) return true; }
     const el = $('#content'); if (!el) return false;
     const sl = el.scrollLeft, cw = el.clientWidth, nw = nameW(), [from, to] = TV.win;
     const left = from > 0 ? nw + TV.xs[from] : -Infinity, right = to < n ? nw + TV.xs[to] : Infinity;
-    return sl - 200 < left || sl + cw + 200 > right;
+    const m = Math.max(200, cw / 2);
+    return sl - m < left || sl + cw + m > right;
   }
-  // the column slots for the current window: null = one spacer cell standing in for the columns not built
-  function tvCells() { const [from, to] = TV.win, n = TV.cols.length; return [...(from > 0 ? [null] : []), ...TV.cols.slice(from, to), ...(to < n ? [null] : [])]; }
+  // A table's built columns are one or two ranges [from, to): the scroll window, plus the cell that has focus (so a
+  // focused table never shows a stale window, and Tab/arrow keys can walk into columns that weren't built yet).
+  // Each table remembers its ranges in data-win.
+  const winKey = rs => rs.map(r => r[0] + '-' + r[1]).join(',');
+  const rangesOf = tw => (tw.dataset.win || '').split(',').filter(Boolean).map(s => s.split('-').map(Number));
+  function mergeRanges(rs) {
+    const s = rs.filter(r => r[1] > r[0]).sort((x, y) => x[0] - y[0]), out = [];
+    for (const r of s) { const l = out[out.length - 1]; if (l && r[0] <= l[1]) l[1] = Math.max(l[1], r[1]); else out.push([r[0], r[1]]); }
+    return out;
+  }
+  // the focused column (by its index in TV.cols) inside this table, if any
+  function focusCi(tw) {
+    const a = document.activeElement; if (!a || a === document.body || !tw.contains(a)) return -1;
+    const td = a.closest('td[data-ci], th[data-ci]'); return td ? Number(td.dataset.ci) : -1;
+  }
+  function tvRanges(tw) {
+    const n = TV.cols.length, ci = tw ? focusCi(tw) : -1;
+    // in steps of 8 columns, so walking along a row with Tab rebuilds the table only every few cells
+    const lo = Math.max(0, Math.floor(ci / 8) * 8 - 8);
+    const [from, to] = TV.win, inside = ci >= from + (from > 0 ? 3 : 0) && ci < to - (to < n ? 3 : 0);
+    return mergeRanges([TV.win, ...(ci >= 0 && !inside ? [[lo, Math.min(n, lo + 24)]] : [])]);
+  }
+  // the column slots for some ranges: { sp: width } = one spacer cell standing in for the columns not built
+  function tvCells(rs) {
+    rs = rs || [TV.win]; const n = TV.cols.length, out = []; let at = 0;
+    const xAt = k => k >= n ? TV.total : TV.xs[k];
+    for (const [from, to] of rs) {
+      if (from > at) out.push({ sp: xAt(from) - xAt(at) });
+      for (let k = from; k < to; k++) out.push(TV.cols[k]);
+      at = to;
+    }
+    if (at < n) out.push({ sp: TV.total - xAt(at) });
+    return out;
+  }
+  const isSp = c => c.sp !== undefined;
+  const ciOf = c => TV.ci.get(c.id);
   function tvRow(b, g, i, cells, span) {
     const narrow = isNarrow(), subs = i.subitems || [], exp = S.expanded.has(i.id) && subs.length, sel = S.selected.has(i.id);
-    const row = `<tr data-row="${esc(i.id)}" data-group="${esc(g.id)}" class="${sel ? 'sel' : ''}">
-          <td class="name-cell"><div class="name-wrap">${S.canWrite ? `<span class="grip" draggable="true" data-rowdrag="${esc(i.id)}" title="Drag to move" aria-hidden="true">⋮⋮</span>` : ''}<input type="checkbox" class="rowcheck" data-sel="${esc(i.id)}" ${sel ? 'checked' : ''} aria-label="Select ${esc(i.name)}">${(subs.length || (b.subColumns || []).length) ? `<button class="sub-toggle" data-act="subs" data-item="${esc(i.id)}" aria-expanded="${!!exp}" title="Subitems">${exp ? '▾' : '▸'} ${subs.length}</button>` : ''}${narrow ? `<button class="name-open" data-act="open" data-item="${esc(i.id)}">${esc(i.name)}${(i.updates || []).length ? `<span class="upd-count">${i.updates.length}</span>` : ''}</button>` : `<input class="cell-input" data-edit="name" data-item="${esc(i.id)}" value="${esc(i.name)}" aria-label="Item name" ${S.canWrite ? '' : 'readonly'} style="padding-left:2px"><button class="open-btn" data-act="open" data-item="${esc(i.id)}">Open${(i.updates || []).length ? ' · ' + i.updates.length : ''}</button>`}</div></td>
-          ${cells.map(c => c ? `<td class="c-${c.type} ${c.type === 'number' ? 'num-cell' : ''} ${c.format || ''}">${cellEditor(c, i)}</td>` : '<td class="tsp"></td>').join('')}<td></td>
-        </tr>`;
+    lazyCells = true; let row;
+    try { row = `<tr data-row="${esc(i.id)}" data-group="${esc(g.id)}" class="${sel ? 'sel' : ''}${TV.newId === i.id && Date.now() < TV.newUntil ? ' tv-new' : ''}">
+          <td class="name-cell"><div class="name-wrap">${S.canWrite ? `<span class="grip" draggable="true" data-rowdrag="${esc(i.id)}" title="Drag to move" aria-hidden="true">⋮⋮</span>` : ''}<input type="checkbox" class="rowcheck" data-sel="${esc(i.id)}" ${sel ? 'checked' : ''} aria-label="Select ${esc(i.name)}">${(subs.length || (b.subColumns || []).length) ? `<button class="sub-toggle" data-act="subs" data-item="${esc(i.id)}" aria-expanded="${!!exp}" title="Subitems">${exp ? '▾' : '▸'} ${subs.length}</button>` : ''}${narrow ? `<button class="name-open" data-act="open" data-item="${esc(i.id)}">${esc(i.name)}${(i.updates || []).length ? `<span class="upd-count">${i.updates.length}</span>` : ''}</button>` : `<span class="cell-input cell-lazy" tabindex="0" role="textbox" data-lazy="name" data-edit="name" data-item="${esc(i.id)}" aria-label="Item name" style="padding-left:2px">${esc(i.name)}</span><button class="open-btn" data-act="open" data-item="${esc(i.id)}">Open${(i.updates || []).length ? ' · ' + i.updates.length : ''}</button>`}</div></td>
+          ${cells.map(c => isSp(c) ? '<td class="tsp"></td>' : `<td class="c-${c.type} ${c.type === 'number' ? 'num-cell' : ''} ${c.format || ''}" data-ci="${ciOf(c)}">${cellEditor(c, i)}</td>`).join('')}<td></td>
+        </tr>`; } finally { lazyCells = false; }
     return row + (exp ? `<tr class="sub-row" data-subof="${esc(i.id)}"><td colspan="${span}"><div class="sub-stick">${subTable(b, i)}</div></td></tr>` : '');
   }
-  function tvSumRow(gi, cells) { return `<tr class="sum-row"><td class="name-cell"></td>${cells.map(c => `<td>${c ? summaryCell(c, gi) : ''}</td>`).join('')}<td></td></tr>`; }
+  function tvSumRow(gi, cells) { return `<tr class="sum-row"><td class="name-cell"></td>${cells.map(c => isSp(c) ? '<td class="tsp"></td>' : `<td data-ci="${ciOf(c)}">${summaryCell(c, gi)}</td>`).join('')}<td></td></tr>`; }
   const tvGroupItems = g => TV.items.filter(i => i.group === g.id);
-  function tvTable(b, g, gi) {
-    const [from, to] = TV.win, n = TV.cols.length, cells = tvCells(), span = cells.length + 2;
-    const padL = from > 0 ? TV.xs[from] : 0, padR = to < n ? TV.total - TV.xs[to] : 0;
-    const colgroup = `<colgroup><col style="width:${nameW()}px">${cells.map((c, k) => `<col style="width:${c ? colW(c) : (k === 0 && from > 0 ? padL : padR)}px">`).join('')}<col></colgroup>`;
+  function tvTable(b, g, gi, rs) {
+    rs = rs || [TV.win]; const cells = tvCells(rs), span = cells.length + 2;
+    const colgroup = `<colgroup><col style="width:${nameW()}px">${cells.map(c => `<col style="width:${isSp(c) ? c.sp : colW(c)}px">`).join('')}<col></colgroup>`;
     const sortMark = id => S.sort && S.sort.col === id ? `<span class="th-sort">${S.sort.dir === 'desc' ? '↓' : '↑'}</span>` : '';
-    const head = cells.map(c => c ? `<th class="w-${c.type}"><button class="col-head" data-act="col-menu" data-col="${esc(c.id)}" title="${isLocked(c, b) ? (colEditable(c, b) ? 'Locked: you can still change it' : 'Locked: only admins can change it') + '. ' : ''}${esc(c.title)}: sort, filter or hide">${isLocked(c, b) ? IC.lock : ''}<span class="col-t">${esc(c.title)}</span> ${sortMark(c.id)}${(S.filters[c.id] || []).length ? '<span class="th-filter" title="Filtered"></span>' : ''}</button></th>` : '<th class="tsp"></th>').join('');
+    const head = cells.map(c => !isSp(c) ? `<th class="w-${c.type}" data-ci="${ciOf(c)}"><button class="col-head" data-act="col-menu" data-col="${esc(c.id)}" title="${isLocked(c, b) ? (colEditable(c, b) ? 'Locked: you can still change it' : 'Locked: only admins can change it') + '. ' : ''}${esc(c.title)}: sort, filter or hide">${isLocked(c, b) ? IC.lock : ''}<span class="col-t">${esc(c.title)}</span> ${sortMark(c.id)}${(S.filters[c.id] || []).length ? '<span class="th-filter" title="Filtered"></span>' : ''}</button></th>` : '<th class="tsp"></th>').join('');
     const addColTh = S.canWrite ? '<th class="add-col"><button data-act="add-column" aria-label="Add column" title="Add column">+</button></th>' : '<th class="add-col"></th>';
     const limit = S.shown[g.id] || PAGE, allSel = gi.length && gi.every(i => S.selected.has(i.id));
     const rows = gi.slice(0, limit).map(i => tvRow(b, g, i, cells, span)).join('');
     const more = gi.length > limit ? `<tr class="more-row"><td class="name-cell"><button data-act="more" data-group="${esc(g.id)}">Show ${Math.min(PAGE, gi.length - limit)} more · ${gi.length - limit} hidden</button></td><td colspan="${span - 1}"></td></tr>` : '';
     const addRow = (S.canWrite ? `<tr class="add-row"><td class="name-cell"><input class="cell-input" data-act-key="add-item" data-group="${esc(g.id)}" placeholder="+ Add item" aria-label="Add item to ${esc(g.name)}" style="padding-left:40px"></td><td colspan="${span - 1}"></td></tr>` : '') + more;
-    return `<div class="tablewrap" data-tw="${esc(g.id)}"><table class="board" style="width:${nameW() + TV.total + 44}px">${colgroup}<thead><tr><th class="name-cell"><div class="name-wrap" style="padding-left:14px"><input type="checkbox" class="rowcheck" data-selgroup="${esc(g.id)}" ${allSel ? 'checked' : ''} aria-label="Select all in ${esc(g.name)}"><button class="col-head" data-act="col-menu" data-col="name" style="justify-content:flex-start">Item ${sortMark('name')}</button></div></th>${head}${addColTh}</tr></thead><tbody>${rows}${addRow}${tvSumRow(gi, cells)}</tbody></table></div>`;
+    return `<div class="tablewrap" data-tw="${esc(g.id)}" data-win="${winKey(rs)}"><table class="board" style="width:${nameW() + TV.total + 44}px">${colgroup}<thead><tr><th class="name-cell"><div class="name-wrap" style="padding-left:14px"><input type="checkbox" class="rowcheck" data-selgroup="${esc(g.id)}" ${allSel ? 'checked' : ''} aria-label="Select all in ${esc(g.name)}"><button class="col-head" data-act="col-menu" data-col="name" style="justify-content:flex-start">Item ${sortMark('name')}</button></div></th>${head}${addColTh}</tr></thead><tbody>${rows}${addRow}${tvSumRow(gi, cells)}</tbody></table></div>`;
   }
   const tvEstimate = (g, gi) => { const limit = S.shown[g.id] || PAGE, shown = Math.min(gi.length, limit); return 40 + (shown + (S.canWrite ? 1 : 0) + (gi.length > limit ? 1 : 0)) * ROW_H + 30; };
   const tvPlaceholder = (g, gi, h) => `<div class="tablewrap tv-ph" data-ph="${esc(g.id)}" style="height:${h || tvEstimate(g, gi)}px" aria-busy="true"></div>`;
   function tvGroupHead(g, gi, open) {
     return `<div class="group-head" data-dropgroup="${esc(g.id)}">
-          <button class="caret" data-act="collapse" data-group="${esc(g.id)}" aria-expanded="${open}" aria-label="Show or hide ${esc(g.name)}"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2"/></svg></button>
+          ${S.canWrite && !S.isGuest ? `<span class="grip g-grip" draggable="true" data-groupdrag="${esc(g.id)}" title="Drag to reorder groups" aria-hidden="true">⋮⋮</span>` : ''}<button class="caret" data-act="collapse" data-group="${esc(g.id)}" aria-expanded="${open}" aria-label="Show or hide ${esc(g.name)}"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2"/></svg></button>
           <input class="group-name" data-edit="group-name" data-group="${esc(g.id)}" value="${esc(g.name)}" aria-label="Group name" ${S.canWrite ? '' : 'readonly'}>
           <span class="group-count">${gi.length} ${gi.length === 1 ? 'item' : 'items'}</span>
           ${S.canWrite ? `<button class="icon-btn" data-act="group-color" data-group="${esc(g.id)}">Colour</button>
@@ -1369,7 +1480,10 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     // on big boards build only the groups near the screen now; the scroll check fills in the rest
     const el = $('#content'), top = el ? el.scrollTop : 0, bottom = top + (el ? el.clientHeight : innerHeight) + 900;
     let y = 0;
-    const groups = b.groups.map(g => {
+    // while a search, filter or view narrows the board, groups with nothing in them are left out
+    const narrowed = TV.items.length < S.items.length || !!S.search.trim() || filterCount() > 0;
+    if (S.flash) { const it = TV.items.find(i => i.id === S.flash), list = it ? tvGroupItems({ id: it.group }) : [], k = list.indexOf(it); if (it && k >= (S.shown[it.group] || PAGE)) S.shown[it.group] = k + 1; S.collapsed.delete(it ? it.group : ''); }
+    const groups = b.groups.filter(g => !narrowed || tvGroupItems(g).length).map(g => {
       const gi = tvGroupItems(g), open = !S.collapsed.has(g.id), h = GROUP_HEAD_H + (open ? tvEstimate(g, gi) : 0);
       const fill = !TV.lazy || (y + h > top - 900 && y < bottom); y += h + 26;
       return `<section class="group" data-g="${esc(g.id)}" style="--gc:${esc(g.color)}">${tvGroupHead(g, gi, open)}${open ? (fill ? tvTable(b, g, gi) : tvPlaceholder(g, gi)) : ''}</section>`;
@@ -1377,31 +1491,114 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     const orphans = TV.items.filter(i => !b.groups.some(g => g.id === i.group));
     const orphanNote = orphans.length ? `<p class="rail-note tv-stick">${orphans.length} item(s) belong to a deleted group. Open one to move it.</p>` : '';
     if (TV.lazy) requestAnimationFrame(tvCheck);
-    return `<div class="tv-groups">${groups}</div>` + orphanNote + (S.canWrite ? `<button class="btn add-group tv-stick" data-act="add-group">+ Add group</button>` : '');
+    if (S.flash) requestAnimationFrame(tvShowFlash);
+    const hiddenNote = narrowed && b.groups.some(g => !tvGroupItems(g).length) && !groups ? '<div class="empty"><h3>Nothing matches</h3>Clear the search or filters to see every group.</div>' : '';
+    return hiddenNote + `<div class="tv-groups">${groups}</div>` + orphanNote + (S.canWrite ? `<button class="btn add-group tv-stick" data-act="add-group">+ Add group</button>` : '');
+  }
+  // the item you just added: scroll it into view and flash it (on a sorted board it can land anywhere)
+  function tvShowFlash() {
+    const id = S.flash; if (!id) return;
+    const tr = document.querySelector(`#content tr[data-row="${CSS.escape(id)}"]`);
+    S.flash = null;
+    if (!tr) { const it = itemById(id); if (it && !TV.items.includes(it)) toast(`Added “${it.name}”. It’s hidden by the search or filter.`); return; }
+    const el = $('#content'), r = tr.getBoundingClientRect(), vr = el.getBoundingClientRect();
+    if (r.top < vr.top + 60 || r.bottom > vr.bottom - 40) el.scrollTop += r.top - vr.top - vr.height / 3;
+    TV.newId = id; TV.newUntil = Date.now() + 1800; // kept if the row is redrawn (the server's echo) while it's lit
+    tr.classList.add('mx-flash', 'tv-new'); setTimeout(() => document.querySelectorAll('#content tr.tv-new').forEach(x => x.classList.remove('mx-flash', 'tv-new')), 1800);
   }
   const tvOn = () => S.page === 'board' && S.view === 'table' && !!document.querySelector('#content .tv-groups') && !!board();
-  // Scroll check: fill groups coming into view, empty ones far away, and rebuild the column window when needed.
+  // Rebuild one group's table for new column ranges. When it holds the focus, the focused cell itself is kept (never
+  // detached, so typing, the caret and the pending change survive) and everything around it is swapped in.
+  function tvRebuild(b, tw, g, rs) {
+    const html = tvTable(b, g, tvGroupItems(g), rs), a = document.activeElement;
+    if (!a || a === document.body || !tw.contains(a)) { tw.outerHTML = html; return true; }
+    const tpl = document.createElement('template'); tpl.innerHTML = html;
+    const ntw = tpl.content.firstElementChild, ot = tw.querySelector('table.board'), nt = ntw.querySelector('table.board');
+    const keepTr = a.closest('tr'), oRows = [...ot.rows], nRows = [...nt.rows];
+    if (!keepTr || !ot.contains(keepTr) || oRows.length !== nRows.length) return false;
+    const k = oRows.indexOf(keepTr), ntr = nRows[k];
+    if (!morphRow(keepTr, ntr, a)) return false;
+    tw.dataset.win = ntw.dataset.win; ot.style.width = nt.style.width;
+    ot.querySelector('colgroup').replaceWith(nt.querySelector('colgroup'));
+    oRows.forEach((tr, j) => { if (j !== k) tr.replaceWith(nRows[j]); });
+    return true;
+  }
+  // Move a built table to new column ranges cell by cell: columns still in range stay as they are (so a focused cell,
+  // its caret and a half-typed value survive), columns that left are removed, and only the newly needed ones are built.
+  // Sideways scrolling shifts the window a couple of columns at a time, so each step builds only a thin strip.
+  function tvShift(b, tw, g, rs) {
+    const t = tw.querySelector('table.board'); if (!t) return false;
+    const cells = tvCells(rs), span = cells.length + 2, gi = tvGroupItems(g), want = new Set();
+    cells.forEach(c => { if (!isSp(c)) want.add(String(ciOf(c))); });
+    const sortMark = id => S.sort && S.sort.col === id ? `<span class="th-sort">${S.sort.dir === 'desc' ? '↓' : '↑'}</span>` : '';
+    const thOf = c => `<th class="w-${c.type}" data-ci="${ciOf(c)}"><button class="col-head" data-act="col-menu" data-col="${esc(c.id)}" title="${isLocked(c, b) ? (colEditable(c, b) ? 'Locked: you can still change it' : 'Locked: only admins can change it') + '. ' : ''}${esc(c.title)}: sort, filter or hide">${isLocked(c, b) ? IC.lock : ''}<span class="col-t">${esc(c.title)}</span> ${sortMark(c.id)}${(S.filters[c.id] || []).length ? '<span class="th-filter" title="Filtered"></span>' : ''}</button></th>`;
+    const tdOf = (c, i) => { lazyCells = true; try { return `<td class="c-${c.type} ${c.type === 'number' ? 'num-cell' : ''} ${c.format || ''}" data-ci="${ciOf(c)}">${cellEditor(c, i)}</td>`; } finally { lazyCells = false; } };
+    for (const tr of [...t.rows]) {
+      let gen;
+      if (tr.parentElement.tagName === 'THEAD') gen = c => thOf(c);
+      else if (tr.dataset.row) { const it = itemById(tr.dataset.row); if (!it) return false; gen = c => tdOf(c, it); }
+      else if (tr.classList.contains('sum-row')) gen = c => `<td data-ci="${ciOf(c)}">${summaryCell(c, gi)}</td>`;
+      else { const l = tr.lastElementChild; if (l && l.colSpan > 1) l.colSpan = tr.classList.contains('sub-row') ? span : span - 1; continue; }
+      const kids = [...tr.children], first = kids[0], last = kids[kids.length - 1], have = new Map();
+      for (const td of kids.slice(1, -1)) { const ci = td.dataset.ci; if (ci !== undefined && want.has(ci)) have.set(ci, td); else td.remove(); }
+      const sp = tr.parentElement.tagName === 'THEAD' ? '<th class="tsp"></th>' : '<td class="tsp"></td>';
+      let html = '';
+      for (const c of cells) {
+        if (isSp(c)) { html += sp; continue; }
+        const old = have.get(String(ciOf(c)));
+        if (old) { if (html) { old.insertAdjacentHTML('beforebegin', html); html = ''; } }
+        else html += gen(c);
+      }
+      if (html) last.insertAdjacentHTML('beforebegin', html);
+      void first;
+    }
+    t.querySelector('colgroup').outerHTML = `<colgroup><col style="width:${nameW()}px">${cells.map(c => `<col style="width:${isSp(c) ? c.sp : colW(c)}px">`).join('')}<col></colgroup>`;
+    tw.dataset.win = winKey(rs);
+    return true;
+  }
+  // Swap a row's cells for a new version of it, keeping the cell that holds `a` in place.
+  function morphRow(tr, ntr, a) {
+    const keep = [...tr.children].find(td => td.contains(a)); if (!keep) return false;
+    const key = td => td.dataset.ci !== undefined ? 'c' + td.dataset.ci : td.classList.contains('name-cell') ? 'name' : null;
+    const kk = key(keep), nk = [...ntr.children];
+    const ix = kk ? nk.findIndex(td => key(td) === kk) : (tr.children.length === nk.length ? [...tr.children].indexOf(keep) : -1);
+    if (ix < 0) return false;
+    [...tr.children].forEach(td => { if (td !== keep) td.remove(); });
+    keep.before(...nk.slice(0, ix)); keep.after(...nk.slice(ix + 1));
+    if (kk === 'name') { // the name cell is kept whole; refresh its checkbox and the selection look
+      const cb = keep.querySelector('input.rowcheck'), ncb = nk[ix].querySelector('input.rowcheck'); if (cb && ncb && cb !== a) cb.checked = ncb.checked;
+    }
+    tr.className = ntr.className;
+    return true;
+  }
+  // Scroll check: fill groups coming into view, empty ones far away, and rebuild stale column windows. Only tables on
+  // (or just off) the screen are rebuilt, a few per frame; the others catch up when they scroll into view.
   function tvCheck() {
     if (!tvOn()) return;
-    const b = board(), el = $('#content'), vr = el.getBoundingClientRect(), act = document.activeElement;
-    const keep = tw => act && tw.contains(act) && act !== document.body;
-    if (tvNeedsNewWindow()) {
-      TV.win = tvWindow();
-      document.querySelectorAll('#content .tablewrap[data-tw]').forEach(tw => {
-        if (keep(tw)) return;
-        const g = b.groups.find(x => x.id === tw.dataset.tw); if (g) tw.outerHTML = tvTable(b, g, tvGroupItems(g));
-      });
-    }
-    if (!TV.lazy) return;
-    document.querySelectorAll('#content .tv-ph').forEach(ph => {
+    const b = board(), el = $('#content'), vr = el.getBoundingClientRect(), t0 = performance.now();
+    if (tvNeedsNewWindow()) TV.win = tvWindow();
+    let more = false;
+    const busy = () => { if (performance.now() - t0 > 4) { more = true; return true; } return false; }; // about one table per frame: drawing it is the costly part
+    if (TV.lazy) document.querySelectorAll('#content .tv-ph').forEach(ph => {
       const r = ph.getBoundingClientRect(); if (r.bottom < vr.top - 900 || r.top > vr.bottom + 900) return;
+      if (busy()) return;
       const g = b.groups.find(x => x.id === ph.dataset.ph); if (g) ph.outerHTML = tvTable(b, g, tvGroupItems(g));
     });
-    document.querySelectorAll('#content .tablewrap[data-tw]').forEach(tw => {
-      const r = tw.getBoundingClientRect(); if (r.bottom > vr.top - 2600 && r.top < vr.bottom + 2600) return;
-      if (keep(tw)) return;
-      const g = b.groups.find(x => x.id === tw.dataset.tw); if (g) tw.outerHTML = tvPlaceholder(g, null, Math.round(r.height));
-    });
+    // nearest the middle of the screen first
+    const mid = (vr.top + vr.bottom) / 2;
+    const tws = [...document.querySelectorAll('#content .tablewrap[data-tw]')].map(tw => ({ tw, r: tw.getBoundingClientRect() }));
+    tws.sort((x, y) => Math.abs((x.r.top + x.r.bottom) / 2 - mid) - Math.abs((y.r.top + y.r.bottom) / 2 - mid));
+    for (const { tw, r } of tws) {
+      const g = b.groups.find(x => x.id === tw.dataset.tw); if (!g) continue;
+      const hasFocus = focusCi(tw) >= 0 || tw.contains(document.activeElement);
+      if (TV.lazy && !hasFocus && (r.bottom < vr.top - 2600 || r.top > vr.bottom + 2600)) { tw.outerHTML = tvPlaceholder(g, null, Math.round(r.height)); continue; }
+      if (!hasFocus && (r.bottom < vr.top - 200 || r.top > vr.bottom + 200)) continue; // off screen: rebuilt when it comes into view
+      const rs = tvRanges(tw); if (tw.dataset.win === winKey(rs)) continue;
+      if (!hasFocus && busy()) continue;
+      if (tw._failed === winKey(rs)) continue;
+      if (!tvShift(b, tw, g, rs) && !tvRebuild(b, tw, g, rs)) { if (isEditing()) { tw._failed = winKey(rs); S.pendingRender = true; } else tw.outerHTML = tvTable(b, g, tvGroupItems(g), rs); }
+    }
+    if (more) onContentScroll();
   }
   let tvQueued = false;
   function onContentScroll() {
@@ -1423,21 +1620,35 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
       if (!shouldShow || tr.dataset.group !== it.group) { rebuild.add(tr.dataset.group); if (it) rebuild.add(it.group); continue; }
       let prev = tr.previousElementSibling; while (prev && !prev.dataset.row) prev = prev.previousElementSibling;
       if ((prev ? prev.dataset.row : null) !== (k > 0 ? list[k - 1].id : null)) { rebuild.add(it.group); continue; }
-      if (act && tr.contains(act) && isEditing()) { S.pendingRender = true; continue; }
       const g = b.groups.find(x => x.id === it.group); if (!g) continue;
-      const cells = tvCells(), next = tr.nextElementSibling;
-      if (next && next.dataset.subof === id) next.remove();
-      tr.outerHTML = tvRow(b, g, it, cells, cells.length + 2);
+      const tw = tr.closest('.tablewrap'), cells = tvCells(tw ? rangesOf(tw) : null), next = tr.nextElementSibling;
+      const tpl = document.createElement('template'); tpl.innerHTML = tvRow(b, g, it, cells, cells.length + 2);
+      const [nRow, nSub] = tpl.content.children;
+      const hasSub = next && next.dataset.subof === id;
+      if (hasSub && act && next.contains(act)) { if (tr.contains(act)) continue; tr.replaceWith(nRow); continue; } // typing in a subitem: leave it be
+      if (hasSub) next.remove();
+      if (act && tr.contains(act) && act !== document.body) { if (!morphRow(tr, nRow, act)) { S.pendingRender = true; continue; } }
+      else tr.replaceWith(nRow);
+      if (nSub) tr.isConnected ? tr.after(nSub) : nRow.after(nSub);
     }
     for (const gid of touched) {
-      const g = b.groups.find(x => x.id === gid), sec = document.querySelector(`#content section.group[data-g="${CSS.escape(gid)}"]`); if (!g || !sec) continue;
+      const g = b.groups.find(x => x.id === gid), sec = document.querySelector(`#content section.group[data-g="${CSS.escape(gid)}"]`); if (!g) continue;
+      if (!sec) { if ((byGroup.get(gid) || []).length) scheduleRender(); continue; } // a group hidden by the filter just got an item
       const gi = byGroup.get(gid) || [], tw = sec.querySelector('.tablewrap[data-tw]'), ph = sec.querySelector('.tv-ph');
-      if (tw && rebuild.has(gid)) { if (act && tw.contains(act) && isEditing()) S.pendingRender = true; else tw.outerHTML = tvTable(b, g, gi); }
-      else if (tw) { const sr = tw.querySelector('tr.sum-row'); if (sr) sr.outerHTML = tvSumRow(gi, tvCells()); }
+      if (tw && rebuild.has(gid)) { if (!tvRebuild(b, tw, g, tvRanges(tw))) { if (isEditing()) S.pendingRender = true; else tw.outerHTML = tvTable(b, g, gi, tvRanges(tw)); } }
+      else if (tw) { const sr = tw.querySelector('tr.sum-row'); if (sr) sr.outerHTML = tvSumRow(gi, tvCells(rangesOf(tw))); const all = sec.querySelector('input[data-selgroup]'); if (all) all.checked = gi.length > 0 && gi.every(i => S.selected.has(i.id)); }
       else if (ph) ph.style.height = tvEstimate(g, gi) + 'px';
+      else if (gi.length && !S.collapsed.has(gid)) { scheduleRender(); }
       const cnt = sec.querySelector('.group-head .group-count'); if (cnt) cnt.textContent = `${gi.length} ${gi.length === 1 ? 'item' : 'items'}`;
     }
     const hc = $('#item-count'); if (hc) hc.textContent = `${vis.length} of ${S.items.length} items`;
+  }
+  // The selection changed: on the table just flip the rows' look and checkboxes (and the bulk bar), no re-render.
+  function selChanged() {
+    if (!tvOn()) { renderContent(); renderLayer(); return; }
+    document.querySelectorAll('#content tr[data-row]').forEach(tr => { const on = S.selected.has(tr.dataset.row); tr.classList.toggle('sel', on); const cb = tr.querySelector('input[data-sel]'); if (cb && cb.checked !== on) cb.checked = on; });
+    document.querySelectorAll('#content input[data-selgroup]').forEach(cb => { const gi = TV.items.filter(i => i.group === cb.dataset.selgroup); cb.checked = gi.length > 0 && gi.every(i => S.selected.has(i.id)); });
+    renderLayer();
   }
   // Live changes from other people, gathered for a moment: table rows are patched in place; other views re-render once.
   const liveQ = new Set(); let liveTimer = null;
@@ -1479,12 +1690,12 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
       const chip = i => { const l = sc && labelOf(sc, (i.values || {})[sc.id]); return `<button class="cal-chip ${l ? '' : 'plain'}" style="${l ? '--c:' + esc(l.color) : ''}" data-act="open" data-item="${esc(i.id)}">${esc(i.name)}${l ? ` · ${esc(l.label)}` : ''}</button>`; };
       const days2 = keys.map(k => `<div class="ag-day ${k === today ? 'today' : ''}"><div class="ag-date">${esc(new Date(k + 'T12:00:00').toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' }))}${k === today ? ' · Today' : ''}</div>${byDay[k].map(chip).join('')}</div>`).join('');
       return `<div class="cal-head"><h3>${esc(first.toLocaleString('en-CA', { month: 'long', year: 'numeric' }))}</h3>
-      <button class="btn" data-act="cal-nav" data-d="-1" aria-label="Previous month">‹</button><button class="btn" data-act="cal-nav" data-d="0">Today</button><button class="btn" data-act="cal-nav" data-d="1" aria-label="Next month">›</button>
+      <span class="cal-nav"><button class="btn" data-act="cal-nav" data-d="-1" aria-label="Previous month">‹</button><button class="btn" data-act="cal-nav" data-d="0">Today</button><button class="btn" data-act="cal-nav" data-d="1" aria-label="Next month">›</button></span>
       <span class="group-count">${inMonth} by ${esc(col.title)}</span></div>
       <div class="agenda">${days2 || `<div class="empty"><h3>Nothing this month</h3>Items show up here on their ${esc(col.title)} date.</div>`}</div>`;
     }
     return `<div class="cal-head"><h3>${esc(first.toLocaleString('en-CA', { month: 'long', year: 'numeric' }))}</h3>
-      <button class="btn" data-act="cal-nav" data-d="-1" aria-label="Previous month">‹</button><button class="btn" data-act="cal-nav" data-d="0">Today</button><button class="btn" data-act="cal-nav" data-d="1" aria-label="Next month">›</button>
+      <span class="cal-nav"><button class="btn" data-act="cal-nav" data-d="-1" aria-label="Previous month">‹</button><button class="btn" data-act="cal-nav" data-d="0">Today</button><button class="btn" data-act="cal-nav" data-d="1" aria-label="Next month">›</button></span>
       <span class="group-count">${inMonth} items this month by ${esc(col.title)}</span></div>
       <div class="calwrap"><div class="cal">${dow}${cells}</div></div>`;
   }
@@ -1585,30 +1796,70 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     const oldDrawer = layer.querySelector('.drawer'), oldKey = oldDrawer ? oldDrawer.dataset.key : '', oldBody = layer.querySelector('.drawer-body');
     const keepScroll = oldBody ? oldBody.scrollTop : 0, hadFocus = !!(oldDrawer && oldDrawer.contains(document.activeElement));
     if (!oldDrawer && S.openItem) drawerReturn = document.activeElement && document.activeElement !== document.body ? opener(document.activeElement) : drawerReturn;
-    layer.innerHTML = html;
+    const oldModal = layer.querySelector('.modal'), modalKey = oldModal ? oldModal.dataset.mkey : '', modalScroll = oldModal ? oldModal.scrollTop : 0, wrapScroll = oldModal ? oldModal.parentElement.scrollTop : 0;
+    const oldTabs = layer.querySelector('.drawer-tabs'), tabsScroll = oldTabs ? oldTabs.scrollLeft : 0;
+    const tpl = document.createElement('template'); tpl.innerHTML = html;
+    const nd = tpl.content.querySelector('.drawer'), oldScrim = layer.querySelector('.scrim'), ns = tpl.content.querySelector('.scrim');
+    if (oldDrawer && nd && oldDrawer.getAttribute('aria-label') === nd.getAttribute('aria-label') && oldKey.split('|')[0] === nd.dataset.key.split('|')[0]) {
+      // the same item (another tab, a live change): keep the drawer and its backdrop and swap only what's inside,
+      // so the frosted panel isn't rebuilt and nothing slides in again
+      const keep = new Set([oldDrawer]); if (oldScrim && ns) keep.add(oldScrim);
+      const mxNew = oldDrawer.classList.contains('mx-new'); for (const at of [...nd.attributes]) oldDrawer.setAttribute(at.name, at.value); if (mxNew) oldDrawer.classList.add('mx-new');
+      oldDrawer.replaceChildren(...nd.childNodes);
+      [...layer.children].forEach(x => { if (!keep.has(x)) x.remove(); });
+      let cur = null;
+      for (const x of [...tpl.content.children]) {
+        const k = x.classList.contains('drawer') ? oldDrawer : x.classList.contains('scrim') && keep.has(oldScrim) ? oldScrim : x;
+        if (k === x) { if (cur) cur.after(x); else layer.prepend(x); }
+        cur = k;
+      }
+    } else layer.replaceChildren(tpl.content);
     if (draft && $('#update-text')) $('#update-text').value = draft;
+    const nm = layer.querySelector('.modal'); if (nm && S.modal) { nm.dataset.mkey = S.modal.type + '|' + (S.boardId || ''); if (nm.dataset.mkey === modalKey) { nm.scrollTop = modalScroll; nm.parentElement.scrollTop = wrapScroll; } }
     const dw = layer.querySelector('.drawer');
     if (dw) {
       const key = dw.dataset.key, body = dw.querySelector('.drawer-body');
       if (key === oldKey && body) body.scrollTop = keepScroll; // a live update: stay where you were
-      const tab = dw.querySelector('.drawer-tab[aria-selected="true"]'); if (tab && key !== oldKey && tab.scrollIntoView) tab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      // the tab strip: stays where it was, and the chosen tab is brought into view
+      const tabs = dw.querySelector('.drawer-tabs'), tab = dw.querySelector('.drawer-tab[aria-selected="true"]');
+      if (tabs && tab && key !== oldKey) {
+        tabs.scrollLeft = oldDrawer && oldKey.split('|')[0] === key.split('|')[0] ? tabsScroll : 0;
+        if (tabs.scrollWidth > tabs.clientWidth) { const l = tab.offsetLeft - tabs.offsetLeft, r = l + tab.offsetWidth; if (l < tabs.scrollLeft + 8) tabs.scrollLeft = Math.max(0, l - 24); else if (r > tabs.scrollLeft + tabs.clientWidth - 8) tabs.scrollLeft = r - tabs.clientWidth + 24; }
+      }
       if (!S.modal && !S.pop && (!oldDrawer || hadFocus) && !dw.contains(document.activeElement)) dw.focus({ preventScroll: true });
     } else if (oldDrawer && !S.openItem) {
       // closed: put focus back on what opened it
       const back = drawerReturn && document.querySelector(drawerReturn); drawerReturn = null;
       if (back && (!document.activeElement || document.activeElement === document.body)) back.focus({ preventScroll: true });
     }
+    // a pop-up always fits on the screen (above the phone's bottom bar), whatever its length
+    const pop = layer.querySelector('.pop');
+    if (pop) {
+      const r = pop.getBoundingClientRect(), bot = innerHeight - (isNarrow() ? 92 : 8);
+      if (r.height > bot - 8) pop.style.maxHeight = (bot - 8) + 'px';
+      const h = Math.min(r.height, bot - 8); if (r.top + h > bot) pop.style.top = Math.max(8, bot - h) + 'px';
+      if (r.right > innerWidth - 8) pop.style.left = Math.max(8, innerWidth - 8 - r.width) + 'px';
+    }
     if (window.SolverExt) SolverExt.afterLayer(); // mounts the doc editor and other live panels
   }
 
+  // Integrations: a failed add says why right by its button, and what was typed stays in the boxes
+  function intErr(sec, msg) {
+    const el = document.querySelector(`#layer [data-int-err="${sec}"]`);
+    if (!el) { if (S.modal) { S.modal.msg = esc(msg); renderLayer(); } return; }
+    el.textContent = msg; el.hidden = false; el.scrollIntoView({ block: 'nearest' });
+  }
   function renderPop(b) {
     const p = S.pop;
     const style = `left:${Math.min(p.x, innerWidth - 236)}px;top:${Math.min(p.y, innerHeight - 320)}px`;
     if (p.type === 'status') {
       const col = (p.sub ? (b.subColumns || []) : b.columns).find(c => c.id === p.col);
       if (!col) return '';
+      const labels = (col.labels || []).filter(l => !l.hidden);
+      // long label lists (Monday boards can have 40) get a find box; the list scrolls either way
       return `<div class="pop" style="${style}" data-pop>
-        ${(col.labels || []).filter(l => !l.hidden).map(l => `<button class="chip" style="--c:${esc(l.color)}" title="${esc(l.desc || '')}" data-act="pick-status" data-val="${esc(l.id)}">${esc(l.label)}</button>`).join('')}
+        ${labels.length > 12 ? `<div class="pop-filter"><input id="pop-q" type="search" placeholder="Find a label" aria-label="Find a label" autocomplete="off"></div>` : ''}
+        ${labels.map(l => `<button class="chip" style="--c:${esc(l.color)}" title="${esc(l.desc || '')}" data-act="pick-status" data-val="${esc(l.id)}">${esc(l.label)}</button>`).join('')}
         <button class="chip none" data-act="pick-status" data-val="">Clear</button>
         ${S.canWrite ? `<input id="new-label" placeholder="+ New label, press Enter" aria-label="New label">` : ''}
       </div>`;
@@ -1759,16 +2010,16 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
         ${m.msg ? `<div class="rule"><div class="rule-text">${m.msg}</div></div>` : ''}
         <h3 style="font-size:16px">API keys</h3><p>For tools that read or change leads (n8n, Zapier, scripts).</p>
         ${keys || '<p class="rail-note">No keys yet.</p>'}
-        <div class="form-row"><input class="field-input" id="ik-name" placeholder="What will use it, e.g. n8n" style="flex:1 1 180px"><select class="field-input" id="ik-scope"><option value="write">Read and write</option><option value="read">Read only</option></select><button class="btn primary" data-act="int-key">Create key</button></div>
+        <div class="form-row"><input class="field-input" id="ik-name" placeholder="What will use it, e.g. n8n" style="flex:1 1 180px"><select class="field-input" id="ik-scope"><option value="write">Read and write</option><option value="read">Read only</option></select><button class="btn primary" data-act="int-key">Create key</button></div><p class="int-err" data-int-err="key" role="alert" hidden></p>
         <h3 style="font-size:16px">Outgoing webhooks</h3><p>Solver.ca tells another tool the moment something happens.</p>
         ${outs || '<p class="rail-note">None yet.</p>'}
         <div class="form-row"><input class="field-input" id="io-name" placeholder="Name, e.g. n8n new leads" style="flex:1 1 160px"><input class="field-input" id="io-url" placeholder="https://…" style="flex:2 1 220px"></div>
         <div class="form-row">${EV.map(e => `<label class="pop-check" style="padding:2px 6px"><input type="checkbox" class="io-ev" value="${e}" ${e === 'item.created' ? 'checked' : ''}>${evName[e]}</label>`).join('')}</div>
-        <div class="form-row">${boardSel('io-board', true)}${I.hooks.some(h => h.kind === 'out') ? `<select class="field-input" id="io-secret" aria-label="Signing secret"><option value="">New signing secret</option>${I.hooks.filter(h => h.kind === 'out').map(h => `<option value="${esc(h.id)}">Same secret as ${esc(h.name)}</option>`).join('')}</select>` : ''}<button class="btn primary" data-act="int-out">Add webhook</button></div>
+        <div class="form-row">${boardSel('io-board', true)}${I.hooks.some(h => h.kind === 'out') ? `<select class="field-input" id="io-secret" aria-label="Signing secret"><option value="">New signing secret</option>${I.hooks.filter(h => h.kind === 'out').map(h => `<option value="${esc(h.id)}">Same secret as ${esc(h.name)}</option>`).join('')}</select>` : ''}<button class="btn primary" data-act="int-out">Add webhook</button></div><p class="int-err" data-int-err="out" role="alert" hidden></p>
         <h3 style="font-size:16px">Incoming lead links</h3><p>A private web address that turns anything posted to it (a website form, a Facebook lead form through Zapier or n8n) into a new item on a board. Fields are matched to columns by name.</p>
         ${ins || '<p class="rail-note">None yet.</p>'}
         <div class="form-row"><input class="field-input" id="ii-name" placeholder="Name, e.g. Website form" style="flex:1 1 160px">${boardSel('ii-board', false)}<input class="field-input" id="ii-group" placeholder="Group (optional)" style="flex:1 1 140px"></div>
-        <div class="form-row"><label class="pop-check"><input type="checkbox" id="ii-dedupe" checked>Skip if the phone number is already on the board</label><button class="btn primary" data-act="int-in">Create lead link</button></div>
+        <div class="form-row"><label class="pop-check"><input type="checkbox" id="ii-dedupe" checked>Skip if the phone number is already on the board</label><button class="btn primary" data-act="int-in">Create lead link</button></div><p class="int-err" data-int-err="in" role="alert" hidden></p>
         <div><button class="btn" data-act="close-modal-btn">Done</button></div>`;
     }
     if (m.type === 'board-sheet') return b ? boardSheet(b) : '';
@@ -1808,7 +2059,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     if (m.type === 'notifs') {
       const bname = id => (S.boards.find(x => x.id === id) || {}).name || '';
       const rows = S.notifs.items.map(n => `<div class="rule notif ${n.read ? 'read' : 'unread'}"><button class="notif-open" data-act="notif-open" data-id="${esc(n.id)}"><b>${esc(n.text)}</b><span class="card-meta"><span>${esc(fmtTime(n.at))}</span>${bname(n.board) ? `<span>${esc(bname(n.board))}</span>` : ''}</span></button>${n.read ? '' : `<button class="icon-btn" data-act="notif-read" data-id="${esc(n.id)}">Mark read</button>`}</div>`).join('');
-      return `<h3>Notifications</h3><p>Mentions, assignments, automation alerts and date reminders for you. They stay inside Solver.ca.</p>
+      return `${m.fromProfile ? '<div class="pf-head"><button class="pf-back" data-act="notifs-back">‹ Back</button><h3 class="pf-title">Notifications</h3><button class="icon-round pf-x" data-act="close-modal-btn" aria-label="Close">✕</button></div>' : '<h3>Notifications</h3>'}<p>Mentions, assignments, automation alerts and date reminders for you. They stay inside Solver.ca.</p>
         ${rows || '<p class="rail-note">Nothing yet. You’ll see it here when someone @mentions or assigns you.</p>'}
         <div class="form-row">${S.notifs.unread ? '<button class="btn" data-act="notif-all">Mark all read</button>' : ''}<button class="btn" data-act="close-modal-btn">Close</button></div>`;
     }
@@ -1826,7 +2077,8 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
         ${renderPermsEditor(b)}
         ${b.mondayId ? `<h3 style="font-size:16px">Copy from Monday</h3>
         <p>${b.source === 'monday' ? 'Solver.ca copies this board’s changes from Monday every 5 minutes. When the team works this board in Solver.ca instead (for example, a rep who has moved), stop the copy so Monday can never overwrite their work.' : 'This board lives in Solver.ca. Changes made in Monday are no longer copied here.'}</p>
-        <div class="form-row"><button class="toggle" data-act="board-source" data-v="monday" aria-pressed="${b.source === 'monday'}">Keep copying from Monday</button><button class="toggle" data-act="board-source" data-v="solver" aria-pressed="${b.source !== 'monday'}">Lives in Solver.ca</button></div>` : ''}
+        ${S.confirmDelete === 'src:' + b.id ? '<p class="src-warn" role="alert"><b>Monday will overwrite work done here.</b> Every 5 minutes Solver.ca copies this board from Monday again, and changes made in Solver.ca since the copy stopped can be replaced by Monday’s values. Click again to turn the copy back on.</p>' : ''}
+        <div class="form-row"><button class="toggle" data-act="board-source" data-v="monday" aria-pressed="${b.source === 'monday'}">${S.confirmDelete === 'src:' + b.id ? 'Click again: copy from Monday' : 'Keep copying from Monday'}</button><button class="toggle" data-act="board-source" data-v="solver" aria-pressed="${b.source !== 'monday'}">Lives in Solver.ca</button></div>` : ''}
         <div><button class="btn" data-act="close-modal-btn">Done</button></div>`;
     }
     if (m.type === 'team') {
@@ -1944,7 +2196,8 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
         const v = { id: rid('v'), name, rules, sort: S.sort, columns: b.columns.filter(c => !S.hidden.has(c.id)).map(c => c.id), source: 'keystone', ...(window.KSViews && KSViews.has(S.view) ? { type: S.view, settings: KSViews.settings(S.view) } : {}) }; const views = [...(b.views || []), v]; patchBoard({ views }); localBoard({ views }); S.filters = {}; S.sort = null; S.person = ''; S.viewId = v.id; S.modal = null; toast(`Saved view “${name}”`); render(); break; }
       case 'delete-view': { if (S.confirmDelete !== 'v:' + S.viewId) { S.confirmDelete = 'v:' + S.viewId; renderHead(); return; } S.confirmDelete = null; const views = (b.views || []).filter(v => v.id !== S.viewId); S.viewId = null; patchBoard({ views }); localBoard({ views }); break; }
       case 'view': S.viewId = null; S.view = t.dataset.v; try { localStorage.setItem('ks-view', S.view); } catch (x) {} render(); break;
-      case 'notifs': S.pop = null; S.modal = { type: 'notifs' }; renderLayer(); loadNotifs(); break;
+      case 'notifs': { const fromProfile = !!(S.modal && S.modal.type === 'profile'); S.pop = null; S.modal = { type: 'notifs', fromProfile }; renderLayer(); loadNotifs(); break; }
+      case 'notifs-back': S.modal = { type: 'profile' }; renderLayer(); break;
       case 'notif-read': markRead([t.dataset.id]); break;
       case 'notif-all': markRead(null); break;
       case 'notif-open': {
@@ -1958,7 +2211,10 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
         render(); break;
       }
       case 'access': S.pop = null; S.modal = { type: 'access' }; renderLayer(); if (!S.team.length && window.KS) KS.users().then(l => { S.team = l; renderLayer(); }).catch(() => {}); break;
-      case 'board-source': { const v = t.dataset.v === 'monday' ? 'monday' : 'solver'; if ((b.source === 'monday') === (v === 'monday')) break; patchBoard({ source: v }); localBoard({ source: v }); toast(v === 'monday' ? 'Copying from Monday again' : 'This board now lives in Solver.ca. Monday changes are no longer copied.'); renderLayer(); break; }
+      case 'board-source': { const v = t.dataset.v === 'monday' ? 'monday' : 'solver'; if ((b.source === 'monday') === (v === 'monday')) { S.confirmDelete = null; renderLayer(); break; }
+        // turning the Monday copy back on can overwrite work done in Solver.ca: ask once more
+        if (v === 'monday' && S.confirmDelete !== 'src:' + b.id) { S.confirmDelete = 'src:' + b.id; renderLayer(); break; }
+        S.confirmDelete = null; patchBoard({ source: v }); localBoard({ source: v }); toast(v === 'monday' ? 'Copying from Monday again' : 'This board now lives in Solver.ca. Monday changes are no longer copied.'); renderLayer(); break; }
       case 'access-set': { const ac = { ...(b.access || { members: [] }), private: t.dataset.private === '1' }; ac.members = ac.members || []; saveAccess(ac); break; }
       case 'access-add': {
         const e2 = ($('#acc-email').value || '').trim().toLowerCase();
@@ -1981,11 +2237,11 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
       case 'run-import': runImport(); break;
       case 'logout': window.KS && KS.logout(); break;
       case 'integrations': S.pop = null; S.modal = { type: 'integrations', data: null, msg: '' }; renderLayer(); loadIntegrations(); break;
-      case 'int-key': { const name = $('#ik-name').value, scope = $('#ik-scope').value; KS.api('POST', '/api/admin/keys', { name, scope }).then(r => { S.modal.msg = `New key for <b>${esc(name)}</b>: <code style="word-break:break-all;user-select:all">${esc(r.key)}</code><br>Copy it now. It won’t be shown again.`; loadIntegrations(); }).catch(e => { S.modal.msg = esc(e.message); renderLayer(); }); break; }
+      case 'int-key': { const name = $('#ik-name').value, scope = $('#ik-scope').value; KS.api('POST', '/api/admin/keys', { name, scope }).then(r => { S.modal.msg = `New key for <b>${esc(name)}</b>: <code style="word-break:break-all;user-select:all">${esc(r.key)}</code><br>Copy it now. It won’t be shown again.`; loadIntegrations(); }).catch(e => intErr('key', e.message)); break; }
       case 'int-revoke': KS.api('DELETE', '/api/admin/keys/' + t.dataset.id).then(loadIntegrations); break;
-      case 'int-out': { const events = [...document.querySelectorAll('.io-ev:checked')].map(x => x.value); KS.api('POST', '/api/admin/hooks', { kind: 'out', name: $('#io-name').value, url: $('#io-url').value, events, board: $('#io-board').value, sameSecretAs: ($('#io-secret') || {}).value || undefined }).then(r => { S.modal.msg = r.secret ? `Webhook added. Its signing secret is <code style="word-break:break-all;user-select:all">${esc(r.secret)}</code>. Copy it now if the receiving tool checks the X-Solver-Signature header.` : `Webhook added. ${esc(r.note || '')}`; loadIntegrations(); }).catch(e => { S.modal.msg = esc(e.message); renderLayer(); }); break; }
-      case 'int-in': { const bd = S.boards.find(x => x.id === $('#ii-board').value); const gname = $('#ii-group').value.trim(); const g = gname && bd && bd.groups.find(x => x.name.toLowerCase() === gname.toLowerCase()); if (gname && !g) { S.modal.msg = `No group called “${esc(gname)}” on ${esc(bd ? bd.name : 'that board')}.`; renderLayer(); break; }
-        const phone = bd && bd.columns.find(c => c.type === 'phone'); KS.api('POST', '/api/admin/hooks', { kind: 'in', name: $('#ii-name').value, board: $('#ii-board').value, group: g ? g.id : '', dedupe: $('#ii-dedupe').checked && phone ? phone.id : '' }).then(() => { S.modal.msg = 'Lead link created. Copy it below and paste it into your form tool.'; loadIntegrations(); }).catch(e => { S.modal.msg = esc(e.message); renderLayer(); }); break; }
+      case 'int-out': { const events = [...document.querySelectorAll('.io-ev:checked')].map(x => x.value); KS.api('POST', '/api/admin/hooks', { kind: 'out', name: $('#io-name').value, url: $('#io-url').value, events, board: $('#io-board').value, sameSecretAs: ($('#io-secret') || {}).value || undefined }).then(r => { S.modal.msg = r.secret ? `Webhook added. Its signing secret is <code style="word-break:break-all;user-select:all">${esc(r.secret)}</code>. Copy it now if the receiving tool checks the X-Solver-Signature header.` : `Webhook added. ${esc(r.note || '')}`; loadIntegrations(); }).catch(e => intErr('out', e.message)); break; }
+      case 'int-in': { const bd = S.boards.find(x => x.id === $('#ii-board').value); const gname = $('#ii-group').value.trim(); const g = gname && bd && bd.groups.find(x => x.name.toLowerCase() === gname.toLowerCase()); if (gname && !g) { intErr('in', `No group called “${gname}” on ${bd ? bd.name : 'that board'}.`); break; }
+        const phone = bd && bd.columns.find(c => c.type === 'phone'); KS.api('POST', '/api/admin/hooks', { kind: 'in', name: $('#ii-name').value, board: $('#ii-board').value, group: g ? g.id : '', dedupe: $('#ii-dedupe').checked && phone ? phone.id : '' }).then(() => { S.modal.msg = 'Lead link created. Copy it below and paste it into your form tool.'; loadIntegrations(); }).catch(e => intErr('in', e.message)); break; }
       case 'int-test': KS.api('POST', '/api/admin/hooks/' + t.dataset.id + '/test', {}).then(r => { S.modal.msg = r.status >= 200 && r.status < 300 ? `Test delivered (${r.status}).` : `The other tool answered ${r.status || 'nothing'}. Check the address.`; loadIntegrations(); }); break;
       case 'int-toggle': KS.api('PATCH', '/api/admin/hooks/' + t.dataset.id, { active: t.dataset.on !== '1' }).then(loadIntegrations); break;
       case 'int-del': KS.api('DELETE', '/api/admin/hooks/' + t.dataset.id).then(loadIntegrations); break;
@@ -2006,7 +2262,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
       case 'pick-status': { const p = S.pop; S.pop = null; if (p.sub) { setSub(p.item, p.sub, p.col, t.dataset.val); renderLayer(); break; } const t0 = Date.now(); (p.items || [p.item]).forEach(id => setValue(id, p.col, t.dataset.val)); if (p.items && fx('bulkEdited', b, p.items, t0, `Updated ${p.items.length} items`) === undefined) toast(`Updated ${p.items.length} items`); renderLayer(); break; }
       case 'group-color': { const r = t.getBoundingClientRect(); S.pop = { type: 'color', group: t.dataset.group, x: r.left, y: r.bottom + 4 }; renderLayer(); break; }
       case 'pick-color': { const g = S.pop.group; S.pop = null; patchBoard({ groups: b.groups.map(x => x.id === g ? { ...x, color: t.dataset.val } : x) }); localBoard({ groups: b.groups.map(x => x.id === g ? { ...x, color: t.dataset.val } : x) }); break; }
-      case 'add-group': { const g = { id: rid('g'), name: 'New group', color: PALETTE[b.groups.length % PALETTE.length] }; const groups = [...b.groups, g]; patchBoard({ groups }); localBoard({ groups }); break; }
+      case 'add-group': { const g = { id: rid('g'), name: 'New group', color: PALETTE[b.groups.length % PALETTE.length] }; const groups = [...b.groups, g]; patchBoard({ groups }); localBoard({ groups }); const gn = document.querySelector(`#content input.group-name[data-group="${CSS.escape(g.id)}"]`); if (gn) { gn.scrollIntoView({ block: 'nearest' }); gn.focus({ preventScroll: true }); gn.select(); } break; }
       case 'delete-group': {
         const g = t.dataset.group, has = S.items.some(i => i.group === g);
         if (has && !window.SolverFeatures) { toast('Move or delete the leads in this group first.'); return; }
@@ -2046,7 +2302,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
       case 'person': { if (!colEditable(b && b.columns.find(c => c.id === t.dataset.col))) return; const r = t.getBoundingClientRect(); S.pop = { type: 'person', item: t.dataset.item, col: t.dataset.col, x: r.left, y: r.bottom + 4, q: '' }; renderLayer(); setTimeout(() => $('#person-q') && $('#person-q').focus(), 0); break; }
       case 'dropdown': { if (!colEditable(b && b.columns.find(c => c.id === t.dataset.col))) return; const r = t.getBoundingClientRect(); S.pop = { type: 'dropdown', item: t.dataset.item, col: t.dataset.col, x: r.left, y: r.bottom + 4 }; renderLayer(); break; }
       case 'col-button': runButton(t.dataset.item, t.dataset.col); break;
-      case 'dtab': S.drawerTab = t.dataset.tab; renderLayer(); fillNames(); break;
+      case 'dtab': { S.drawerTab = t.dataset.tab; renderLayer(); fillNames(); const st = document.querySelector('#layer .drawer-tab[aria-selected="true"]'); if (st) st.focus({ preventScroll: true }); break; }
       case 'dup-item': { const i = itemById(t.dataset.item); if (i) { duplicateItem(i, true); } break; }
       case 'cal-nav': {
         const d = Number(t.dataset.d), base = S.calMonth ? new Date(S.calMonth + '-15T12:00:00') : new Date();
@@ -2180,8 +2436,8 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     if (t.id === 'kanban-col') { S.kanbanCol = t.value; return renderContent(); }
     if (t.id === 'cal-col') { S.calCol = t.value; return renderContent(); }
     if (t.id === 'ws-select') { S.ws = t.value; try { localStorage.setItem('ks-ws', S.ws); } catch (x) {} const first = wsBoards()[0]; S.summary = null; if (first) selectBoard(first.id); loadSummary(true); render(); return; }
-    if (t.dataset && t.dataset.sel) { t.checked ? S.selected.add(t.dataset.sel) : S.selected.delete(t.dataset.sel); S.confirmDelete = null; renderContent(); renderLayer(); return; }
-    if (t.dataset && t.dataset.selgroup) { visibleItems().filter(i => i.group === t.dataset.selgroup).forEach(i => t.checked ? S.selected.add(i.id) : S.selected.delete(i.id)); renderContent(); renderLayer(); return; }
+    if (t.dataset && t.dataset.sel) { t.checked ? S.selected.add(t.dataset.sel) : S.selected.delete(t.dataset.sel); S.confirmDelete = null; selChanged(); return; }
+    if (t.dataset && t.dataset.selgroup) { visibleItems().filter(i => i.group === t.dataset.selgroup).forEach(i => t.checked ? S.selected.add(i.id) : S.selected.delete(i.id)); selChanged(); return; }
     if (t.dataset && t.dataset.fcol) { const c = t.dataset.fcol, v = t.dataset.fval; const cur = new Set(S.filters[c] || []); t.checked ? cur.add(v) : cur.delete(v); S.filters[c] = [...cur]; S.shown = {}; renderHead(); renderContent(); return; }
     if (t.dataset && t.dataset.showcol) { S.hidden.delete(t.dataset.showcol); saveHidden(); if (!S.hidden.size) S.pop = null; render(); return; }
     if (t.dataset && t.dataset.ptoggle !== undefined && S.pop && S.pop.type === 'person') {
@@ -2221,7 +2477,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
       const i = itemById(t.dataset.item), v = t.value.trim();
       if (!i || !v || v === i.name) { t.value = i ? i.name : t.value; return; }
       const activity = act(i, `Renamed from “${i.name}”`); i.name = v; i.activity = activity;
-      patchItem(i.id, { name: v, activity }); scheduleRender(); return;
+      patchItem(i.id, { name: v, activity }); if (tvOn()) liveChanged([i.id]); else scheduleRender(); return;
     }
     if (ed === 'group') {
       const i = itemById(t.dataset.item), g = b.groups.find(x => x.id === t.value); if (!i || !g) return;
@@ -2238,6 +2494,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     if (e.target.id === 'search') { S.search = e.target.value; S.shown = {}; renderContent(); }
     if (e.target.id === 'acc-email' && S.modal) S.modal.email = e.target.value; // survives live re-renders while typing
     if (e.target.id === 'board-filter') { S.boardFilter = e.target.value; renderRail(); }
+    if (e.target.id === 'pop-q') { const q = e.target.value.trim().toLowerCase(); e.target.closest('.pop').querySelectorAll('.chip[data-val]:not(.none)').forEach(c => { c.hidden = !!q && !c.textContent.toLowerCase().includes(q); }); return; }
     if (e.target.id === 'person-q' && S.pop) { S.pop.q = e.target.value; const pos = e.target.selectionStart; renderLayer(); const el = $('#person-q'); if (el) { el.focus(); el.setSelectionRange(pos, pos); } }
   });
 
@@ -2266,6 +2523,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     if (t.dataset && t.dataset.actKey === 'add-item') { const v = t.value; const g = t.dataset.group; t.value = ''; t.blur(); addItem(g, v, false); return; }
     if (t.dataset && t.dataset.actKey === 'add-sub') { const v = t.value.trim(); const item = itemById(t.dataset.item); if (!v || !item) return; t.value = ''; const sub = { id: rid('s'), name: v, values: {} }; const subs = [...(item.subitems || []), sub]; item.subitems = subs; S.expanded.add(item.id); const a1 = act(item, `Added subitem “${v}”`); item.activity = a1; patchItem(item.id, { $append: { subitems: [sub], activity: [a1[0]] } }); const inDrawer = !!t.closest('.drawer'); render(); const again = document.querySelector(`${inDrawer ? '.drawer ' : ''}[data-act-key="add-sub"][data-item="${item.id}"]`); if (again) again.focus(); return; }
     if (t.id === 'new-board') { createBoard(t.value); t.value = ''; return; }
+    if (t.id === 'pop-q') { const c = t.closest('.pop').querySelector('.chip[data-val]:not(.none):not([hidden])'); if (c) c.click(); return; }
     if (t.id === 'person-q' && S.pop && S.pop.type === 'person') {
       const n = t.value.trim(); if (!n) return; const p = S.pop, i = itemById(p.item); if (!i) return;
       const cur = splitPeople((i.values || {})[p.col]); if (!cur.includes(n)) setValue(p.item, p.col, [...cur, n].join(', '));
@@ -2285,13 +2543,18 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
   document.addEventListener('dragstart', e => {
     const r = e.target.closest && e.target.closest('[data-rowdrag]');
     const c = e.target.closest && e.target.closest('[data-drag]');
+    const gd = e.target.closest && e.target.closest('[data-groupdrag]');
+    if (gd) { S.dragKind = 'group'; e.dataTransfer.setData('text/plain', gd.dataset.groupdrag); e.dataTransfer.effectAllowed = 'move'; const h = gd.closest('.group-head'); if (h) e.dataTransfer.setDragImage(h, 20, 18); return; }
     if (r) { S.dragKind = 'row'; e.dataTransfer.setData('text/plain', r.dataset.rowdrag); e.dataTransfer.effectAllowed = 'move'; const tr = r.closest('tr'); if (tr) e.dataTransfer.setDragImage(tr, 20, 18); }
     else if (c) { S.dragKind = 'card'; e.dataTransfer.setData('text/plain', c.dataset.drag); e.dataTransfer.effectAllowed = 'move'; }
   });
   document.addEventListener('dragend', () => { S.dragKind = null; clearDrop(); });
   document.addEventListener('dragover', e => {
     if (!e.target.closest) return;
-    if (S.dragKind === 'row') {
+    if (S.dragKind === 'group') {
+      const sec = e.target.closest('#content section.group[data-g]'); if (!sec) return; e.preventDefault(); clearDrop();
+      const h = sec.querySelector('.group-head'); if (h) h.classList.add('drop-target');
+    } else if (S.dragKind === 'row') {
       const tgt = e.target.closest('tr[data-row]') || e.target.closest('[data-dropgroup]');
       if (!tgt) return; e.preventDefault(); clearDrop(); tgt.classList.add('drop-target');
     } else if (S.dragKind === 'card') {
@@ -2302,6 +2565,14 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     if (!e.target.closest) return;
     const id = e.dataTransfer.getData('text/plain'); const kind = S.dragKind; S.dragKind = null; clearDrop();
     if (!id) return;
+    if (kind === 'group') {
+      const sec = e.target.closest('#content section.group[data-g]'), b = board(); if (!sec || !b || sec.dataset.g === id) return; e.preventDefault();
+      const r = sec.getBoundingClientRect(), after = e.clientY > r.top + Math.min(r.height / 2, 60);
+      const moving = b.groups.find(g => g.id === id); if (!moving) return;
+      const rest = b.groups.filter(g => g.id !== id), k = rest.findIndex(g => g.id === sec.dataset.g); if (k < 0) return;
+      rest.splice(after ? k + 1 : k, 0, moving);
+      patchBoard({ groups: rest }); localBoard({ groups: rest }); return;
+    }
     if (kind === 'card') { const l = e.target.closest('.lane'); if (l) { e.preventDefault(); setValue(id, l.dataset.col, l.dataset.lane); } return; }
     if (kind !== 'row') return;
     const item = itemById(id), b = board(); if (!item || !b) return;
