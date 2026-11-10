@@ -137,6 +137,71 @@
     } catch (e) {}
   }, 4000);
 
+
+  // ---------- Penny wanders: strolls along the bottom and hides behind boards, peeking over the edge ----------
+  // Only with Motion: Full and "Penny wanders" on. Never while a heads-up is open, a window or drawer is open,
+  // you are typing or dragging, or the tab is in the background. Tap her any time: she comes straight home.
+  html.setAttribute('data-flair-roam', get('roam', 'on'));
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  let pos = { x: 0, y: 0 }, roaming = false, cancel = false, lastKey = 0;
+  document.addEventListener('keydown', () => { lastKey = Date.now(); }, true);
+  const canRoam = () => motionOn() && !html.classList.contains('mx-calm') && html.getAttribute('data-flair-roam') !== 'off' && html.getAttribute('data-flair-pet') !== 'off'
+    && document.visibilityState === 'visible' && !pet.classList.contains('pet-sleep') && !pet.querySelector('.pet-news')
+    && !document.querySelector('#layer .drawer, #layer .modal, .modal-wrap, .mx-banner, .mx-dragging') && Date.now() - lastKey > 8000;
+  const place = (x, y, ms) => { pos = { x, y }; pet.style.transition = ms ? `transform ${ms}ms linear` : 'none'; pet.style.transform = (x || y) ? `translate(${Math.round(x)}px, ${Math.round(y)}px)` : ''; };
+  const home0 = () => { const t = pet.style.transform; pet.style.transform = ''; const r = pet.getBoundingClientRect(); pet.style.transform = t; return r; };
+  async function walkTo(x, y = pos.y) {
+    const dist = Math.hypot(x - pos.x, y - pos.y); if (dist < 4) return;
+    pet.classList.add('pet-walk'); pet.classList.toggle('pet-lean-left', x < pos.x);
+    const ms = Math.max(500, dist / 95 * 1000); place(x, y, ms);
+    for (let t = 0; t < ms && !cancel; t += 100) await wait(100);
+    pet.classList.remove('pet-walk', 'pet-lean-left');
+  }
+  async function goHome(quick) {
+    pet.classList.remove('pet-peek', 'pet-duck');
+    if (quick || pos.y) { pet.classList.add('pet-duck'); await wait(260); place(pos.x, 0, 0); await wait(30); pet.classList.remove('pet-duck'); await wait(260); }
+    cancel = false; await walkTo(0, 0); place(0, 0, 0);
+  }
+  function hidingSpot() {
+    const r0 = home0(), w = r0.width, h = r0.height, nb = document.querySelector('.bnav'), nr = nb && nb.getBoundingClientRect(), navTop = nr && nr.height > 0 ? nr.top : innerHeight;
+    const spots = [...document.querySelectorAll('.hero, .ov, .qa, .li, .lane, .tablewrap, .group, .glass, .card')].map(el => el.getBoundingClientRect())
+      .filter(r => r.width > w * 1.6 && r.top > 80 + h * .55 && r.top < Math.min(innerHeight, navTop) - 160 && r.left >= 0 && r.right <= innerWidth);
+    if (!spots.length) return null;
+    const r = spots[Math.floor(Math.random() * spots.length)];
+    const left = r.left + 12 + Math.random() * Math.max(0, r.width - w - 24);
+    return { x: left - r0.left, y: r.top - h * 0.52 - r0.top };
+  }
+  async function roam() {
+    if (roaming || !canRoam()) return; roaming = true; cancel = false;
+    try {
+      const r0 = home0(), wide = innerWidth > 780;
+      const minX = wide ? 0 : 12 - r0.left, maxX = innerWidth - 16 - r0.right;
+      if (Math.random() < 0.4) {
+        const spot = hidingSpot();
+        if (spot) {
+          await walkTo(Math.min(maxX, Math.max(minX, spot.x)), 0); if (cancel) return;
+          pet.classList.add('pet-duck'); await wait(260);                       // ducks out of sight...
+          place(spot.x, spot.y, 0); pet.classList.add('pet-peek'); await wait(30);
+          pet.classList.remove('pet-duck');                                      // ...and peeks over the board
+          const onScroll = () => { cancel = true; }; addEventListener('scroll', onScroll, { capture: true, once: true, passive: true });
+          for (let t = 0, stay = 3500 + Math.random() * 3500; t < stay && !cancel; t += 100) { await wait(100); if (t === 1500 && Math.random() < .5) say(['Peekaboo!', 'You can’t see me', 'Shhh… hiding', 'Find me!'][Math.floor(Math.random() * 4)]); }
+          removeEventListener('scroll', onScroll, { capture: true });
+          await goHome(true); return;
+        }
+      }
+      // a short stroll and back
+      const dir = maxX < 60 ? -1 : minX > -60 ? 1 : (Math.random() < .5 ? -1 : 1); // walk toward the side with room
+      const x = Math.min(maxX, Math.max(minX, dir * (60 + Math.random() * Math.min(260, innerWidth / 3))));
+      await walkTo(x, 0); if (!cancel) await wait(900 + Math.random() * 1600);
+      if (!cancel && Math.random() < .3) say(['Just stretching my legs', 'La la la', 'Checking on the deals', 'Hi!'][Math.floor(Math.random() * 4)]);
+      if (!cancel) await wait(1200);
+      await goHome(false);
+    } finally { roaming = false; cancel = false; }
+  }
+  pet.addEventListener('click', () => { if (roaming || pos.x || pos.y) { cancel = true; setTimeout(() => { if (!roaming) goHome(true); }, 50); if (pet.classList.contains('pet-peek')) setTimeout(() => say('You found me!'), 120); } }, true);
+  addEventListener('resize', () => { if (!roaming) place(0, 0, 0); });
+  (function schedule() { setTimeout(() => { roam().finally(schedule); }, 22000 + Math.random() * 38000); })();
+
   // ---------- Flair picker ----------
   const THEMES = [['classic', 'Classic', '#ffffff'], ['cyan', 'Cyan', '#3ef2ff'], ['magenta', 'Magenta', '#ff4fd8'], ['lime', 'Lime', '#b6ff3e'], ['aurora', 'Aurora', '#9fd8ff']];
   function openFlair() {
@@ -149,6 +214,7 @@
       <div class="fx-row"><div class="pop-section">Avatar ring</div>${seg('ring', [['spin', 'Neon spin'], ['sparkle', 'Spin + sparkle'], ['off', 'None']])}</div>
       <div class="fx-row"><div class="pop-section">Name</div>${seg('name', [['shimmer', 'Shimmer'], ['plain', 'Plain']])}</div>
       <div class="fx-row"><div class="pop-section">Penny the money pet</div>${seg('pet', [['on', 'Show Penny'], ['off', 'Hide']])}</div>
+      <div class="fx-row"><div class="pop-section">Penny wanders</div>${seg('roam', [['on', 'Walks and hides'], ['off', 'Stays put']])}</div>
       <div class="fx-row"><div class="pop-section">Penny’s heads-ups</div>${seg('news', [['mine', 'My boards'], ['all', 'All boards'], ['off', 'Off']])}<p style="margin-top:8px">New leads, texts, calls, notes and mentions, as little bubbles. Tap one to open the lead.</p></div>
       <div class="form-row" style="margin-top:8px"><button class="btn primary" data-fx-close>Done</button><button class="btn" data-fx-party>Test confetti</button></div></div>`;
     document.body.appendChild(wrap);
@@ -169,5 +235,5 @@
   const layer = document.getElementById('layer');
   if (layer) new MutationObserver(() => { const m = layer.querySelector('.modal'); if (m && /Sign out/.test(m.textContent)) addFlairButton(m); }).observe(layer, { childList: true, subtree: true });
   setTimeout(() => { decorate(); addFlairButton(rail); }, 300);
-  window.SolverFlair = { openFlair, say, set };
+  window.SolverFlair = { openFlair, say, set, roam };
 })();

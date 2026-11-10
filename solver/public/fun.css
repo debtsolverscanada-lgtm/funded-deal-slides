@@ -96,3 +96,20 @@ html.mx-off .btn.primary::after, html.mx-off .bnav-plus::after, html.mx-off .her
   .pet-bubble { left: auto; right: 0; transform: none; white-space: normal; width: max-content; max-width: min(260px, calc(100vw - 32px)); text-align: left; animation-name: pet-say-m; }
   @keyframes pet-say-m { 0% { opacity: 0; transform: translateY(6px) scale(.9); } 10%, 85% { opacity: 1; transform: none; } 100% { opacity: 0; } }
 }
+
+/* Penny wanders (fun.js moves her with transform; these are her walk, duck and peek poses) */
+.pet.pet-walk svg { animation: pet-waddle .46s ease-in-out infinite; }
+.pet.pet-walk.pet-lean-left svg { animation-name: pet-waddle-l; }
+@keyframes pet-waddle { 0%, 100% { transform: translateY(0) rotate(-4deg); } 50% { transform: translateY(-4px) rotate(4deg); } }
+@keyframes pet-waddle-l { 0%, 100% { transform: translateY(0) rotate(4deg); } 50% { transform: translateY(-4px) rotate(-4deg); } }
+.pet.pet-walk .pet-feet ellipse:first-child { animation: pet-step .46s ease-in-out infinite; }
+.pet.pet-walk .pet-feet ellipse:last-child { animation: pet-step .46s ease-in-out infinite reverse; }
+@keyframes pet-step { 50% { transform: translateY(-3px); } }
+.pet.pet-duck svg { transform: translateY(70%) scale(.6); opacity: 0; transition: transform .25s ease-in, opacity .25s ease-in; animation: none; }
+/* peeking: everything below the board's top edge is hidden, so only ears and eyes show over it */
+.pet.pet-peek { clip-path: inset(-400px -400px 48% -400px); }
+.pet.pet-peek svg { animation: pet-peekup .45s cubic-bezier(.2,.9,.25,1.2) both, pet-peekbob 2.6s .45s ease-in-out infinite; }
+@keyframes pet-peekup { from { transform: translateY(60%); } to { transform: translateY(0); } }
+@keyframes pet-peekbob { 50% { transform: translateY(4px) rotate(-3deg); } }
+.pet.pet-peek .pet-feet, .pet.pet-peek ellipse[cy="88"] { opacity: 0; }
+html[data-flair-roam="off"] .pet { transform: none !important; }
