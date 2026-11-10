@@ -8,13 +8,13 @@
   let prompt = null;
   addEventListener('beforeinstallprompt', e => { e.preventDefault(); prompt = e; addButtons(); });
   addEventListener('appinstalled', () => { prompt = null; document.querySelectorAll('[data-install]').forEach(b => b.remove()); toast('Solver.ca is installed. Open it from your apps.'); });
-  function toast(text) {
+  function toast(text, ms = 6000) {
     const box = document.querySelector('.toasts') || document.body;
-    const t = document.createElement('div'); t.className = 'toast'; t.setAttribute('role', 'status'); t.textContent = text; box.appendChild(t); setTimeout(() => t.remove(), 6000);
+    const t = document.createElement('div'); t.className = 'toast'; t.setAttribute('role', 'status'); t.textContent = text; box.appendChild(t); setTimeout(() => t.remove(), ms);
   }
   function howTo() {
-    if (ios) return toast('On iPhone or iPad: tap the Share button in Safari, then "Add to Home Screen".');
-    toast('In Chrome or Edge: open the browser menu, then "Install Solver.ca" (or "Cast, save and share" > "Install page as app").');
+    if (ios) return toast('On iPhone or iPad, in Safari: tap the Share button, or the ≡ menu in the address bar and then Share. Choose "Add to Home Screen" (under "View More" if you don\'t see it), leave "Open as Web App" on, and tap Add.', 12000);
+    toast('In Chrome or Edge: click the install icon at the right of the address bar, or open the browser menu and choose "Install Solver.ca" (in Chrome: "Cast, save and share" > "Install page as app").', 10000);
   }
   async function install() {
     if (prompt) { prompt.prompt(); const r = await prompt.userChoice.catch(() => null); prompt = null; if (!r || r.outcome !== 'accepted') addButtons(); return; }
