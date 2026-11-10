@@ -612,14 +612,17 @@ async function api(req, res, url) {
   if (p === '/api/auth/config' && method === 'GET') return send(res, 200, { google: sec.googleOn() });
   if (p === '/api/login' && method === 'POST') {
     const ipKey = 'ip:' + clientIp(req);
-    if (throttled(ipKey)) throw new HttpError(429, 'Too many tries. Wait 15 minutes and try again.');
+    // failed sign-ins are logged with a masked email and the reason (never the password), so an admin can see why
+    const maskEm = e => { const [u, d] = String(e || '').split('@'); return d ? `${u.slice(0, 2)}***@${d}` : '(no email)'; };
+    if (throttled(ipKey)) { console.log('Sign-in refused: too many tries from this address'); throw new HttpError(429, 'Too many tries. Wait 15 minutes and try again.'); }
     const { email, password } = await readBody(req, 16 * 1024);
     const em = String(email || '').trim().toLowerCase().slice(0, 320), acctKey = 'acct:' + em;
     const ip = clientIp(req), known = !!knownAddr.has.get(em, ip);
-    { const w = known ? 0 : acctWait(acctKey); if (w) throw new HttpError(429, `Too many wrong tries for this account. Wait ${w} second${w === 1 ? '' : 's'} and try again.`); }
+    { const w = known ? 0 : acctWait(acctKey); if (w) console.log(`Sign-in refused for ${maskEm(em)}: account paused ${w}s after wrong passwords`); if (w) throw new HttpError(429, `Too many wrong tries for this account. Wait ${w} second${w === 1 ? '' : 's'} and try again.`); }
     const u = q.userByEmail.get(em);
     const pwOk = checkPassword(String(password || ''), u ? u.pw : DUMMY_HASH);
     if (!u || u.disabled || !pwOk) {
+      console.log(`Sign-in failed for ${maskEm(em)}: ${!u ? 'no account with that email' : u.disabled ? 'account is turned off' : 'wrong password'}`);
       loginFailed(ipKey, acctKey);
       throw new HttpError(401, 'That email and password don’t match.');
     }
