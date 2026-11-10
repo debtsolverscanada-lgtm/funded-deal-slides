@@ -536,6 +536,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
 <div class="toasts" id="toasts" aria-live="polite"></div>
 
 <script src="/formula.js"></script>
+<script src="/viewfilters.js"></script>
 <script src="/ks-client.js"></script>
 <script src="/views.js"></script>
 <script src="/qr.js"></script>
@@ -618,7 +619,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     const v = (item.values || {})[id];
     switch (c.type) {
       case 'formula': { const r = formulaResult(b, item, c, depth); return r.error || r.value === '' ? KSFormula.BLANK_REF : r.value; }
-      case 'number': { if (v === '' || v == null) return ''; const n = Number(v); return c.format === 'percent' ? n / 100 : n; }
+      case 'number': { if (v === '' || v == null) return KSFormula.EMPTY_NUMBER; const n = Number(v); return c.format === 'percent' ? n / 100 : n; }
       case 'status': return (labelOf(c, v) || {}).label || '';
       case 'checkbox': return !!v;
       case 'date': { const dt = (item.values || {})[id + '__dt']; return v ? (dt || v) : ''; }
@@ -644,6 +645,8 @@ td.currency::before, td.percent::after { color: var(--muted); }
   const filterCount = () => Object.values(S.filters).filter(v => v && v.length).length;
   const toast = msg => { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; $('#toasts').appendChild(t); setTimeout(() => t.remove(), 2600); };
   function $(s) { return document.querySelector(s); }
+  // features.js (history, undo, recycle bin, search, templates, forms, connected columns, time tracking) plugs in here
+  const fx = (name, ...a) => { const F = window.SolverFeatures; return F && typeof F[name] === 'function' ? F[name](...a) : undefined; };
 
   // ---------- writes (one at a time per document) ----------
   const chains = {};
@@ -667,6 +670,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
   const act = (item, text, auto) => [{ at: now(), by: auto ? 'automation' : S.uid, text }, ...(item.activity || [])].slice(0, 40);
 
   function describe(col, v) {
+    { const d = fx('describe', col, v); if (d !== undefined) return d; }
     if (v === '' || v == null) return 'empty';
     if (isFileCol(col) || Array.isArray(v)) { const fl = fileList(v); return fl.length ? fl.map(f => f.name).join(', ') : 'empty'; }
     if (col.type === 'status') return (labelOf(col, v) || {}).label || 'empty';
@@ -879,6 +883,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     $('#rail').innerHTML = `
       <div class="brand"><div class="brand-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><text x="12" y="17" text-anchor="middle" font-size="16" font-weight="700" font-family="-apple-system, system-ui, sans-serif" fill="#fff">S</text></svg></div>
         <div><div class="brand-name">Solver.ca</div><div class="brand-tag">CRM · test build</div></div></div>
+      ${fx('railTop') || ''}
       ${S.me ? `<div class="whoami"><span class="role ${S.isGuest ? 'guest-badge' : ''}">${roleLabel()}</span><b>${esc(S.me.name || 'Signed in')}</b></div>` : ''}
       <button class="board-link" data-act="go-home" aria-current="${S.page === 'home'}"><span class="dot"></span>Home</button>
       ${window.KSViews && !S.isGuest ? KSViews.railLink() : ''}
@@ -888,6 +893,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
         ${wsBoards().length > 6 ? `<input class="rail-input" id="board-filter" placeholder="Find a board" value="${esc(S.boardFilter)}" aria-label="Find a board" style="margin-bottom:6px;border-style:solid">` : ''}
         <div class="board-list">${list || '<span class="rail-note">No boards yet.</span>'}</div></div>
       ${S.canWrite && S.db ? '<input class="rail-input" id="new-board" placeholder="+ New board" aria-label="New board name">' : ''}
+      ${fx('railBottom') || ''}
       <p class="rail-note">${S.isGuest ? 'You’re a guest: you see only the boards shared with you, and you can read items and post updates.' : 'Changes save for everyone on the team, live. Automations run the moment a status changes.'}</p>
       <div class="form-row">${S.isOwner ? '<button class="btn" data-act="team">Team & settings</button><button class="btn" data-act="integrations">Integrations</button>' : ''}<button class="btn" data-act="security">Security</button><button class="btn" data-act="logout">Sign out</button></div>`;
     if (filterEl) { const f = $('#board-filter'); if (f) { f.focus(); f.setSelectionRange(f.value.length, f.value.length); } }
@@ -904,6 +910,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
         <select class="board-select" id="board-select" aria-label="Board">${opts}</select>
         <input class="board-title" id="board-title" value="${esc(b.name)}" aria-label="Board name" ${S.canWrite ? '' : 'readonly'}>
         ${S.isGuest ? '<span class="pill guest-badge" title="You see only the boards shared with you">Guest</span>' : ''}
+        ${fx('head', b) || ''}
         <button class="btn" data-act="export-menu" title="Download this view as a spreadsheet">Export</button>
         ${S.canWrite ? '<button class="btn" data-act="import" title="Add items from a CSV or Excel file">Import</button><button class="btn primary" data-act="new-item">+ New item</button>' : ''}
       </div>
@@ -947,7 +954,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
       if ((i.name || '').toLowerCase().includes(q)) return true;
       return b.columns.some(c => describe(c, (i.values || {})[c.id]).toLowerCase().includes(q));
     });
-    const view = curView(); if (view && b) list = list.filter(i => (view.rules || []).every(r => viewMatch(b, i, r)));
+    const view = curView(); if (view && b) list = list.filter(i => window.KSViewFilters ? KSViewFilters.matches(view, b, i, { me: S.me }) : (view.rules || []).every(r => viewMatch(b, i, r)));
     Object.entries(S.filters).forEach(([cid, vals]) => { if (vals && vals.length) list = list.filter(i => vals.includes(String((i.values || {})[cid] ?? ''))); });
     const sortBy = S.sort || (view && view.sort);
     if (sortBy && b) {
@@ -967,6 +974,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
   }
 
   function cellEditor(col, item, inDrawer) {
+    { const h = fx('cell', col, item, inDrawer); if (h !== undefined) return h; }
     const v = (item.values || {})[col.id] ?? '';
     const canEd = colEditable(col), ro = canEd ? '' : 'readonly';
     const base = `class="cell-input" data-edit="value" data-item="${esc(item.id)}" data-col="${esc(col.id)}" aria-label="${esc(col.title)}" ${ro}`;
@@ -1162,7 +1170,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
           <div class="drawer-head"><input class="drawer-title" data-edit="name" data-item="${esc(i.id)}" value="${esc(i.name)}" aria-label="Item name" ${S.canWrite ? '' : 'readonly'}>
             <div class="drawer-actions">${S.canWrite ? `<button class="btn" data-act="dup-item" data-item="${esc(i.id)}">Duplicate</button>` : ''}<button class="btn" data-act="close-item">Close</button></div></div>
           <div class="drawer-tabs" role="tablist">
-            ${[...(b.form ? [['fact', 'Fact find']] : []), ['updates', `Updates · ${(i.updates || []).length}`], ['info', 'Info'], ...(window.SolverExt ? SolverExt.drawerTabs(b, i) : []), ['activity', 'Activity log']].map(([k, l]) => `<button class="drawer-tab" role="tab" data-act="dtab" data-tab="${k}" aria-selected="${S.drawerTab === k}">${l}</button>`).join('')}
+            ${[...(b.form ? [['fact', 'Fact find']] : []), ['updates', `Updates · ${(i.updates || []).length}`], ['info', 'Info'], ...(window.SolverExt ? SolverExt.drawerTabs(b, i) : []), ['activity', 'Activity log'], ...(window.SolverFeatures ? [['history', 'History']] : [])].map(([k, l]) => `<button class="drawer-tab" role="tab" data-act="dtab" data-tab="${k}" aria-selected="${S.drawerTab === k}">${l}</button>`).join('')}
           </div>
           <div class="drawer-body">
             ${S.drawerTab === 'info' ? `<div class="fields">${fields}${groupSel}</div>
@@ -1176,6 +1184,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
             ${S.drawerTab === 'fact' && b.form ? renderFactFind(b, i) : ''}
             ${S.drawerTab === 'activity' ? `<ul class="log">${log || '<li>No activity yet.</li>'}</ul>` : ''}
             ${window.SolverExt ? (SolverExt.drawerBody(S.drawerTab, b, i) || '') : ''}
+            ${S.drawerTab === 'history' ? fx('historyTab', b, i) || '' : ''}
           </div>
         </aside>`;
       }
@@ -1564,21 +1573,22 @@ td.currency::before, td.percent::after { color: var(--muted); }
         S.pop = { type: 'status', item: t.dataset.item, col: t.dataset.col, x: r.left, y: r.bottom + 4 };
         renderLayer(); const ni = $('#new-label'); break;
       }
-      case 'pick-status': { const p = S.pop; S.pop = null; if (p.sub) { setSub(p.item, p.sub, p.col, t.dataset.val); renderLayer(); break; } (p.items || [p.item]).forEach(id => setValue(id, p.col, t.dataset.val)); if (p.items) toast(`Updated ${p.items.length} items`); renderLayer(); break; }
+      case 'pick-status': { const p = S.pop; S.pop = null; if (p.sub) { setSub(p.item, p.sub, p.col, t.dataset.val); renderLayer(); break; } const t0 = Date.now(); (p.items || [p.item]).forEach(id => setValue(id, p.col, t.dataset.val)); if (p.items && fx('bulkEdited', b, p.items, t0, `Updated ${p.items.length} items`) === undefined) toast(`Updated ${p.items.length} items`); renderLayer(); break; }
       case 'group-color': { const r = t.getBoundingClientRect(); S.pop = { type: 'color', group: t.dataset.group, x: r.left, y: r.bottom + 4 }; renderLayer(); break; }
       case 'pick-color': { const g = S.pop.group; S.pop = null; patchBoard({ groups: b.groups.map(x => x.id === g ? { ...x, color: t.dataset.val } : x) }); localBoard({ groups: b.groups.map(x => x.id === g ? { ...x, color: t.dataset.val } : x) }); break; }
       case 'add-group': { const g = { id: rid('g'), name: 'New group', color: PALETTE[b.groups.length % PALETTE.length] }; const groups = [...b.groups, g]; patchBoard({ groups }); localBoard({ groups }); break; }
       case 'delete-group': {
-        const g = t.dataset.group;
-        if (S.items.some(i => i.group === g)) { toast('Move or delete the leads in this group first.'); return; }
+        const g = t.dataset.group, has = S.items.some(i => i.group === g);
+        if (has && !window.SolverFeatures) { toast('Move or delete the leads in this group first.'); return; }
         if (S.confirmDelete !== 'g:' + g) { S.confirmDelete = 'g:' + g; renderContent(); return; }
-        S.confirmDelete = null; const groups = b.groups.filter(x => x.id !== g); patchBoard({ groups }); localBoard({ groups }); break;
+        S.confirmDelete = null; if (fx('deleteGroup', b, g) !== undefined) break; // into the recycle bin, items and all
+        const groups = b.groups.filter(x => x.id !== g); patchBoard({ groups }); localBoard({ groups }); break;
       }
       case 'delete-item': {
         const id = t.dataset.item;
         if (S.confirmDelete !== 'i:' + id) { S.confirmDelete = 'i:' + id; renderLayer(); return; }
         S.confirmDelete = null; const p = 'boards/' + S.boardId + '/items/' + id;
-        write(p, () => S.db.doc(p).delete()); S.items = S.items.filter(i => i.id !== id); S.openItem = null; toast('Lead deleted'); render(); break;
+        write(p, () => S.db.doc(p).delete()); S.items = S.items.filter(i => i.id !== id); S.openItem = null; if (fx('deleted', [p], 'Lead deleted') === undefined) toast('Lead deleted'); render(); break;
       }
       case 'post-update': {
         const ta = $('#update-text'), text = ta ? ta.value.trim() : ''; if (!text && !S.draftFiles.length) return;
@@ -1616,7 +1626,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
         if (S.confirmDelete !== 'bulk') { S.confirmDelete = 'bulk'; renderLayer(); return; }
         S.confirmDelete = null; const ids = [...S.selected];
         ids.forEach(id => { const p = 'boards/' + S.boardId + '/items/' + id; write(p, () => S.db.doc(p).delete()); });
-        S.items = S.items.filter(i => !S.selected.has(i.id)); S.selected = new Set(); toast(`Deleted ${ids.length} items`); render(); break;
+        S.items = S.items.filter(i => !S.selected.has(i.id)); S.selected = new Set(); if (fx('deleted', ids.map(id => 'boards/' + S.boardId + '/items/' + id), `Deleted ${ids.length} items`) === undefined) toast(`Deleted ${ids.length} items`); render(); break;
       }
       case 'close-modal': case 'close-modal-btn': S.modal = null; renderLayer(); break;
       // ---- security: two-factor ----
@@ -1749,8 +1759,8 @@ td.currency::before, td.percent::after { color: var(--muted); }
     if (t.dataset && t.dataset.edit === 'check') { setValue(t.dataset.item, t.dataset.col, t.checked ? true : ''); return; }
     if (t.id === 'bulk-move') {
       const g = b.groups.find(x => x.id === t.value); if (!g) return;
-      [...S.selected].map(itemById).filter(Boolean).forEach(i => moveToGroup(b, i, g.id));
-      toast(`Moved ${S.selected.size} items to ${g.name}`); S.selected = new Set(); render(); return;
+      const t0 = Date.now(), moved = [...S.selected]; moved.map(itemById).filter(Boolean).forEach(i => moveToGroup(b, i, g.id));
+      if (fx('bulkEdited', b, moved, t0, `Moved ${moved.length} items to ${g.name}`) === undefined) toast(`Moved ${moved.length} items to ${g.name}`); S.selected = new Set(); render(); return;
     }
     if (t.dataset && t.dataset.lockEmails !== undefined) { const locks = { ...(permsOf(b).locks || {}) }; locks[t.dataset.lockEmails] = t.value.split(/[,;\s]+/).map(x => x.trim().toLowerCase()).filter(x => /^[^@\s]+@[^@\s]+$/.test(x)); savePerms({ locks }); return; }
     if (t.dataset && t.dataset.impMap !== undefined && S.modal && S.modal.type === 'import') { S.modal.mapping[Number(t.dataset.impMap)] = t.value; return; }
@@ -2122,7 +2132,7 @@ td.currency::before, td.percent::after { color: var(--muted); }
     const name = first && !/^your$/i.test(first) ? first : '';
     const wsName = (workspaces().find(w => w.id === S.ws) || {}).name || 'your workspace';
     const sm = S.summary && S.summary.ws === S.ws ? S.summary : null;
-    const top = `<div class="home-top"><div><p class="eyebrow">${esc(new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' }))}</p><h1>${greeting()}${name ? ', ' + esc(name) : ''}</h1>${S.isGuest ? '<span class="pill guest-badge">Guest</span>' : ''}</div><button class="icon-round" data-act="sheet-profile" aria-label="Menu">${IC.menu}</button></div>`;
+    const top = `<div class="home-top"><div><p class="eyebrow">${esc(new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' }))}</p><h1>${greeting()}${name ? ', ' + esc(name) : ''}</h1>${S.isGuest ? '<span class="pill guest-badge">Guest</span>' : ''}</div><div style="display:flex;gap:10px">${fx('homeTop') || ''}<button class="icon-round" data-act="sheet-profile" aria-label="Menu">${IC.menu}</button></div></div>`;
     if (!sm) return `<div class="home">${top}<div class="glass hero"><p class="home-skel">Adding up ${esc(wsName)}…</p></div></div>`;
     const f = sm.followups, dueAll = f.overdue + f.dueToday + f.upcoming;
     const onTrack = dueAll ? (f.dueToday + f.upcoming) / dueAll : 1;
@@ -2194,9 +2204,11 @@ td.currency::before, td.percent::after { color: var(--muted); }
       scheduleRender();
     }, () => { clearTimeout(slow); S.status = 'ready'; toast('Boards stopped updating. Reload the page to reconnect.'); render(); });
   }
+  window.SolverApp = { S, board, itemById, render, renderLayer, renderContent, renderHead, renderRail, scheduleRender, toast, setValue, patchBoard, localBoard, selectBoard, describe, esc, TYPES, IC, colEditable, fmtTime, labelOf, PALETTE, wsOf, workspaces, savePage, curView };
   init();
 })();
 </script>
+<script src="/features.js"></script>
 <script src="/motion.js"></script>
 <script src="/fun.js"></script>
 <script src="/install.js"></script>

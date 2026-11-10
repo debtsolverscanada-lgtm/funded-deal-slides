@@ -477,6 +477,11 @@ const integ = require('./integrations.js')({ db, q, now, broadcast, HttpError, r
 // automations editor, AI columns, docs, push and email alerts, calls & texts (see ext.js)
 const ext = require('./ext.js')({ db, q, now, broadcast, HttpError, readBody, send, merge, integ, integHooks, boardInfo, canSee, mustSee, itemVisible, lockedCols, lockError, canWrite });
 module.exports.integ = integ;
+// ---- history, undo, recycle bin, search, templates, public forms, connected columns, time tracking (features.js) ----
+const features = require('./features.js')({ db, q, now, broadcast, HttpError, readBody, send, canSee, mustSee, boardInfo, boardCache, itemVisible, restricted, lockedCols, lockError,
+  canWrite, integ, cleanAccess, itemNotifications, publicDir: PUBLIC_DIR, clearSummary: () => summaryCache.clear(), startIndex: require.main === module,
+  formulaText: (b, c, item) => { const r = formulaResult(b, item, c); return r.error ? '' : KSFormula.format(r.value); } });
+module.exports.features = features;
 module.exports.setGuestBoards = (...a) => setGuestBoards(...a);
 
 async function api(req, res, url) {
@@ -592,6 +597,8 @@ async function api(req, res, url) {
   }
   // With "Require two-factor" on, nothing else works until it's set up.
   if (user.needs2fa) { const e = new HttpError(403, 'Set up two-factor sign-in to continue.'); e.code = 'twofa_setup'; throw e; }
+  features.setUser(user);
+  if (p.startsWith('/api/x/')) return features.handle(req, res, url, user);
   if (p === '/api/admin/security') {
     if (user.role !== 'admin') throw new HttpError(403, 'Only admins can change sign-in settings.');
     if (method === 'GET') return send(res, 200, { ...secSettings(), google: sec.googleOn(), googleDomains: sec.allowedDomains() });
@@ -1012,7 +1019,7 @@ function refValue(b, item, id, depth) {
   const v = (item.values || {})[id];
   switch (c.type) {
     case 'formula': { const r = formulaResult(b, item, c, depth); return r.error || r.value === '' ? KSFormula.BLANK_REF : r.value; }
-    case 'number': { if (v === '' || v == null) return ''; const n = Number(v); return c.format === 'percent' ? n / 100 : n; }
+    case 'number': { if (v === '' || v == null) return KSFormula.EMPTY_NUMBER; const n = Number(v); return c.format === 'percent' ? n / 100 : n; }
     case 'status': return (((c.labels || []).find(l => l.id === String(v))) || {}).label || '';
     case 'checkbox': return !!v;
     case 'date': { const dt = (item.values || {})[id + '__dt']; return v ? (dt || v) : ''; }
@@ -1030,6 +1037,7 @@ function formulaResult(b, item, c, depth = 0) {
   } catch (e) { return { error: e.message }; }
 }
 function exportCell(b, c, item) {
+  const fx = features.exportCell(b, c, item); if (fx !== undefined) return fx;
   const v = (item.values || {})[c.id];
   switch (c.type) {
     case 'formula': { const r = formulaResult(b, item, c); if (r.error || r.value === '' || r.value == null) return ''; return typeof r.value === 'number' && Number.isFinite(r.value) ? r.value : KSFormula.format(r.value); }
@@ -1073,6 +1081,8 @@ function startMondaySync(user) {
   syncState = { running: true, msg: 'Starting', boards: 0, items: 0, startedAt: now(), finishedAt: null, error: null, by: user.name };
   const save = (dp, col, id, data, opts = {}) => {
     if (opts.keep) { const r = q.doc.get(dp); if (r) { const old = JSON.parse(r.data); opts.keep.forEach(k => { if (old[k] !== undefined) data[k] = old[k]; }); } }
+    // views made in Solver.ca survive a new copy; Monday's own views are replaced by their current version
+    if (opts.mergeViews) { const r = q.doc.get(dp); const old = r ? JSON.parse(r.data) : {}; data.views = [...(data.views || []), ...(old.views || []).filter(v => v.source !== 'monday')]; }
     q.upsertDoc.run(dp, col, id, JSON.stringify(data), now(), 'monday-sync');
   };
   const removeStale = (bid, seen) => {
@@ -1179,7 +1189,8 @@ function dashboardsApi(req, res, p, method, user) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   try {
-    if (url.pathname.startsWith('/api/')) return await api(req, res, url);
+    if (features.isPublic(url)) return await features.run(() => features.handlePublic(req, res, url), url);
+    if (url.pathname.startsWith('/api/')) return await features.run(() => api(req, res, url), url);
     if (url.pathname === '/healthz') return send(res, 200, 'ok');
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Method not allowed');
     if (url.pathname === '/login') return serveStatic(req, res, 'login.html');

@@ -3,6 +3,7 @@
 'use strict';
 
 const API = 'https://api.monday.com/v2';
+const { convViews } = require('./public/viewfilters.js');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 async function gql(token, query, variables = {}) {
@@ -147,6 +148,8 @@ async function syncFromMonday({ token, workspaceIds, save, removeStale, onProgre
       groups { id title color position } columns { id title type settings_str } views { id name type settings_str } } }`)).boards;
     const folders = (await gql(token, `{ folders(workspace_ids: [${Number(ws)}]) { id name children { id } } }`)).folders;
     const folderOf = new Map(); folders.forEach(f => (f.children || []).forEach(ch => folderOf.set(String(ch.id), f.name)));
+    // Monday user id -> name, so saved views filtered by a person keep working (views stay readable without it)
+    const people = {}; try { for (const u of (await gql(token, '{ users(limit: 500) { id name } }')).users || []) people[String(u.id)] = u.name; } catch (e) { /* views keep the raw person ids */ }
     const subBoards = new Map(boards.filter(b => b.type === 'sub_items_board').map(b => [b.name, b]));
     for (const b of boards) {
       if (b.type !== 'board') continue;
@@ -159,8 +162,8 @@ async function syncFromMonday({ token, workspaceIds, save, removeStale, onProgre
       save('boards/' + bid, 'boards', bid, {
         name: b.name, order: ++order, workspace, folder: folderOf.get(String(b.id)) || '', source: 'monday', mondayId: b.id, syncedAt: at,
         groups: groups.map(g => ({ id: g.id, name: g.title, color: g.color || '#579bfc' })), columns: cols, subColumns: subCols, automations: [],
-        form: convForm(b.views, cols), access: boardAccess(b),
-      }, { keep: ['automations'] });
+        form: convForm(b.views, cols), access: boardAccess(b), views: convViews(b.views, cols, { people }),
+      }, { keep: ['automations'], mergeViews: true });
       const seen = new Set();
       let pos = 0, cursor = null;
       if (b.items_count) {
@@ -274,4 +277,4 @@ async function pullFromMonday({ token, boards, since, store, onProgress = () => 
   return { at: startedAt, boards: boards.length, checked: ids.length, saved, removed };
 }
 
-module.exports = { syncFromMonday, pullFromMonday, convForm, convColumns, convValues, parseFiles, boardAccess, gql };
+module.exports = { syncFromMonday, pullFromMonday, convForm, convViews, convColumns, convValues, parseFiles, boardAccess, gql };

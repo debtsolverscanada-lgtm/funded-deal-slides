@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Form</title>
+<style>
+:root { --bg: #000; --fg: #fff; --muted: rgba(255,255,255,.55); --line: rgba(255,255,255,.12); --field: rgba(255,255,255,.05); --danger: #e3a8a8; color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+body { background: radial-gradient(1200px 600px at 20% -10%, rgba(120,140,255,.12), transparent 60%), radial-gradient(900px 500px at 110% 10%, rgba(80,220,180,.08), transparent 60%), var(--bg);
+  color: var(--fg); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; padding: max(24px, env(safe-area-inset-top)) 16px 48px; }
+main { max-width: 620px; margin: 0 auto; }
+.card { background: linear-gradient(160deg, rgba(255,255,255,.09), rgba(255,255,255,.025)); border: 1px solid rgba(255,255,255,.10); border-radius: 26px; padding: 28px 24px;
+  backdrop-filter: blur(26px) saturate(150%); -webkit-backdrop-filter: blur(26px) saturate(150%); box-shadow: 0 1px 0 rgba(255,255,255,.08) inset, 0 30px 80px rgba(0,0,0,.55); }
+h1 { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif; font-weight: 600; letter-spacing: -.02em; font-size: 26px; margin: 0 0 6px; }
+.desc { color: var(--muted); margin: 0 0 20px; white-space: pre-wrap; }
+.q { display: flex; flex-direction: column; gap: 6px; margin: 0 0 18px; }
+.q label.t { font-weight: 500; }
+.q .req { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 4px; }
+.q .help { color: var(--muted); font-size: 13px; }
+input[type=text], input[type=email], input[type=tel], input[type=number], input[type=date], input[type=url], textarea, select {
+  width: 100%; font: inherit; color: var(--fg); background: var(--field); border: 1px solid var(--line); border-radius: 12px; padding: 11px 12px; min-height: 44px; }
+textarea { min-height: 110px; resize: vertical; }
+input:focus, textarea:focus, select:focus { outline: 2px solid #fff; outline-offset: 1px; }
+.choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.choice { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--field); border-radius: 999px; padding: 8px 14px; cursor: pointer; min-height: 40px; }
+.choice input { accent-color: #fff; margin: 0; }
+.err { color: var(--danger); font-size: 13px; min-height: 0; }
+.bad input, .bad textarea { border-color: var(--danger); }
+button { font: inherit; font-weight: 600; background: #fff; color: #000; border: 0; border-radius: 999px; padding: 12px 22px; min-height: 46px; cursor: pointer; }
+button[disabled] { opacity: .6; cursor: default; }
+.hp { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+.foot { color: var(--muted); font-size: 12px; text-align: center; margin-top: 18px; }
+.done h1 { font-size: 22px; }
+</style>
+</head>
+<body>
+<main><div class="card" id="card"><h1>Loading…</h1></div><p class="foot">Powered by Solver.ca · Your answers go only to the team that shared this form.</p></main>
+<script>
+(() => {
+  'use strict';
+  const token = location.pathname.split('/').pop();
+  const card = document.getElementById('card'), started = Date.now();
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  let def = null;
+  function input(f) {
+    const id = 'f_' + f.key, req = f.required ? 'required aria-required="true"' : '';
+    switch (f.type) {
+      case 'long': return `<textarea id="${id}" name="${esc(f.key)}" maxlength="5000" ${req}></textarea>`;
+      case 'email': return `<input type="email" id="${id}" name="${esc(f.key)}" maxlength="200" autocomplete="email" ${req}>`;
+      case 'phone': return `<input type="tel" id="${id}" name="${esc(f.key)}" maxlength="40" autocomplete="tel" ${req}>`;
+      case 'number': return `<input type="text" inputmode="decimal" id="${id}" name="${esc(f.key)}" maxlength="40" ${req}>`;
+      case 'date': return `<input type="date" id="${id}" name="${esc(f.key)}" ${req}>`;
+      case 'link': return `<input type="url" id="${id}" name="${esc(f.key)}" maxlength="500" placeholder="https://" ${req}>`;
+      case 'checkbox': return `<label class="choice"><input type="checkbox" id="${id}" name="${esc(f.key)}">Yes</label>`;
+      case 'status': return (f.options || []).length > 6
+        ? `<select id="${id}" name="${esc(f.key)}" ${req}><option value="">Choose…</option>${f.options.map(o => `<option value="${esc(o.id)}">${esc(o.label)}</option>`).join('')}</select>`
+        : `<div class="choices" role="radiogroup">${(f.options || []).map(o => `<label class="choice"><input type="radio" name="${esc(f.key)}" value="${esc(o.id)}">${esc(o.label)}</label>`).join('')}</div>`;
+      case 'dropdown': return `<div class="choices">${(f.options || []).map(o => `<label class="choice"><input type="checkbox" name="${esc(f.key)}" value="${esc(o.id)}">${esc(o.label)}</label>`).join('')}</div>`;
+      default: return `<input type="text" id="${id}" name="${esc(f.key)}" maxlength="500" ${f.key === 'name' ? 'autocomplete="name"' : ''} ${req}>`;
+    }
+  }
+  function render() {
+    document.title = def.title || 'Form';
+    card.innerHTML = `<h1>${esc(def.title)}</h1>${def.desc ? `<p class="desc">${esc(def.desc)}</p>` : '<div style="height:12px"></div>'}
+      <form id="form" novalidate>
+        ${def.fields.map(f => `<div class="q" data-q="${esc(f.key)}"><label class="t" for="f_${esc(f.key)}">${esc(f.label)}${f.required ? '<span class="req">Required</span>' : ''}</label>${f.help ? `<span class="help">${esc(f.help)}</span>` : ''}${input(f)}<span class="err" aria-live="polite"></span></div>`).join('')}
+        <div class="hp" aria-hidden="true"><label>Website <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
+        <p class="err" id="formerr" aria-live="polite"></p>
+        <button type="submit" id="go">Send</button>
+      </form>`;
+    document.getElementById('form').addEventListener('submit', submit);
+  }
+  function collect() {
+    const form = document.getElementById('form'), answers = {};
+    for (const f of def.fields) {
+      if (f.type === 'dropdown') answers[f.key] = [...form.querySelectorAll(`input[name="${CSS.escape(f.key)}"]:checked`)].map(x => x.value).join(', ');
+      else if (f.type === 'status' && (f.options || []).length <= 6) { const c = form.querySelector(`input[name="${CSS.escape(f.key)}"]:checked`); answers[f.key] = c ? c.value : ''; }
+      else if (f.type === 'checkbox') answers[f.key] = form.querySelector('#f_' + CSS.escape(f.key)).checked;
+      else answers[f.key] = form.querySelector('#f_' + CSS.escape(f.key)).value.trim();
+    }
+    return answers;
+  }
+  function check(answers) {
+    let first = null;
+    for (const f of def.fields) {
+      const box = card.querySelector(`[data-q="${CSS.escape(f.key)}"]`), v = answers[f.key]; let msg = '';
+      if (f.required && (v === '' || v === false)) msg = 'Please answer this.';
+      else if (v && f.type === 'email' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) msg = 'Enter an email like name@example.com.';
+      else if (v && f.type === 'phone' && String(v).replace(/\D/g, '').length < 7) msg = 'Enter a phone number.';
+      else if (v && f.type === 'number' && !Number.isFinite(Number(String(v).replace(/[$,\s%]/g, '')))) msg = 'Enter a number.';
+      box.classList.toggle('bad', !!msg); box.querySelector('.err').textContent = msg;
+      if (msg && !first) first = box;
+    }
+    if (first) { const el = first.querySelector('input, textarea, select'); if (el) el.focus(); }
+    return !first;
+  }
+  async function submit(e) {
+    e.preventDefault();
+    const answers = collect(); if (!check(answers)) return;
+    const go = document.getElementById('go'), err = document.getElementById('formerr');
+    go.disabled = true; go.textContent = 'Sending…'; err.textContent = '';
+    try {
+      const r = await fetch('/api/public/form/' + encodeURIComponent(token), { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answers, website: document.querySelector('input[name=website]').value, t: started }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || 'That didn’t send. Try again.');
+      card.classList.add('done');
+      card.innerHTML = `<h1>${esc(d.thanks || 'Thanks! We got your answers.')}</h1><p class="desc">You can close this page.</p>`;
+    } catch (x) { err.textContent = x.message; go.disabled = false; go.textContent = 'Send'; }
+  }
+  fetch('/api/public/form/' + encodeURIComponent(token)).then(async r => {
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { card.innerHTML = `<h1>This form is closed</h1><p class="desc">${esc(d.error || 'It may have been turned off. Ask the person who sent you the link.')}</p>`; return; }
+    def = d; render();
+  }).catch(() => { card.innerHTML = '<h1>Can’t reach the server</h1><p class="desc">Check your connection and reload the page.</p>'; });
+})();
+</script>
+</body>
+</html>

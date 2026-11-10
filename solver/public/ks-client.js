@@ -50,6 +50,7 @@
       if (ev.op === 'buzz') { emit('buzz', ev.ev); return; }
       if (ev.op === 'doc') { emit('doc', ev); return; } // a rich-text doc changed (editor.js)
       if (ev.op === 'reload') { cols.forEach((entry, path) => load(path, entry).catch(() => {})); return; }
+      if (ev.op === 'set' || ev.op === 'delete') emit('change', { op: ev.op, col: ev.col, id: ev.id });
       const entry = cols.get(ev.col); if (!entry) return;
       if (ev.op === 'set') entry.docs.set(ev.id, ev.data); else entry.docs.delete(ev.id);
       notify(entry);
