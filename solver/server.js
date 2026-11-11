@@ -769,6 +769,18 @@ async function api(req, res, url) {
   if (um) {
     if (user.role !== 'admin') throw new HttpError(403, 'Only admins can change people.');
     const target = q.userById.get(um[1]); if (!target) throw new HttpError(404, 'That person no longer exists.');
+    // Remove a person for good: their sign-in, sessions, alerts and board sharing go. What they wrote (updates, history)
+    // stays, under their name.
+    if (method === 'DELETE') {
+      if (target.id === user.id) throw new HttpError(400, 'You can’t remove yourself.');
+      if (target.role === 'admin' && db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND disabled = 0").get().n <= 1) throw new HttpError(400, 'That’s the last admin. Make someone else an admin first.');
+      setGuestBoards(target.email, [], user.id);
+      for (const sql of ['DELETE FROM sessions WHERE user_id = ?', 'DELETE FROM notifications WHERE user_id = ?', 'DELETE FROM push_subs WHERE user_id = ?', 'DELETE FROM user_prefs WHERE user_id = ?']) { try { db.prepare(sql).run(target.id); } catch (e) { /* table not there */ } }
+      try { db.prepare('DELETE FROM login_known WHERE email = ?').run(String(target.email).toLowerCase()); } catch (e) {}
+      db.prepare('DELETE FROM users WHERE id = ?').run(target.id);
+      teamCache.at = 0; console.log(`Person removed by an admin: ${target.id}`);
+      return send(res, 200, { ok: true });
+    }
     if (method === 'PATCH') {
       const b = await readBody(req);
       if (b.role && !ROLES.includes(b.role)) throw new HttpError(400, 'Role must be admin, member, viewer or guest.');

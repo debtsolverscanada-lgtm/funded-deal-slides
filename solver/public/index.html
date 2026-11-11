@@ -813,6 +813,38 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
 .bl-sample { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--line); padding-top: 8px; margin-top: 6px; }
 .blast-pill { position: fixed; left: 50%; transform: translateX(-50%); bottom: 18px; z-index: 40; display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 16px; border-radius: 999px; background: #18181b; border: 1px solid var(--line-2); box-shadow: 0 10px 30px rgba(0,0,0,.5); font-size: 13px; }
 @media (max-width: 780px) { .blast-pill { bottom: calc(86px + env(safe-area-inset-bottom, 0px)); max-width: calc(100vw - 24px); } }
+
+/* ---- Team page ---- */
+.tm-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.tm-head h3 { margin: 0; }
+.tm-legend { font-size: 12px; color: var(--muted); margin: 10px 0 12px; }
+.tm-legend b { color: var(--fg); font-weight: 600; }
+.tm-add { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin: 10px 0; background: rgba(255,255,255,0.03); }
+.tm-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
+.tm-row { border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,0.02); }
+.tm-row.is-off { border-color: rgba(255,120,120,0.35); }
+.tm-row.is-open { background: rgba(255,255,255,0.04); }
+.tm-main { display: flex; align-items: center; gap: 10px; padding: 10px 12px; flex-wrap: wrap; }
+.tm-av { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: rgba(255,255,255,0.1); font-size: 12px; font-weight: 700; flex: none; }
+.tm-who { display: flex; flex-direction: column; min-width: 140px; flex: 1 1 180px; }
+.tm-who b { font-size: 15px; }
+.tm-who span { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.tm-you { font-size: 11px; font-weight: 500; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; margin-left: 4px; }
+.tm-role { width: auto; flex: none; }
+.tm-status { flex: none; border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 600; border: 1px solid transparent; font: inherit; font-size: 12px; cursor: pointer; }
+.tm-status.on { background: rgba(80,200,120,0.12); color: #7ee2a0; border-color: rgba(80,200,120,0.3); }
+.tm-status.off { background: rgba(255,90,90,0.14); color: #ff9a9a; border-color: rgba(255,90,90,0.4); }
+span.tm-status { cursor: default; }
+.tm-manage { flex: none; }
+.tm-warn { margin: 0 12px 10px; font-size: 13px; color: #ff9a9a; }
+.tm-more { border-top: 1px solid var(--line); padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+.tm-field { display: flex; flex-direction: column; gap: 6px; }
+.tm-field label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.tm-field small { font-size: 12px; color: var(--muted); }
+.tm-inline { display: flex; gap: 8px; flex-wrap: wrap; }
+.tm-inline .field-input { flex: 1 1 200px; }
+.tm-danger { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid rgba(255,90,90,0.35); background: rgba(255,90,90,0.06); border-radius: 10px; padding: 10px 12px; }
+.tm-danger small { display: block; color: var(--muted); font-size: 12px; }
 </style>
 </head>
 <body>
@@ -2247,33 +2279,46 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     if (m.type === 'team') {
       const guestBoards = u => S.boards.filter(x => ((x.access || {}).members || []).map(e => String(e).toLowerCase()).includes(String(u.email || '').toLowerCase()));
       const boardOpts = (skip) => S.boards.filter(x => !skip.includes(x.id)).map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');
-      const rows = (m.list || []).map(u => `<div class="rule ${u.disabled ? 'off' : ''}"><div class="rule-text"><b>${esc(u.name)}</b> · ${esc(u.email || '')}${u.id === S.uid ? ' (you)' : ''}${u.role === 'guest' ? ' <span class="pill guest-badge">Guest</span>' : ''}${u.totp_on ? ' <span class="pill" title="Signs in with a code from an authenticator app">Two-factor on</span>' : ''}
-          ${u.role === 'guest' ? `<div class="card-meta guest-boards">${guestBoards(u).map(x => `<span class="pill">${esc(x.name)}<button class="icon-btn" data-act="guest-board-remove" data-id="${esc(u.id)}" data-board="${esc(x.id)}" aria-label="Take ${esc(u.name)} off ${esc(x.name)}">×</button></span>`).join('') || '<span class="rail-note">No boards yet: this guest sees nothing.</span>'}
-            <select class="field-input" data-guest-add="${esc(u.id)}" aria-label="Share a board with ${esc(u.name)}"><option value="">+ Share a board…</option>${boardOpts(guestBoards(u).map(x => x.id))}</select></div>` : ''}</div>
-          <select class="field-input" data-role-for="${esc(u.id)}" aria-label="Role for ${esc(u.name)}" ${u.id === S.uid ? 'disabled' : ''}>${['admin', 'member', 'viewer', 'guest'].map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r[0].toUpperCase() + r.slice(1)}</option>`).join('')}</select>
-          <input class="field-input" id="pw-${esc(u.id)}" type="password" placeholder="New password" aria-label="New password for ${esc(u.name)}" style="width:150px" autocomplete="new-password">
-          <button class="icon-btn" data-act="reset-pw" data-id="${esc(u.id)}">Set password</button>
-          ${u.role === 'admin' || u.role === 'member' ? `<input class="field-input" data-email-from="${esc(u.id)}" type="email" value="${esc(u.email_from || '')}" placeholder="Sends email as (their Gmail)" aria-label="Gmail address ${esc(u.name)} sends email from" style="width:230px">` : ''}
-          ${u.totp_on ? `<button class="icon-btn" data-act="reset-2fa" data-id="${esc(u.id)}" data-name="${esc(u.name)}">${S.confirmDelete === 'tf:' + u.id ? 'Click again to reset' : 'Reset two-factor'}</button>` : ''}
-          ${u.role === 'guest' ? '' : `<select class="field-input" data-home-for="${esc(u.id)}" aria-label="Board ${esc(u.name)} opens to"><option value="">Opens to: Home</option>${S.boards.map(x => `<option value="${esc(x.id)}" ${x.id === u.home_board ? 'selected' : ''}>Opens to: ${esc(x.name)}</option>`).join('')}</select>`}
-          ${u.id === S.uid ? '' : `<button class="icon-btn" data-act="toggle-person" data-id="${esc(u.id)}" data-off="${u.disabled ? 1 : 0}">${u.disabled ? 'Turn on' : 'Turn off'}</button>`}</div>`).join('');
+      const ROLE_INFO = { admin: 'Everything, including people and settings', member: 'Works the boards: edits leads, sends email and texts', viewer: 'Can look at every board, changes nothing', guest: 'Sees only the boards you share, changes nothing' };
+      const rows = (m.list || []).map(u => {
+        const me = u.id === S.uid, open = m.open === u.id, sender = u.role === 'admin' || u.role === 'member';
+        return `<div class="tm-row ${u.disabled ? 'is-off' : ''} ${open ? 'is-open' : ''}">
+          <div class="tm-main">
+            <span class="tm-av" aria-hidden="true">${esc(initials(u.name || u.email))}</span>
+            <div class="tm-who"><b>${esc(u.name)}${me ? ' <span class="tm-you">you</span>' : ''}</b><span>${esc(u.email || '')}</span></div>
+            <select class="field-input tm-role" data-role-for="${esc(u.id)}" aria-label="Role for ${esc(u.name)}" ${me ? 'disabled' : ''} title="${esc(ROLE_INFO[u.role] || '')}">${['admin', 'member', 'viewer', 'guest'].map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r[0].toUpperCase() + r.slice(1)}</option>`).join('')}</select>
+            ${me ? '<span class="tm-status on">Active</span>' : `<button class="tm-status ${u.disabled ? 'off' : 'on'}" data-act="toggle-person" data-id="${esc(u.id)}" data-off="${u.disabled ? 1 : 0}" title="${u.disabled ? 'Turned off: can’t sign in. Tap to turn on.' : 'Can sign in. Tap to turn off.'}">${u.disabled ? 'Off · turn on' : 'Active'}</button>`}
+            <button class="btn tm-manage" data-act="team-open" data-id="${esc(u.id)}" aria-expanded="${open}">${open ? 'Close' : 'Manage'}</button>
+          </div>
+          ${u.disabled ? '<p class="tm-warn">This account is turned off, so they can’t sign in. Tap “Off · turn on” to let them back in.</p>' : ''}
+          ${open ? `<div class="tm-more">
+            <div class="tm-field"><label>Password</label><div class="tm-inline"><input class="field-input" id="pw-${esc(u.id)}" type="password" placeholder="New password (8+ characters)" aria-label="New password for ${esc(u.name)}" autocomplete="new-password"><button class="btn" data-act="reset-pw" data-id="${esc(u.id)}">Set password</button></div></div>
+            ${sender ? `<div class="tm-field"><label>Sends email &amp; texts as</label><input class="field-input" data-email-from="${esc(u.id)}" type="email" value="${esc(u.email_from || '')}" placeholder="their Gmail, e.g. name@debtsolver.ca" aria-label="Gmail address ${esc(u.name)} sends from"><small>Their own Gmail and RingCentral line (set up in n8n). Leave empty and they can’t send.</small></div>` : ''}
+            ${u.role === 'guest' ? `<div class="tm-field"><label>Boards they can see</label><div class="guest-boards">${guestBoards(u).map(x => `<span class="pill">${esc(x.name)}<button class="icon-btn" data-act="guest-board-remove" data-id="${esc(u.id)}" data-board="${esc(x.id)}" aria-label="Take ${esc(u.name)} off ${esc(x.name)}">×</button></span>`).join('') || '<span class="rail-note">None yet, so this guest sees nothing.</span>'}</div>
+              <select class="field-input" data-guest-add="${esc(u.id)}" aria-label="Share a board with ${esc(u.name)}"><option value="">+ Share a board…</option>${boardOpts(guestBoards(u).map(x => x.id))}</select></div>` : `<div class="tm-field"><label>Opens to</label><select class="field-input" data-home-for="${esc(u.id)}" aria-label="Board ${esc(u.name)} opens to"><option value="">Home</option>${S.boards.map(x => `<option value="${esc(x.id)}" ${x.id === u.home_board ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>`}
+            ${u.totp_on ? `<div class="tm-field"><label>Two-factor</label><button class="btn" data-act="reset-2fa" data-id="${esc(u.id)}" data-name="${esc(u.name)}">${S.confirmDelete === 'tf:' + u.id ? 'Click again to reset' : 'Reset two-factor'}</button></div>` : ''}
+            ${me ? '' : `<div class="tm-danger"><div><b>Remove ${esc(u.name)}</b><small>Deletes their sign-in for good. Their notes and history stay.</small></div><button class="btn danger" data-act="remove-person" data-id="${esc(u.id)}">${S.confirmDelete === 'rm:' + u.id ? 'Click again to remove' : 'Remove'}</button></div>`}
+          </div>` : ''}
+        </div>`;
+      }).join('');
       const sec = m.security;
       const secHtml = !sec ? '<p>Loading.</p>' : `
         <div class="rule"><div class="rule-text"><b>Require two-factor for everyone</b><div class="card-meta">People without it must set it up right after they sign in, before anything else works.</div></div><button class="toggle" data-act="sec-set" data-k="require2fa" aria-pressed="${!!sec.require2fa}">${sec.require2fa ? 'On' : 'Off'}</button></div>
         <div class="rule"><div class="rule-text"><b>Google sign-in counts as two-factor</b><div class="card-meta">${sec.google ? `Google sign-in is on${(sec.googleDomains || []).length ? ' for ' + esc(sec.googleDomains.join(', ')) : ''}. When this is on, signing in with Google skips the code.` : 'Google sign-in isn’t set up on this server (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET).'}</div></div><button class="toggle" data-act="sec-set" data-k="googleCounts2fa" aria-pressed="${!!sec.googleCounts2fa}">${sec.googleCounts2fa ? 'On' : 'Off'}</button></div>
         <div class="form-row"><button class="btn" data-act="security">Your two-factor</button></div>`;
-      return `<h3>Team and settings</h3>
-        <p>Admins manage people and workspace settings. Members change boards. Viewers only look. Guests (a lender, a lawyer) see only the boards shared with them, can read items and post updates, and can change only the columns you open to guests.</p>
+      return `<div class="tm-head"><h3>Team</h3><button class="btn primary" data-act="team-add-toggle">${m.adding ? 'Cancel' : '+ Add person'}</button></div>
+        ${m.adding ? `<div class="tm-add">
+          <div class="form-row"><input class="field-input" id="np-name" placeholder="Full name" aria-label="Full name" style="flex:1 1 160px"><input class="field-input" id="np-email" type="email" placeholder="Email they sign in with" aria-label="Email" style="flex:1 1 200px"></div>
+          <div class="form-row"><select class="field-input" id="np-role" aria-label="Role">${[['member', 'Member'], ['viewer', 'Viewer'], ['admin', 'Admin'], ['guest', 'Guest (only shared boards)']].map(([v, l]) => `<option value="${v}" ${m.newRole === v ? 'selected' : ''}>${l}</option>`).join('')}</select><input class="field-input" id="np-pw" type="password" placeholder="Starting password (8+ characters)" aria-label="Starting password" style="flex:1 1 200px" autocomplete="new-password"><button class="btn primary" data-act="add-person">Add</button></div>
+          ${m.newRole === 'guest' ? `<div class="form-row np-boards"><span class="rail-note">Boards this guest can see:</span>${S.boards.map(x => `<label class="pop-check" style="padding:2px 6px"><input type="checkbox" class="np-board" value="${esc(x.id)}">${esc(x.name)}</label>`).join('')}</div>` : ''}
+        </div>` : ''}
+        <p class="tm-legend"><b>Admin</b> everything · <b>Member</b> works the boards · <b>Viewer</b> looks at all boards · <b>Guest</b> sees only shared boards</p>
         ${m.msg ? `<p style="color:var(--fg)"><b>${esc(m.msg)}</b></p>` : ''}
-        ${m.list ? rows : '<p>Loading the team.</p>'}
+        <div class="tm-list">${m.list ? rows : '<p>Loading the team.</p>'}</div>
         <h3 style="font-size:16px">Sign-in security</h3>
         ${secHtml}
         <h3 style="font-size:16px">Copy from Monday</h3>
         ${renderSync(m.sync)}
-        <h3 style="font-size:16px">Add a person</h3>
-        <div class="form-row"><input class="field-input" id="np-name" placeholder="Full name" aria-label="Full name" style="flex:1 1 160px"><input class="field-input" id="np-email" type="email" placeholder="Email" aria-label="Email" style="flex:1 1 200px"></div>
-        <div class="form-row"><select class="field-input" id="np-role" aria-label="Role">${[['member', 'Member'], ['viewer', 'Viewer'], ['admin', 'Admin'], ['guest', 'Guest (lender, lawyer…)']].map(([v, l]) => `<option value="${v}" ${m.newRole === v ? 'selected' : ''}>${l}</option>`).join('')}</select><input class="field-input" id="np-pw" type="password" placeholder="Starting password (8+ characters)" aria-label="Starting password" style="flex:1 1 200px" autocomplete="new-password"><button class="btn primary" data-act="add-person">Add person</button></div>
-        ${m.newRole === 'guest' ? `<div class="form-row np-boards"><span class="rail-note">Boards this guest can see:</span>${S.boards.map(x => `<label class="pop-check" style="padding:2px 6px"><input type="checkbox" class="np-board" value="${esc(x.id)}">${esc(x.name)}</label>`).join('')}</div>` : ''}
         <div><button class="btn" data-act="close-modal-btn">Done</button></div>`;
     }
     if (m.type === 'blast') {
@@ -2392,7 +2437,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     const a = t.dataset.act, b = board();
     if (a === 'close-modal' && e.target !== t) { closeSheetAfterFx(e); return; } // clicks inside the modal box
     if (window.SolverExt && SolverExt.onAct(a, t, e, b)) return; // add-ons: automation editor, docs, AI, alerts
-    if (!['delete-item', 'delete-group', 'delete-column', 'bulk-del', 'delete-view', 'reset-2fa'].includes(a)) S.confirmDelete = null;
+    if (!['delete-item', 'delete-group', 'delete-column', 'bulk-del', 'delete-view', 'reset-2fa', 'remove-person'].includes(a)) S.confirmDelete = null;
     switch (a) {
       case 'board': S.page = 'board'; savePage(); S.modal = null; selectBoard(t.dataset.id); render(); break;
       case 'go-home': S.page = 'home'; savePage(); S.modal = null; loadSummary(true); render(); break;
@@ -2461,6 +2506,11 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
       case 'monday-sync': KS.mondaySync().then(() => { toast('Copying from Monday. This takes several minutes.'); loadSync(); }).catch(e => { S.modal.msg = e.message; renderLayer(); }); break;
       case 'add-person': addPerson(); break;
       case 'reset-pw': { const id = t.dataset.id, pw = $('#pw-' + id).value; if (pw.length < 8) { S.modal.msg = 'Passwords need at least 8 characters.'; renderLayer(); return; } KS.updateUser(id, { password: pw }).then(() => { S.modal.msg = 'Password changed. They’ll need to sign in again.'; loadTeam(); }).catch(e => { S.modal.msg = e.message; renderLayer(); }); break; }
+      case 'team-open': S.modal.open = S.modal.open === t.dataset.id ? null : t.dataset.id; renderLayer(); break;
+      case 'team-add-toggle': S.modal.adding = !S.modal.adding; renderLayer(); break;
+      case 'remove-person': { const id = t.dataset.id; if (S.confirmDelete !== 'rm:' + id) { S.confirmDelete = 'rm:' + id; renderLayer(); return; } S.confirmDelete = null;
+        const who = ((S.modal.list || []).find(x => x.id === id) || {}).name || 'They';
+        KS.api('DELETE', '/api/users/' + encodeURIComponent(id)).then(() => { S.modal.open = null; S.modal.msg = `${who} was removed.`; loadTeam(); }).catch(e => { S.modal.msg = e.message; renderLayer(); }); break; }
       case 'toggle-person': { const id = t.dataset.id; KS.updateUser(id, { disabled: t.dataset.off !== '1' }).then(loadTeam).catch(e => { S.modal.msg = e.message; renderLayer(); }); break; }
       case 'collapse': { const g = t.dataset.group; S.collapsed.has(g) ? S.collapsed.delete(g) : S.collapsed.add(g); renderContent(); break; }
       case 'new-item': if (b && b.groups[0]) addItem(b.groups[0].id, 'New lead', true); else toast('Add a group first.'); break;
