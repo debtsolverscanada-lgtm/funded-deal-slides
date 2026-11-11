@@ -790,6 +790,20 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
 #rail .rl-who b { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #rail .rl-who small { font-size: 11px; color: var(--muted); }
 #rail .rl-dots { color: var(--muted); font-size: 18px; }
+
+/* ---- email from a lead ---- */
+.email-cell { display: flex; align-items: center; min-width: 0; }
+.email-cell > .cell-input { flex: 1 1 auto; min-width: 0; }
+.mail-btn { flex: none; width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; margin-right: 4px; }
+.mail-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.mail-btn:hover { color: var(--fg); background: rgba(255,255,255,0.08); }
+@media (hover: hover) { tr .mail-btn { opacity: 0; } tr:hover .mail-btn, .mail-btn:focus-visible { opacity: 1; } }
+.em-form { display: flex; flex-direction: column; gap: 10px; margin: 6px 0 12px; }
+.em-row { display: flex; align-items: center; gap: 12px; font-size: 14px; }
+.em-row > span { width: 44px; color: var(--muted); flex: none; }
+.em-row .field-input { flex: 1; }
+.em-form textarea { resize: vertical; min-height: 180px; font: inherit; line-height: 1.5; }
+.em-warn { color: #ffd27a; margin: 4px 0 8px; }
 </style>
 </head>
 <body>
@@ -1261,6 +1275,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
   const IC_BOLT = '<svg class="hd-ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12h.01M15 12h.01M9 16h6"/></svg>';
   const IC_IMPORT = '<svg class="hd-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 20h14"/></svg>';
   const IC_EXPORT = '<svg class="hd-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4m0 0L8 8m4-4 4 4M5 20h14"/></svg>';
+  const IC_MAIL = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg>';
   const IC_LOCK = '<svg class="hd-ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
   const IC_PEOPLE = '<svg class="hd-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="9" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M15.5 6.2a3 3 0 1 1 0 5.6M17 14.2a5 5 0 0 1 3.5 4.8"/></svg>';
   function viewTabs(b) {
@@ -1345,7 +1360,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     c.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
     t.style.width = Math.ceil(c.measureText(t.value || ' ').width + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + 6) + 'px';
   }
-  document.addEventListener('input', e => { if (e.target && e.target.id === 'board-title') fitTitle(); });
+  document.addEventListener('input', e => { const t = e.target; if (t && t.id === 'board-title') fitTitle(); if (t && S.modal && S.modal.type === 'email') { if (t.id === 'em-subject') S.modal.subject = t.value; if (t.id === 'em-text') S.modal.text = t.value; } });
   // the ⋯ sheet on phones: every board action the compact header leaves out
   function boardSheet(b) {
     const row = (inner) => `<div class="sheet-list glass">${inner}</div>`;
@@ -1454,7 +1469,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
         return `<button class="people-cell" data-act="person" data-item="${esc(item.id)}" data-col="${esc(col.id)}" aria-label="${esc(col.title)}: ${esc(ps.join(', ') || 'nobody')}" ${canEd ? '' : 'disabled'}>${ps.length ? avs + (inDrawer ? `<span class="pnames">${esc(ps.join(', '))}</span>` : ps.length > 3 ? `<span class="pmore">+${ps.length - 3}</span>` : '') : `<span class="pempty">${inDrawer ? 'Assign' : ''}</span>`}</button>`;
       }
       case 'phone': return lz ? lazyCell(col, item, v) : `<input type="text" inputmode="tel" ${base} value="${esc(v)}">`;
-      case 'email': return lz ? lazyCell(col, item, v) : `<input type="text" inputmode="email" ${base} value="${esc(v)}">`;
+      case 'email': { const inner = lz ? lazyCell(col, item, v) : `<input type="text" inputmode="email" ${base} value="${esc(v)}">`; return String(v).includes('@') && !S.isGuest ? `<span class="email-cell">${inner}<button class="mail-btn" data-act="compose-email" data-item="${esc(item.id)}" title="Send an email" aria-label="Email ${esc(v)}">${IC_MAIL}</button></span>` : inner; }
       default: return lz ? lazyCell(col, item, v) : `<input type="text" ${base} value="${esc(v)}">`;
     }
   }
@@ -1881,7 +1896,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
         html += `<div class="scrim" data-act="close-item"></div>
         <aside class="drawer" role="dialog" aria-modal="true" tabindex="-1" data-key="${esc(i.id + '|' + dtab)}" aria-label="${esc(i.name)}">
           <div class="drawer-head"><input class="drawer-title" data-edit="name" data-item="${esc(i.id)}" value="${esc(i.name)}" aria-label="Item name" ${S.canWrite ? '' : 'readonly'}>
-            <div class="drawer-actions">${S.canWrite ? `<button class="btn" data-act="dup-item" data-item="${esc(i.id)}">Duplicate</button>` : ''}<button class="btn" data-act="close-item">Close</button></div></div>
+            <div class="drawer-actions">${S.canWrite && (b.columns || []).some(c => c.type === 'email' && String((i.values || {})[c.id] || '').includes('@')) ? `<button class="btn" data-act="compose-email" data-item="${esc(i.id)}">✉ Email</button>` : ''}${S.canWrite ? `<button class="btn" data-act="dup-item" data-item="${esc(i.id)}">Duplicate</button>` : ''}<button class="btn" data-act="close-item">Close</button></div></div>
           <div class="drawer-tabs" role="tablist">
             ${[...(b.form ? [['fact', 'Fact find']] : []), ['updates', `Updates · ${(i.updates || []).length}`], ['info', 'Info'], ...(window.SolverExt ? SolverExt.drawerTabs(b, i) : []), ['history', 'History']].map(([k, l]) => `<button class="drawer-tab" role="tab" data-act="dtab" data-tab="${k}" aria-selected="${dtab === k}">${l}</button>`).join('')}
           </div>
@@ -2213,6 +2228,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
           <select class="field-input" data-role-for="${esc(u.id)}" aria-label="Role for ${esc(u.name)}" ${u.id === S.uid ? 'disabled' : ''}>${['admin', 'member', 'viewer', 'guest'].map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r[0].toUpperCase() + r.slice(1)}</option>`).join('')}</select>
           <input class="field-input" id="pw-${esc(u.id)}" type="password" placeholder="New password" aria-label="New password for ${esc(u.name)}" style="width:150px" autocomplete="new-password">
           <button class="icon-btn" data-act="reset-pw" data-id="${esc(u.id)}">Set password</button>
+          ${u.role === 'admin' || u.role === 'member' ? `<input class="field-input" data-email-from="${esc(u.id)}" type="email" value="${esc(u.email_from || '')}" placeholder="Sends email as (their Gmail)" aria-label="Gmail address ${esc(u.name)} sends email from" style="width:230px">` : ''}
           ${u.totp_on ? `<button class="icon-btn" data-act="reset-2fa" data-id="${esc(u.id)}" data-name="${esc(u.name)}">${S.confirmDelete === 'tf:' + u.id ? 'Click again to reset' : 'Reset two-factor'}</button>` : ''}
           ${u.role === 'guest' ? '' : `<select class="field-input" data-home-for="${esc(u.id)}" aria-label="Board ${esc(u.name)} opens to"><option value="">Opens to: Home</option>${S.boards.map(x => `<option value="${esc(x.id)}" ${x.id === u.home_board ? 'selected' : ''}>Opens to: ${esc(x.name)}</option>`).join('')}</select>`}
           ${u.id === S.uid ? '' : `<button class="icon-btn" data-act="toggle-person" data-id="${esc(u.id)}" data-off="${u.disabled ? 1 : 0}">${u.disabled ? 'Turn on' : 'Turn off'}</button>`}</div>`).join('');
@@ -2234,6 +2250,30 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
         <div class="form-row"><select class="field-input" id="np-role" aria-label="Role">${[['member', 'Member'], ['viewer', 'Viewer'], ['admin', 'Admin'], ['guest', 'Guest (lender, lawyer…)']].map(([v, l]) => `<option value="${v}" ${m.newRole === v ? 'selected' : ''}>${l}</option>`).join('')}</select><input class="field-input" id="np-pw" type="password" placeholder="Starting password (8+ characters)" aria-label="Starting password" style="flex:1 1 200px" autocomplete="new-password"><button class="btn primary" data-act="add-person">Add person</button></div>
         ${m.newRole === 'guest' ? `<div class="form-row np-boards"><span class="rail-note">Boards this guest can see:</span>${S.boards.map(x => `<label class="pop-check" style="padding:2px 6px"><input type="checkbox" class="np-board" value="${esc(x.id)}">${esc(x.name)}</label>`).join('')}</div>` : ''}
         <div><button class="btn" data-act="close-modal-btn">Done</button></div>`;
+    }
+    if (m.type === 'email') {
+      const i = itemById(m.item), c = m.check;
+      if (!i) return '<p>This lead isn’t on the board any more.</p><div><button class="btn" data-act="close-modal-btn">Close</button></div>';
+      if (!c) return `<h3>Email ${esc(i.name)}</h3><p>${m.msg ? esc(m.msg) : 'Loading.'}</p><div><button class="btn" data-act="close-modal-btn">Close</button></div>`;
+      const to = m.to || c.to[0] || '';
+      const mailto = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(m.subject || '')}&body=${encodeURIComponent(m.text || '')}`;
+      const ready = c.configured && c.from && c.canSend && !c.blocked && to;
+      const why = c.blocked ? c.blocked : !c.to.length ? 'This lead has no email address.' : !c.canSend ? 'Only team members can send email.' : !c.configured ? 'Sending from Gmail isn’t switched on yet.' : !c.from ? 'An admin needs to set the Gmail address you send from (Team & settings).' : '';
+      return `<h3>Email ${esc(i.name)}</h3>
+        ${why ? `<p class="em-warn">${esc(why)}</p>` : ''}
+        <div class="em-form">
+          <label class="em-row"><span>From</span><b>${esc(c.from || 'not set up')}</b></label>
+          <label class="em-row"><span>To</span>${c.to.length > 1 ? `<select class="field-input" id="em-to">${c.to.map(x => `<option ${x === to ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>` : `<b>${esc(to || 'no email on this lead')}</b>`}</label>
+          <input class="field-input" id="em-subject" placeholder="Subject" value="${esc(m.subject || '')}" maxlength="300" ${c.blocked ? 'disabled' : ''}>
+          <textarea class="field-input" id="em-text" rows="10" placeholder="Write your email" ${c.blocked ? 'disabled' : ''}>${esc(m.text || '')}</textarea>
+        </div>
+        ${m.msg ? `<p class="em-warn">${esc(m.msg)}</p>` : ''}
+        <div class="form-row">
+          ${ready ? `<button class="btn primary" data-act="email-send" ${m.sending ? 'disabled' : ''}>${m.sending ? 'Sending…' : 'Send'}</button>` : ''}
+          ${!ready && !c.blocked && to && c.canSend ? `<a class="btn" href="${esc(mailto)}" target="_blank" rel="noopener">Open in my email app</a>` : ''}
+          <button class="btn" data-act="close-modal-btn">Cancel</button>
+        </div>
+        ${ready ? '<p class="rail-note">Sends from your own Gmail. It’s saved on this lead’s Updates, and replies show up there too.</p>' : ''}`;
     }
     if (m.type === 'add-column') {
       const ty = m.ctype || 'text';
@@ -2426,6 +2466,24 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
       case 'dropdown': { if (!colEditable(b && b.columns.find(c => c.id === t.dataset.col))) return; const r = t.getBoundingClientRect(); S.pop = { type: 'dropdown', item: t.dataset.item, col: t.dataset.col, x: r.left, y: r.bottom + 4 }; renderLayer(); break; }
       case 'col-button': runButton(t.dataset.item, t.dataset.col); break;
       case 'dtab': { S.drawerTab = t.dataset.tab; renderLayer(); fillNames(); const st = document.querySelector('#layer .drawer-tab[aria-selected="true"]'); if (st) st.focus({ preventScroll: true }); break; }
+      case 'compose-email': {
+        const id = t.dataset.item, b0 = board(); if (!b0) break;
+        S.modal = { type: 'email', item: id, board: b0.id }; renderLayer();
+        KS.api('GET', `/api/email/check?board=${encodeURIComponent(b0.id)}&item=${encodeURIComponent(id)}`).then(c => { if (S.modal && S.modal.type === 'email' && S.modal.item === id) { S.modal.check = c; renderLayer(); } })
+          .catch(e => { if (S.modal && S.modal.type === 'email') { S.modal.msg = e.message; renderLayer(); } });
+        break;
+      }
+      case 'email-send': {
+        const m = S.modal; if (!m || m.type !== 'email' || m.sending) break;
+        m.subject = ($('#em-subject') || {}).value || m.subject || ''; m.text = ($('#em-text') || {}).value || m.text || '';
+        const to = ($('#em-to') || {}).value || m.to || (m.check && m.check.to[0]) || '';
+        if (!m.subject.trim() || !m.text.trim()) { m.msg = !m.subject.trim() ? 'Add a subject.' : 'Write a message.'; renderLayer(); break; }
+        m.sending = true; m.msg = ''; renderLayer();
+        KS.api('POST', '/api/email/send', { board: m.board, item: m.item, to, subject: m.subject, text: m.text })
+          .then(() => { if (S.modal === m) { S.modal = null; renderLayer(); } toast('Email sent. It’s on the lead’s Updates.'); })
+          .catch(e => { m.sending = false; m.msg = e.message || 'The email didn’t send.'; if (S.modal === m) renderLayer(); });
+        break;
+      }
       case 'dup-item': { const i = itemById(t.dataset.item); if (i) { duplicateItem(i, true); } break; }
       case 'cal-nav': {
         const d = Number(t.dataset.d), base = S.calMonth ? new Date(S.calMonth + '-15T12:00:00') : new Date();
@@ -2613,6 +2671,8 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     if (t.id === 'np-role' && S.modal && S.modal.type === 'team') { S.modal.newRole = t.value; const keep = { name: $('#np-name').value, email: $('#np-email').value, pw: $('#np-pw').value }; renderLayer(); $('#np-name').value = keep.name; $('#np-email').value = keep.email; $('#np-pw').value = keep.pw; return; }
     if (t.dataset && t.dataset.guestAdd) { const u = (S.modal.list || []).find(x => x.id === t.dataset.guestAdd); if (!u || !t.value) return; const cur = S.boards.filter(x => ((x.access || {}).members || []).map(e => String(e).toLowerCase()).includes(String(u.email).toLowerCase())).map(x => x.id); setGuestBoards(u, [...cur, t.value]); return; }
     if (t.dataset && t.dataset.homeFor) { KS.updateUser(t.dataset.homeFor, { homeBoard: t.value }).then(() => { S.modal.msg = 'Saved. They land there next time they sign in.'; loadTeam(); }).catch(err => { S.modal.msg = err.message; renderLayer(); }); return; }
+    if (t.dataset && t.dataset.emailFrom) { KS.updateUser(t.dataset.emailFrom, { emailFrom: t.value }).then(() => { S.modal.msg = t.value.trim() ? `Saved. They send email as ${t.value.trim()}.` : 'Saved. They can’t send email now.'; loadTeam(); }).catch(err => { S.modal.msg = err.message; renderLayer(); }); return; }
+    if (t.id === 'em-to' && S.modal && S.modal.type === 'email') { S.modal.to = t.value; return; }
     if (t.dataset && t.dataset.roleFor) { KS.updateUser(t.dataset.roleFor, { role: t.value }).then(loadTeam).catch(err => { S.modal.msg = err.message; renderLayer(); }); return; }
     if (t.id === 'person-filter') { S.person = t.value; S.shown = {}; return render(); }
     if (t.id === 'r-col' || t.id === 'r-action' || t.id === 'r-tcol') {

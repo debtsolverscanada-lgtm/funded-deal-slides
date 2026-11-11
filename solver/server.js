@@ -755,7 +755,8 @@ async function api(req, res, url) {
   if (p === '/api/users' && method === 'GET') {
     // guests: names only (so update and history authors show), never emails or roles
     if (user.role === 'guest') return send(res, 200, q.users.all().map(u => u.id === user.id ? { id: u.id, name: u.name, role: u.role } : { id: u.id, name: u.name }));
-    const list = q.users.all().map(u => user.role === 'admin' ? u : { id: u.id, name: u.name, role: u.role });
+    const efrom = user.role === 'admin' ? new Map(db.prepare('SELECT id, email_from FROM users').all().map(r => [r.id, r.email_from || ''])) : null;
+    const list = q.users.all().map(u => user.role === 'admin' ? { ...u, email_from: efrom.get(u.id) || '' } : { id: u.id, name: u.name, role: u.role });
     return send(res, 200, list);
   }
   if (p === '/api/users' && method === 'POST') {
@@ -775,6 +776,11 @@ async function api(req, res, url) {
       if (b.password && String(b.password).length < 8) throw new HttpError(400, 'Passwords need at least 8 characters.');
       if (b.role) db.prepare('UPDATE users SET role = ? WHERE id = ?').run(b.role, target.id);
       if (b.name) db.prepare('UPDATE users SET name = ? WHERE id = ?').run(String(b.name).trim(), target.id);
+      if (typeof b.emailFrom === 'string') {
+        const ef = b.emailFrom.trim().toLowerCase();
+        if (ef && !/^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[^\s@<>(),;:"]+$/.test(ef)) throw new HttpError(400, 'That isn’t an email address.');
+        db.prepare('UPDATE users SET email_from = ? WHERE id = ?').run(ef || null, target.id);
+      }
       if (typeof b.homeBoard === 'string') db.prepare('UPDATE users SET home_board = ? WHERE id = ?').run(b.homeBoard || null, target.id);
       if (b.password) { db.prepare('UPDATE users SET pw = ? WHERE id = ?').run(hashPassword(String(b.password)), target.id); q.deleteUserSessions.run(target.id); }
       if (typeof b.disabled === 'boolean') {
