@@ -845,6 +845,23 @@ span.tm-status { cursor: default; }
 .tm-inline .field-input { flex: 1 1 200px; }
 .tm-danger { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid rgba(255,90,90,0.35); background: rgba(255,90,90,0.06); border-radius: 10px; padding: 10px 12px; }
 .tm-danger small { display: block; color: var(--muted); font-size: 12px; }
+
+/* ---- selection bar, Monday style: count, then icon-over-label actions ---- */
+.bulkbar { display: flex; align-items: stretch; gap: 0; padding: 6px 6px 6px 14px; border-radius: 16px; }
+.bulkbar .bb-count { display: flex; align-items: center; gap: 10px; padding-right: 14px; margin-right: 6px; border-right: 1px solid var(--line); flex: none; }
+.bulkbar .bb-num { min-width: 30px; height: 30px; padding: 0 8px; border-radius: 999px; background: #fff; color: #000; display: grid; place-items: center; font-weight: 700; font-size: 14px; }
+.bulkbar .bb-label { font-weight: 600; font-size: 14px; white-space: nowrap; }
+.bulkbar .bb-actions { display: flex; align-items: stretch; gap: 2px; }
+.bulkbar .bb-btn { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-width: 74px; padding: 6px 8px; border: 0; border-radius: 10px; background: transparent; color: var(--fg); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.bulkbar .bb-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; opacity: .9; }
+.bulkbar .bb-btn:hover, .bulkbar .bb-btn:focus-within { background: rgba(255,255,255,0.08); }
+.bulkbar .bb-danger { color: #ff9a9a; }
+.bulkbar .bb-danger.is-armed { background: rgba(255,90,90,0.16); }
+.bulkbar .bb-sel { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 16px; }
+.bulkbar .bb-close { flex: none; align-self: center; width: 34px; height: 34px; margin-left: 6px; border: 0; border-left: 1px solid var(--line); border-radius: 0 10px 10px 0; background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
+.bulkbar .bb-close svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.bulkbar .bb-close:hover { color: var(--fg); }
+@media (max-width: 780px) { .bulkbar .bb-label { display: none; } .bulkbar .bb-btn { min-width: 64px; } }
 </style>
 </head>
 <body>
@@ -1975,14 +1992,23 @@ span.tm-status { cursor: default; }
     }
     if (S.selected.size && b && S.view !== 'calendar') {
       const sc = b.columns.filter(c => c.type === 'status').slice(0, 2);
-      html += `<div class="bulkbar" role="region" aria-label="Selected items"><span class="count">${S.selected.size} selected</span>
-        ${S.canWrite ? `${sc.map(c => `<button class="btn" data-act="bulk-status" data-col="${esc(c.id)}">Set ${esc(c.title)}</button>`).join('')}
-        <select class="kbd-select" id="bulk-move" aria-label="Move to group"><option value="">Move to group…</option>${b.groups.map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('')}</select>
-        ${moveBoardSelect(b)}
-        ${S.isGuest ? '' : '<button class="btn" data-act="blast-open" data-ch="email">✉ Email…</button><button class="btn" data-act="blast-open" data-ch="text">💬 Text…</button>'}
-        <button class="btn" data-act="bulk-dup">Duplicate</button>
-        <button class="btn danger" data-act="bulk-del">${S.confirmDelete === 'bulk' ? `Click again to delete ${S.selected.size}` : 'Delete'}</button>` : ''}
-        <button class="btn" data-act="bulk-clear">Clear selection</button></div>`;
+      const BI = d => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
+      const I = { mail: BI('M3 6h18v12H3z M3 7l9 6 9-6'), text: BI('M4 5h16v11H9l-5 4z'), status: BI('M4 12a8 8 0 1 0 16 0a8 8 0 1 0-16 0 M8 12l3 3 5-6'), group: BI('M4 6h16 M4 12h10 M4 18h6 M17 15l3 3-3 3'),
+        board: BI('M4 4h7v16H4z M13 4h7v7h-7z M13 13h7v7h-7z'), dup: BI('M8 8h11v12H8z M5 16V4h11'), del: BI('M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13'), x: BI('M6 6l12 12 M18 6L6 18') };
+      const btn = (attrs, icon, label, cls = '') => `<button class="bb-btn ${cls}" ${attrs}>${icon}<span>${label}</span></button>`;
+      const pick = (icon, label, select) => `<label class="bb-btn bb-pick">${icon}<span>${label}</span>${select}</label>`;
+      const mbs = moveBoardSelect(b);
+      html += `<div class="bulkbar" role="region" aria-label="Selected items">
+        <div class="bb-count"><span class="bb-num">${S.selected.size}</span><span class="bb-label">${S.selected.size === 1 ? 'Lead' : 'Leads'} selected</span></div>
+        <div class="bb-actions">
+        ${S.canWrite && !S.isGuest ? btn('data-act="blast-open" data-ch="email"', I.mail, 'Mass email') + btn('data-act="blast-open" data-ch="text"', I.text, 'Mass text') : ''}
+        ${S.canWrite ? `${sc.map(c => btn(`data-act="bulk-status" data-col="${esc(c.id)}"`, I.status, sc.length > 1 ? esc(c.title) : 'Status')).join('')}
+        ${pick(I.group, 'Move to group', `<select class="bb-sel" id="bulk-move" aria-label="Move to group"><option value="">Move to group…</option>${b.groups.map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('')}</select>`)}
+        ${mbs ? pick(I.board, 'Move to board', mbs.replace('class="kbd-select" id="bulk-board"', 'class="bb-sel" id="bulk-board"')) : ''}
+        ${btn('data-act="bulk-dup"', I.dup, 'Duplicate')}
+        ${btn('data-act="bulk-del"', I.del, S.confirmDelete === 'bulk' ? `Click again: delete ${S.selected.size}` : 'Delete', 'bb-danger' + (S.confirmDelete === 'bulk' ? ' is-armed' : ''))}` : ''}
+        </div>
+        <button class="bb-close" data-act="bulk-clear" aria-label="Clear selection" title="Clear selection">${I.x}</button></div>`;
     }
     if (S.modal && (b || ['team', 'boards', 'profile', 'integrations', 'notifs', 'security'].includes(S.modal.type))) html += `<div class="modal-wrap" data-act="close-modal"><div class="modal" role="dialog" aria-modal="true">${renderModal(b)}</div></div>`;
     if (S.pop && b) html += renderPop(b);
