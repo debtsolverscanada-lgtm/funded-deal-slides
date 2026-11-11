@@ -2292,6 +2292,7 @@ span.tm-status { cursor: default; }
           </div>
           ${u.disabled ? '<p class="tm-warn">This account is turned off, so they can’t sign in. Tap “Off · turn on” to let them back in.</p>' : ''}
           ${open ? `<div class="tm-more">
+            <div class="tm-field"><label>Name</label><div class="tm-inline"><input class="field-input" id="nm-${esc(u.id)}" value="${esc(u.name || '')}" maxlength="80" aria-label="Name for ${esc(u.email || '')}"><button class="btn" data-act="rename-person" data-id="${esc(u.id)}">Save name</button></div></div>
             <div class="tm-field"><label>Password</label><div class="tm-inline"><input class="field-input" id="pw-${esc(u.id)}" type="password" placeholder="New password (8+ characters)" aria-label="New password for ${esc(u.name)}" autocomplete="new-password"><button class="btn" data-act="reset-pw" data-id="${esc(u.id)}">Set password</button></div></div>
             ${sender ? `<div class="tm-field"><label>Sends email &amp; texts as</label><input class="field-input" data-email-from="${esc(u.id)}" type="email" value="${esc(u.email_from || '')}" placeholder="their Gmail, e.g. name@debtsolver.ca" aria-label="Gmail address ${esc(u.name)} sends from"><small>Their own Gmail and RingCentral line (set up in n8n). Leave empty and they can’t send.</small></div>` : ''}
             ${u.role === 'guest' ? `<div class="tm-field"><label>Boards they can see</label><div class="guest-boards">${guestBoards(u).map(x => `<span class="pill">${esc(x.name)}<button class="icon-btn" data-act="guest-board-remove" data-id="${esc(u.id)}" data-board="${esc(x.id)}" aria-label="Take ${esc(u.name)} off ${esc(x.name)}">×</button></span>`).join('') || '<span class="rail-note">None yet, so this guest sees nothing.</span>'}</div>
@@ -2506,6 +2507,8 @@ span.tm-status { cursor: default; }
       case 'monday-sync': KS.mondaySync().then(() => { toast('Copying from Monday. This takes several minutes.'); loadSync(); }).catch(e => { S.modal.msg = e.message; renderLayer(); }); break;
       case 'add-person': addPerson(); break;
       case 'reset-pw': { const id = t.dataset.id, pw = $('#pw-' + id).value; if (pw.length < 8) { S.modal.msg = 'Passwords need at least 8 characters.'; renderLayer(); return; } KS.updateUser(id, { password: pw }).then(() => { S.modal.msg = 'Password changed. They’ll need to sign in again.'; loadTeam(); }).catch(e => { S.modal.msg = e.message; renderLayer(); }); break; }
+      case 'rename-person': { const id = t.dataset.id, nm = (($('#nm-' + id) || {}).value || '').trim(); if (!nm) { S.modal.msg = 'Type a name.'; renderLayer(); return; }
+        KS.updateUser(id, { name: nm }).then(() => { S.modal.msg = `Saved. The name is now ${nm}.`; if (id === S.uid && S.me) S.me.name = nm; loadTeam(); renderRail(); }).catch(e => { S.modal.msg = e.message; renderLayer(); }); break; }
       case 'team-open': S.modal.open = S.modal.open === t.dataset.id ? null : t.dataset.id; renderLayer(); break;
       case 'team-add-toggle': S.modal.adding = !S.modal.adding; renderLayer(); break;
       case 'remove-person': { const id = t.dataset.id; if (S.confirmDelete !== 'rm:' + id) { S.confirmDelete = 'rm:' + id; renderLayer(); return; } S.confirmDelete = null;
