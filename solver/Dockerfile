@@ -1,6 +1,6 @@
 FROM node:22-slim
 WORKDIR /app
-COPY package.json server.js monday.js integrations.js security.js sheets.js ext.js automation.js ai.js docs.js push.js alerts.js comms.js email.js features.js ./
+COPY package.json server.js monday.js integrations.js security.js sheets.js ext.js automation.js ai.js docs.js push.js alerts.js comms.js email.js blast.js features.js ./
 COPY public ./public
 COPY scripts ./scripts
 ENV NODE_ENV=production PORT=3000 DATA_DIR=/data

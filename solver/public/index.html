@@ -804,6 +804,15 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
 .em-row .field-input { flex: 1; }
 .em-form textarea { resize: vertical; min-height: 180px; font: inherit; line-height: 1.5; }
 .em-warn { color: #ffd27a; margin: 4px 0 8px; }
+
+/* ---- mass email / text ---- */
+.bl-preview { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin: 4px 0 12px; background: rgba(255,255,255,0.03); }
+.bl-preview p { margin: 0 0 6px; }
+.bl-preview details { margin: 4px 0 8px; color: var(--muted); font-size: 13px; }
+.bl-preview ul { margin: 6px 0 0 18px; padding: 0; }
+.bl-sample { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--line); padding-top: 8px; margin-top: 6px; }
+.blast-pill { position: fixed; left: 50%; transform: translateX(-50%); bottom: 18px; z-index: 40; display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 16px; border-radius: 999px; background: #18181b; border: 1px solid var(--line-2); box-shadow: 0 10px 30px rgba(0,0,0,.5); font-size: 13px; }
+@media (max-width: 780px) { .blast-pill { bottom: calc(86px + env(safe-area-inset-bottom, 0px)); max-width: calc(100vw - 24px); } }
 </style>
 </head>
 <body>
@@ -1360,7 +1369,22 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
     c.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
     t.style.width = Math.ceil(c.measureText(t.value || ' ').width + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + 6) + 'px';
   }
-  document.addEventListener('input', e => { const t = e.target; if (t && t.id === 'board-title') fitTitle(); if (t && S.modal && S.modal.type === 'email') { if (t.id === 'em-subject') S.modal.subject = t.value; if (t.id === 'em-text') S.modal.text = t.value; } });
+  document.addEventListener('input', e => { const t = e.target; if (t && t.id === 'board-title') fitTitle(); if (t && S.modal && S.modal.type === 'email') { if (t.id === 'em-subject') S.modal.subject = t.value; if (t.id === 'em-text') S.modal.text = t.value; }
+    if (t && S.modal && S.modal.type === 'blast' && (t.id === 'bl-subject' || t.id === 'bl-text')) { if (t.id === 'bl-subject') S.modal.subject = t.value; else S.modal.text = t.value; if (S.modal.preview) { S.modal.preview = null; renderLayer(); const f = $('#' + t.id); if (f) { f.focus(); f.setSelectionRange(f.value.length, f.value.length); } } } });
+  // progress pill for mass email / text that are still sending, with Stop
+  let blastTimer = null;
+  function pollBlasts() {
+    clearTimeout(blastTimer);
+    if (!window.KS || !S.me || S.isGuest) return;
+    KS.api('GET', '/api/blast/mine').then(list => {
+      let el = document.getElementById('blast-pill'); const live = (list || []).filter(x => x.status === 'sending');
+      if (!live.length) { if (el) el.remove(); return; }
+      if (!el) { el = document.createElement('div'); el.id = 'blast-pill'; el.className = 'blast-pill'; document.body.appendChild(el); }
+      el.innerHTML = live.map(x => `<span>${x.channel === 'email' ? '✉ Mass email' : '💬 Mass text'}: ${x.sent} of ${x.total} sent${x.failed ? ` · ${x.failed} failed` : ''}${x.skipped ? ` · ${x.skipped} skipped` : ''}</span><button class="btn" data-act="blast-stop" data-id="${esc(x.id)}">Stop</button>`).join('');
+      blastTimer = setTimeout(pollBlasts, 5000);
+    }).catch(() => { blastTimer = setTimeout(pollBlasts, 15000); });
+  }
+  setTimeout(pollBlasts, 3000);
   // the ⋯ sheet on phones: every board action the compact header leaves out
   function boardSheet(b) {
     const row = (inner) => `<div class="sheet-list glass">${inner}</div>`;
@@ -1923,6 +1947,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
         ${S.canWrite ? `${sc.map(c => `<button class="btn" data-act="bulk-status" data-col="${esc(c.id)}">Set ${esc(c.title)}</button>`).join('')}
         <select class="kbd-select" id="bulk-move" aria-label="Move to group"><option value="">Move to group…</option>${b.groups.map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('')}</select>
         ${moveBoardSelect(b)}
+        ${S.isGuest ? '' : '<button class="btn" data-act="blast-open" data-ch="email">✉ Email…</button><button class="btn" data-act="blast-open" data-ch="text">💬 Text…</button>'}
         <button class="btn" data-act="bulk-dup">Duplicate</button>
         <button class="btn danger" data-act="bulk-del">${S.confirmDelete === 'bulk' ? `Click again to delete ${S.selected.size}` : 'Delete'}</button>` : ''}
         <button class="btn" data-act="bulk-clear">Clear selection</button></div>`;
@@ -2251,6 +2276,29 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
         ${m.newRole === 'guest' ? `<div class="form-row np-boards"><span class="rail-note">Boards this guest can see:</span>${S.boards.map(x => `<label class="pop-check" style="padding:2px 6px"><input type="checkbox" class="np-board" value="${esc(x.id)}">${esc(x.name)}</label>`).join('')}</div>` : ''}
         <div><button class="btn" data-act="close-modal-btn">Done</button></div>`;
     }
+    if (m.type === 'blast') {
+      const em = m.channel === 'email', pv = m.preview;
+      const groups = {}; (pv ? pv.skipped : []).forEach(x => { (groups[x.why] = groups[x.why] || []).push(x.name); });
+      return `<h3>${em ? 'Mass email' : 'Mass text'} · ${m.items.length} selected</h3>
+        <p class="rail-note" style="margin-top:0">Each lead gets their <b>own</b> ${em ? 'email' : 'text'}, sent one at a time from ${em ? 'your Gmail' : 'your RingCentral line'}. Use <code>{first name}</code> to personalise.${em ? ' An unsubscribe line is added at the bottom.' : ' “Reply STOP to opt out.” is added at the end.'}</p>
+        <div class="em-form">
+          ${em ? `<input class="field-input" id="bl-subject" placeholder="Subject" value="${esc(m.subject || '')}" maxlength="300">` : ''}
+          <textarea class="field-input" id="bl-text" rows="${em ? 9 : 4}" maxlength="${em ? 20000 : 600}" placeholder="${em ? 'Hi {first name},\n\n…' : 'Hi {first name}, it’s … from DebtSolvers Canada. …'}">${esc(m.text || '')}</textarea>
+          ${em ? '' : `<span class="rail-note">${(m.text || '').length}/600 characters</span>`}
+        </div>
+        ${m.msg ? `<p class="em-warn">${esc(m.msg)}</p>` : ''}
+        ${pv ? `<div class="bl-preview">
+          <p><b>${pv.count} will get it</b>${pv.count ? ` · from ${esc(pv.from)} · about ${pv.minutes} min to send all` : ''}</p>
+          ${Object.keys(groups).length ? `<details><summary>${pv.skipped.length} skipped</summary><ul>${Object.entries(groups).map(([why, names]) => `<li><b>${esc(why)}</b> (${names.length}): ${esc(names.slice(0, 8).join(', '))}${names.length > 8 ? '…' : ''}</li>`).join('')}</ul></details>` : ''}
+          ${pv.sample ? `<div class="bl-sample"><span class="rail-note">How ${esc(pv.sample.name)} will see it</span>${em ? `<b>${esc(pv.sample.subject)}</b>` : ''}<div class="u-text">${esc(pv.sample.text)}</div></div>` : ''}
+          ${pv.count > pv.limit ? `<p class="em-warn">That’s more than ${pv.limit}. Blasts this big need an admin to send them.</p>` : ''}
+        </div>` : ''}
+        <div class="form-row">
+          ${pv && pv.count && pv.count <= pv.limit ? `<button class="btn primary" data-act="blast-start" ${m.sending ? 'disabled' : ''}>${m.sending ? 'Starting…' : `Send to ${pv.count} lead${pv.count === 1 ? '' : 's'}`}</button>` : ''}
+          <button class="btn ${pv ? '' : 'primary'}" data-act="blast-preview" ${m.checking ? 'disabled' : ''}>${m.checking ? 'Checking…' : pv ? 'Check again' : 'Check who gets it'}</button>
+          <button class="btn" data-act="close-modal-btn">Cancel</button>
+        </div>`;
+    }
     if (m.type === 'email') {
       const i = itemById(m.item), c = m.check;
       if (!i) return '<p>This lead isn’t on the board any more.</p><div><button class="btn" data-act="close-modal-btn">Close</button></div>';
@@ -2466,6 +2514,22 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
       case 'dropdown': { if (!colEditable(b && b.columns.find(c => c.id === t.dataset.col))) return; const r = t.getBoundingClientRect(); S.pop = { type: 'dropdown', item: t.dataset.item, col: t.dataset.col, x: r.left, y: r.bottom + 4 }; renderLayer(); break; }
       case 'col-button': runButton(t.dataset.item, t.dataset.col); break;
       case 'dtab': { S.drawerTab = t.dataset.tab; renderLayer(); fillNames(); const st = document.querySelector('#layer .drawer-tab[aria-selected="true"]'); if (st) st.focus({ preventScroll: true }); break; }
+      case 'blast-open': { const b0 = board(); if (!b0 || !S.selected.size) break; S.modal = { type: 'blast', channel: t.dataset.ch === 'text' ? 'text' : 'email', board: b0.id, items: [...S.selected] }; renderLayer(); break; }
+      case 'blast-preview': case 'blast-start': {
+        const m = S.modal; if (!m || m.type !== 'blast') break;
+        m.subject = ($('#bl-subject') || {}).value ?? m.subject; m.text = ($('#bl-text') || {}).value ?? m.text;
+        const body = { channel: m.channel, board: m.board, items: m.items, subject: m.subject || '', text: m.text || '' };
+        if (a === 'blast-preview') {
+          m.checking = true; m.msg = ''; renderLayer();
+          KS.api('POST', '/api/blast/preview', body).then(r => { m.checking = false; m.preview = r; if (S.modal === m) renderLayer(); }).catch(e => { m.checking = false; m.preview = null; m.msg = e.message; if (S.modal === m) renderLayer(); });
+        } else {
+          m.sending = true; renderLayer();
+          KS.api('POST', '/api/blast/start', { ...body, expect: m.preview && m.preview.count }).then(r => { if (S.modal === m) { S.modal = null; renderLayer(); } S.selected = new Set(); render(); toast(`Sending to ${r.total} leads, one at a time. Each one shows on the lead’s Updates.`); pollBlasts(); })
+            .catch(e => { m.sending = false; m.msg = e.message; if (S.modal === m) renderLayer(); });
+        }
+        break;
+      }
+      case 'blast-stop': KS.api('POST', `/api/blast/${encodeURIComponent(t.dataset.id)}/stop`, {}).then(() => { toast('Stopped. Nothing else from that blast will be sent.'); pollBlasts(); }).catch(e => toast(e.message)); break;
       case 'compose-email': {
         const id = t.dataset.item, b0 = board(); if (!b0) break;
         S.modal = { type: 'email', item: id, board: b0.id }; renderLayer();

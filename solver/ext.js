@@ -12,6 +12,7 @@ module.exports = function ext(ctx) {
   const alerts = require('./alerts.js')(ctx);
   const comms = require('./comms.js')(ctx);
   const email = require('./email.js')(ctx);
+  const blast = require('./blast.js')(ctx, email);
 
   // integrations.js calls these for rules run through the API, date reminders and /api/v1/events
   integHooks.ruleRan = (bid, rid, iid, itemName, result, via) => automation.logRun(bid, rid, iid, itemName, result, true, via);
@@ -19,7 +20,7 @@ module.exports = function ext(ctx) {
   integHooks.webhookThrottled = (bid, iid, rule) => automation.throttled(bid, iid, rule);
   integHooks.onEvent = (body, hits, actor) => comms.onEvent(body, hits, actor);
 
-  const modules = [automation, ai, docs, push, alerts, comms, email];
+  const modules = [automation, ai, docs, push, alerts, comms, email, blast];
   return {
     // signed-in API routes; returns false when none of them matched
     async handle(req, res, url, user) {
@@ -35,6 +36,6 @@ module.exports = function ext(ctx) {
       try { push.onNotify(user, n); } catch (e) { console.error('push:', e.message); }
       try { alerts.onNotify(user, n); } catch (e) { console.error('alerts:', e.message); }
     },
-    automation, ai, docs, push, alerts, comms, email,
+    automation, ai, docs, push, alerts, comms, email, blast,
   };
 };
