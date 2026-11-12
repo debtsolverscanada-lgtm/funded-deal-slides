@@ -31,14 +31,15 @@
     const l = queue[0];
     if (!el) { el = document.createElement('div'); el.id = 'newlead'; el.setAttribute('role', 'alertdialog'); el.setAttribute('aria-live', 'assertive'); document.body.appendChild(el); }
     const fresh = !shown || shown !== l.id; shown = l.id;
-    el.innerHTML = `<div class="nl-card${fresh ? ' nl-in' : ''}">
-      <div class="nl-top"><span class="nl-pill"><i></i>NEW LEAD</span>${queue.length > 1 ? `<span class="nl-count">1 of ${queue.length}</span>` : ''}<button class="nl-x" aria-label="Close this new lead" title="Close">✕</button></div>
+    const client = l.kind === 'client';
+    el.innerHTML = `<div class="nl-card${client ? ' nl-client' : ''}${fresh ? ' nl-in' : ''}">
+      <div class="nl-top"><span class="nl-pill"><i></i>${client ? 'NEW CLIENT ✅' : 'NEW LEAD'}</span>${queue.length > 1 ? `<span class="nl-count">1 of ${queue.length}</span>` : ''}<button class="nl-x" aria-label="Close this new lead" title="Close">✕</button></div>
       <div class="nl-name">${esc(l.name || 'New lead')}</div>
       <div class="nl-rows">
         ${l.phone ? `<a class="nl-row" href="tel:+1${esc(l.phone)}"><span>📞</span><b>${esc(fmtPhone(l.phone))}</b></a>` : ''}
         ${l.email ? `<div class="nl-row"><span>✉️</span><b>${esc(l.email)}</b></div>` : ''}
       </div>
-      <div class="nl-foot"><span>${esc(l.boardName || '')} · ${esc(ago(l.at))}</span><button class="nl-open">Open lead →</button></div>
+      <div class="nl-foot"><span>${client ? 'Just signed · on ' : ''}${esc(l.boardName || '')} · ${esc(ago(l.at))}</span><button class="nl-open">${client ? 'Open client →' : 'Open lead →'}</button></div>
     </div>`;
     el.querySelector('.nl-x').onclick = () => next(false);
     el.querySelector('.nl-open').onclick = () => next(true);

@@ -16,17 +16,24 @@ module.exports = function newleads({ db, q, now, HttpError, readBody, send, canS
     CREATE INDEX IF NOT EXISTS lead_arrivals_at ON lead_arrivals(at);
     CREATE TABLE IF NOT EXISTS lead_seen (user_id TEXT NOT NULL, arrival INTEGER NOT NULL, at TEXT NOT NULL, PRIMARY KEY (user_id, arrival));
   `);
+  try { db.exec("ALTER TABLE lead_arrivals ADD COLUMN kind TEXT NOT NULL DEFAULT 'lead'"); } catch (e) { /* already there */ }
   const env = k => String(process.env[k] || '').trim();
+  // a lead board has the sales groups (Pitched + Signed); the Clients board gets "NEW CLIENT"; anything else: nothing
+  const kindOf = b => { const g = (b.groups || []).map(x => String(x.name || '')); if (g.some(n => /pitch/i.test(n)) && g.some(n => /signed/i.test(n))) return 'lead'; if (/^clients?$/i.test(String(b.name || '').trim())) return 'client'; return ''; };
   const off = () => env('NEW_LEAD_BANNERS').toLowerCase() === 'off';
   const isDebtSolvers = b => { const w = b.workspace || {}; return !!w.id && w.id !== 'main' && !/mortgage\s*solver/i.test(w.name || ''); };
   const phone10 = s => { const d = String(s || '').replace(/\D/g, ''); const t = d.length === 11 && d[0] === '1' ? d.slice(1) : d; return t.length === 10 ? t : ''; };
 
+  // banners recorded before kinds existed: label them again by their board (Clients -> NEW CLIENT, others dropped)
+  try { for (const r of db.prepare('SELECT DISTINCT board FROM lead_arrivals').all()) { const d = q.doc.get('boards/' + r.board); const k = d ? kindOf(JSON.parse(d.data)) : '';
+    if (!k) db.prepare('DELETE FROM lead_arrivals WHERE board = ?').run(r.board); else db.prepare('UPDATE lead_arrivals SET kind = ? WHERE board = ?').run(k, r.board); } } catch (e) { console.error('new lead kinds:', e.message); }
   // Called when an item is saved for the first time on a board
   function noteItem(bid, iid, doc) {
     try {
       if (off() || !doc) return;
       const r = q.doc.get('boards/' + bid); if (!r) return; const b = JSON.parse(r.data);
       if (!isDebtSolvers(b)) return;
+      const kind = kindOf(b); if (!kind) return;
       if (/\(copy\)/i.test(String(doc.name || ''))) return;
       const created = Date.parse(doc.createdAt || doc.created_at || '') || Date.now();
       if (Date.now() - created > (Number(env('NEWLEAD_MAX_AGE_H')) || 6) * 3600e3) return; // an old item, not a new lead
@@ -36,7 +43,7 @@ module.exports = function newleads({ db, q, now, HttpError, readBody, send, canS
       const email = (cols.filter(c => c.type === 'email').map(c => String(v[c.id] || '').trim()).find(x => x.includes('@')) || '').slice(0, 200);
       const phone = cols.filter(c => c.type === 'phone' || /phone|mobile|cell/i.test(c.title || '')).map(c => phone10(v[c.id])).find(Boolean) || '';
       if (!email && !phone) return; // not a lead (a task, a note…)
-      db.prepare('INSERT OR IGNORE INTO lead_arrivals (at, board, item, name, email, phone) VALUES (?, ?, ?, ?, ?, ?)').run(now(), String(bid), String(iid), String(doc.name || '').slice(0, 120), email, phone);
+      db.prepare('INSERT OR IGNORE INTO lead_arrivals (at, board, item, name, email, phone, kind) VALUES (?, ?, ?, ?, ?, ?, ?)').run(now(), String(bid), String(iid), String(doc.name || '').slice(0, 120), email, phone, kind);
     } catch (e) { console.error('new lead banner:', e.message); }
   }
 
@@ -49,7 +56,7 @@ module.exports = function newleads({ db, q, now, HttpError, readBody, send, canS
       for (const r of rows) {
         const info = boardInfo(r.board); if (!info || !canSee(user, info.access)) continue;
         if (!q.doc.get(`boards/${r.board}/items/${r.item}`)) continue; // deleted since
-        out.push({ id: r.id, at: r.at, board: r.board, boardName: info.name, item: r.item, name: r.name, email: r.email, phone: r.phone });
+        out.push({ id: r.id, at: r.at, board: r.board, boardName: info.name, item: r.item, name: r.name, email: r.email, phone: r.phone, kind: r.kind || 'lead' });
       }
       return send(res, 200, { leads: out }), true;
     }
