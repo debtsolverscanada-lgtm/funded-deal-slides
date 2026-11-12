@@ -14,7 +14,7 @@
 'use strict';
 const crypto = require('node:crypto');
 
-module.exports = function email({ db, q, now, broadcast, HttpError, readBody, send, boardInfo, mustSee, itemVisible }) {
+module.exports = function email({ db, q, now, broadcast, HttpError, readBody, send, boardInfo, mustSee, itemVisible, integHooks = {} }) {
   try { db.exec('ALTER TABLE users ADD COLUMN email_from TEXT'); } catch (e) { /* already there */ }
   db.exec(`
     CREATE TABLE IF NOT EXISTS email_log (
@@ -98,10 +98,12 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
   function addUpdate(bid, iid, upd, activityText) {
     const path = `boards/${bid}/items/${iid}`, r = q.doc.get(path); if (!r) return;
     const item = JSON.parse(r.data);
-    item.updates = [...(item.updates || []), { id: 'u' + crypto.randomBytes(6).toString('hex'), at: now(), ...upd }];
+    const nu = { id: 'u' + crypto.randomBytes(6).toString('hex'), at: now(), ...upd };
+    item.updates = [...(item.updates || []), nu];
     if (activityText) item.activity = [{ at: now(), by: upd.by || 'automation', text: activityText }, ...(item.activity || [])].slice(0, 40);
     q.upsertDoc.run(path, `boards/${bid}/items`, iid, JSON.stringify(item), now(), upd.by || 'outreach');
     broadcast({ op: 'set', col: `boards/${bid}/items`, id: iid, data: item });
+    if (integHooks.updateAdded) { try { integHooks.updateAdded(bid, iid, nu); } catch (e) { /* write-back only */ } }
   }
 
   async function postHook(url, body, ms) {

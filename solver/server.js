@@ -1560,9 +1560,9 @@ if (require.main === module) {
   // the write-ahead log is folded into the database and cut back to nothing every 10 minutes
   setInterval(() => { try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch (e) { console.error('checkpoint:', e.message); } }, 10 * 60 * 1000).unref();
   if (livePullOn()) {
-    const every = 5 * 60 * 1000;
+    const mins = Math.max(1, Math.min(60, Number(process.env.MONDAY_PULL_MINUTES) || 5)), every = mins * 60 * 1000;
     setInterval(() => { runMondayPull(); }, every).unref();
     setTimeout(() => { runMondayPull(); }, 20000).unref();
-    console.log('Live pull from Monday: on, every 5 minutes.');
+    console.log(`Live pull from Monday: on, every ${mins} minute${mins > 1 ? 's' : ''}.`);
   }
 }

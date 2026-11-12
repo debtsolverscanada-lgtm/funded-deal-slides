@@ -18,6 +18,8 @@ module.exports = function ext(ctx) {
   const sequences = require('./sequences.js')(ctx, email);
   const crossboard = require('./crossboard.js')(ctx, integHooks);
   const stats = require('./stats.js')(ctx);
+  const mondaywrite = require('./mondaywrite.js')(ctx);
+  integHooks.updateAdded = (bid, iid, upd) => mondaywrite.onNote(bid, iid, upd); // notes the server posts (emails, texts, replies)
 
   // integrations.js calls these for rules run through the API, date reminders and /api/v1/events
   integHooks.ruleRan = (bid, rid, iid, itemName, result, via) => automation.logRun(bid, rid, iid, itemName, result, true, via);
@@ -27,7 +29,7 @@ module.exports = function ext(ctx) {
   integHooks.newItem = (bid, iid, doc) => newleads.noteItem(bid, iid, doc); // NEW LEAD banners
   integHooks.itemSaved = (bid, iid, before, after) => sequences.onItem(bid, iid, before, after); // email sequences
 
-  const modules = [automation, ai, docs, push, alerts, comms, email, blast, apps, newleads, sequences, crossboard, stats];
+  const modules = [automation, ai, docs, push, alerts, comms, email, blast, apps, newleads, sequences, crossboard, stats, mondaywrite];
   return {
     // signed-in API routes; returns false when none of them matched
     async handle(req, res, url, user) {
@@ -38,7 +40,7 @@ module.exports = function ext(ctx) {
     checkBoard: (data, before) => automation.checkBoard(data, before),
     // an item was saved by a person through /api/doc
     itemSaved(dp, before, after, user) { try { ai.itemSaved(dp, before, after, user); } catch (e) { console.error('ai autorun:', e.message); }
-      const m = /^boards\/([^/]+)\/items\/([^/]+)$/.exec(String(dp || '')); if (m) sequences.onItem(m[1], m[2], before, after); },
+      const m = /^boards\/([^/]+)\/items\/([^/]+)$/.exec(String(dp || '')); if (m) { sequences.onItem(m[1], m[2], before, after); mondaywrite.onSaved(m[1], m[2], before, after, user); } },
     // an in-app notification was made for this person
     onNotify(user, n) {
       try { push.onNotify(user, n); } catch (e) { console.error('push:', e.message); }
