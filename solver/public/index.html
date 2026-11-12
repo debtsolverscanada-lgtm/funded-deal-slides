@@ -612,6 +612,8 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
   .home > .home-top { grid-column: 1 / -1; }
   .home > .hero, .home > .quick, .home > .home-fu { grid-column: 1; }
   .home > .home-boards { grid-column: 2; grid-row: 2 / span 3; }
+  .home > #admin-stats { grid-row: 2; }
+  .home:has(> #admin-stats) > .home-boards { grid-row: 3 / span 3; }
 }
 
 /* ---------- phone calendar: an agenda list ---------- */
@@ -1077,6 +1079,30 @@ html.mx-off.pet-docked .pet svg { animation: none; }
   .sq-step-h{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px}.sq-step-h span{flex:1}.sq-n{width:62px;display:inline-block;padding:4px 6px}
   .sq-person{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.07)}
   .sq-person .btn{padding:4px 10px;font-size:12px;margin-left:auto}.linkish{background:none;border:0;color:inherit;font:inherit;font-weight:600;text-decoration:underline;cursor:pointer;padding:0}
+
+  /* Admin team stats (stats-ui.js) */
+  #admin-stats{display:flex;flex-direction:column;gap:16px;margin:18px 0;grid-column:1 / -1;width:100%;min-width:0}
+  .st-card{border:1px solid rgba(255,255,255,.1);border-radius:22px;padding:18px 20px;background:rgba(255,255,255,.03)}
+  .st-h{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}.st-h h2{margin:0;font-size:20px}.st-h .btn{margin-left:auto;padding:6px 12px;font-size:13px}
+  .st-sub{font-size:12.5px;opacity:.6}
+  .st-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}
+  .st-tile{border-radius:16px;padding:12px 14px;background:linear-gradient(160deg,rgba(255,255,255,.07),rgba(255,255,255,.02));display:flex;flex-direction:column;gap:2px}
+  .st-tile span{font-size:12px;opacity:.7}.st-tile b{font-size:28px;font-weight:800;letter-spacing:-.02em}.st-tile small{font-size:12px;opacity:.65}
+  .st-callout{margin:4px 0 12px;padding:10px 14px;border-radius:12px;background:rgba(255,190,40,.12);border:1px solid rgba(255,190,40,.3);font-size:14px}
+  .st-scroll{overflow-x:auto}
+  .st-table{width:100%;border-collapse:collapse;font-size:14px;min-width:760px}
+  .st-table th{font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;opacity:.65;font-weight:600;text-align:right;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.1);white-space:nowrap}
+  .st-table th:first-child,.st-table td:first-child{text-align:left}
+  .st-table th small,.st-table td small{display:block;font-size:11px;opacity:.6;text-transform:none;letter-spacing:0;font-weight:400}
+  .st-table td{text-align:right;padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.06);font-variant-numeric:tabular-nums;font-weight:600}
+  .st-table td small{font-weight:500}.st-table tr:hover td{background:rgba(255,255,255,.03)}
+  .st-good{color:#3ddc84}.st-muted{opacity:.5}.st-name small{opacity:.55}
+  .st-src .st-name{max-width:320px;white-space:normal}
+  .st-bar{display:inline-flex;align-items:center;gap:8px;justify-content:flex-end;min-width:110px}
+  .st-bar i{display:inline-block;height:6px;border-radius:9px;max-width:60px}.st-bar b{min-width:42px}
+  .st-bar.bad i{background:#ff5a5f}.st-bar.mid i{background:#ffb627}.st-bar.good i{background:#3ddc84}
+  .st-seg{display:inline-flex;border:1px solid rgba(255,255,255,.15);border-radius:99px;overflow:hidden;margin-left:auto}
+  .st-seg button{background:none;border:0;color:inherit;font:inherit;font-size:13px;padding:5px 12px;cursor:pointer;opacity:.7}.st-seg button.on{background:rgba(255,255,255,.12);opacity:1;font-weight:600}
 </style>
 </head>
 <body>
@@ -3812,6 +3838,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
 <script src="/address.js"></script>
 <script src="/newlead.js"></script>
 <script src="/sequences-ui.js"></script>
+<script src="/stats-ui.js"></script>
 <script src="/fun.js"></script>
 <script src="/install.js"></script>
 </body>
