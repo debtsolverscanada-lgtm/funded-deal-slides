@@ -2511,7 +2511,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
           ${row('security', PI.shield, 'Security', twofa ? 'Two-factor is on' : '<span class="pf-warn">Two-factor is off · turn it on</span>')}
           ${row('notifs', IC.bell, 'Notifications', S.notifs.unread ? `${S.notifs.unread} new` : 'All caught up')}
           ${window.SolverExt ? row('pf-page', PI.phone, 'Alerts', 'Phone, desktop and email', 'data-page="alerts"') : ''}
-          ${S.gmail && S.gmail.available && canSendMsgs() ? row('gmail', IC_MAIL, S.gmail.connected ? 'Gmail connected' : 'Connect Gmail', S.gmail.connected ? esc(S.gmail.connected.email) + ' · tap to disconnect' : '<span class="pf-warn">Send lead emails from your own Gmail</span>') : ''}
+          ${S.gmail && S.gmail.available && canSendMsgs() ? row('gmail', IC_MAIL.replace('<svg ', '<svg fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" '), S.gmail.connected ? 'Gmail connected' : 'Connect Gmail', S.gmail.connected ? esc(S.gmail.connected.email) + ' · tap to disconnect' : '<span class="pf-warn">Send lead emails from your own Gmail</span>') : ''}
         </div>
         ${S.isOwner ? `<div class="pf-sec">Admin</div>
         <div class="pf-group">
