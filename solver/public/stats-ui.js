@@ -24,7 +24,7 @@
     const top = best('signedWeek'), topP = best('pitchesWeek');
     const bub = (label, today, week, cls = '') => `<div class="st-bub ${cls}"><span>${label}</span><b>${today}</b>${week !== undefined ? `<small>${week}</small>` : ''}</div>`;
     const cards = R.map(r => {
-      const pitchRate = r.leadsWeek ? Math.round(100 * r.pitchesWeek / r.leadsWeek) : null;
+      const pitchRate = r.pitchRateWeek;
       return `<div class="st-rep-card${top && r === top && r.signedWeek ? ' st-top' : ''}">
         <div class="st-rep-h"><span class="st-av">${esc((r.rep || '?').slice(0, 1))}</span><button class="linkish" data-st-open="${esc(r.board)}">${esc(r.rep)}</button>${top && r === top && r.signedWeek ? '<span class="st-badge">🏆 Top this week</span>' : ''}</div>
         <div class="st-bubs">
@@ -33,7 +33,7 @@
           ${bub('🎯 Pitches', n(r.pitchesToday), n(r.pitchesWeek) + ' this week', 'b-amber')}
           ${bub('✅ Signed', n(r.signedToday), n(r.signedWeek) + ' this week', 'b-green')}
           ${bub('✨ New leads', n(r.leadsToday), n(r.leadsWeek) + ' this week', 'b-violet')}
-          ${bub('📈 Pitch rate', p(pitchRate), 'this week', 'b-amber')}
+          ${bub('📈 Pitch rate', p(pitchRate), 'of this week’s new leads', 'b-amber')}
           ${bub('🔁 Callbacks', n(r.callbacksWeek), 'this week', 'b-teal')}
           ${bub('🗑 Junked', n(r.junkWeek), 'this week', 'b-red')}
           ${bub('⏳ Uncontacted', n(r.uncontacted30), 'last 30 days', 'b-grey')}

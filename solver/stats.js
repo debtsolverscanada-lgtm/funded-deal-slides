@@ -63,11 +63,11 @@ module.exports = function stats({ db, q, now, HttpError, send }) {
     for (const lb of boards) {
       const b = lb.b, dcol = colBy(b, /date entered/i), adc = colBy(b, /^ad name$/i), cpc = colBy(b, /campaign name/i), asc = colBy(b, /ad\s*set name/i);
       const gk = new Map((b.groups || []).map(g => [g.id, kind(g.name)]));
-      let leadsToday = 0, leadsWeek = 0, uncontacted = 0;
+      let leadsToday = 0, leadsWeek = 0, uncontacted = 0, reachedWeek = 0;
       for (const r of q.docsInCol.all(`boards/${lb.id}/items`)) {
         const it = JSON.parse(r.data), v = it.values || {}; const ent = String((dcol && v[dcol.id]) || it.createdAt || '').slice(0, 10);
         const k = gk.get(it.group) || 'other';
-        if (ent === today) leadsToday++; if (ent >= ws) leadsWeek++;
+        if (ent === today) leadsToday++; if (ent >= ws) { leadsWeek++; if (['pitched', 'signed', 'flopped', 'callback'].includes(k)) reachedWeek++; }
         if (k === 'new' && ent >= month) uncontacted++;
         if (ent >= month && /@|\d/.test(JSON.stringify(v))) {
           for (const [dim, col] of [['ad', adc], ['adset', asc], ['campaign', cpc]]) {
@@ -78,10 +78,12 @@ module.exports = function stats({ db, q, now, HttpError, send }) {
         }
       }
       const mine = mv.moves.filter(m => m.board === lb.id);
-      const cnt = (to, fromDay) => new Set(mine.filter(m => m.to === to && m.day >= fromDay).map(m => m.item)).size;
+      // a pitch = a lead moved into Pitched from New/Uncontacted (moving between Callbacks and Pitched isn't a new pitch)
+      const cnt = (to, fromDay) => new Set(mine.filter(m => m.to === to && m.day >= fromDay && (to !== 'pitched' || m.from === 'new' || m.from === 'other')).map(m => m.item)).size;
       const dr = dl && Object.entries(dl).find(([n]) => lb.rep.toLowerCase().startsWith(n.toLowerCase()) || n.toLowerCase().startsWith(lb.rep.toLowerCase().split(' ')[0]));
       const days = dr ? dr[1].byDay || {} : null, sumD = (k, from) => days ? Object.entries(days).filter(([d]) => d >= from).reduce((a, [, o]) => a + (o[k] || 0), 0) : null;
-      reps.push({ board: lb.id, rep: lb.rep, leadsToday, leadsWeek, uncontacted30: uncontacted,
+      const pitchRateWeek = leadsWeek ? Math.round(100 * reachedWeek / leadsWeek) : null;
+      reps.push({ board: lb.id, rep: lb.rep, leadsToday, leadsWeek, uncontacted30: uncontacted, pitchRateWeek,
         dialsToday: sumD('dials', today), dialsWeek: sumD('dials', ws), talksToday: sumD('talks', today), talksWeek: sumD('talks', ws),
         pitchesToday: cnt('pitched', today), pitchesWeek: cnt('pitched', ws), signedToday: cnt('signed', today), signedWeek: cnt('signed', ws),
         junkWeek: cnt('junk', ws), callbacksWeek: cnt('callback', ws) });
@@ -89,7 +91,8 @@ module.exports = function stats({ db, q, now, HttpError, send }) {
     const pct = (a, b) => b ? Math.round(1000 * a / b) / 10 : null;
     const sources = [...src.values()].filter(s => s.leads >= 3).map(s => ({ dim: s.dim, name: s.name, leads: s.leads, junkRate: pct(s.junk, s.leads), pitchRate: pct(s.pitched, s.leads), signRate: pct(s.signed, s.leads), signed: s.signed, reps: [...s.reps].sort(), cpl: null }))
       .sort((a, b) => (b.signRate - a.signRate) || (b.leads - a.leads));
-    return { at: now(), weekStart: ws, today, reps: reps.sort((a, b) => (b.signedWeek - a.signedWeek) || (b.pitchesWeek - a.pitchesWeek)), sources, dialsOn: !!dl, movesNote: mv.note || null, spendOn: false };
+    const active = reps.filter(r => r.leadsWeek || r.dialsWeek || r.pitchesWeek || r.signedWeek || r.uncontacted30);
+    return { at: now(), weekStart: ws, today, reps: active.sort((a, b) => (b.signedWeek - a.signedWeek) || (b.pitchesWeek - a.pitchesWeek)), sources, dialsOn: !!dl, movesNote: mv.note || null, spendOn: false };
   }
 
   async function handle(req, res, url, user) {
