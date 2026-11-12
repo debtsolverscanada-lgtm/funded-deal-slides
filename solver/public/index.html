@@ -968,6 +968,57 @@ html.mx-off.pet-docked .pet svg { animation: none; }
 .chip[style*="--c"]:hover { background: var(--c); filter: brightness(1.12) saturate(1.05); }
 .f-value .chip[style*="--c"], .pop .chip[style*="--c"] { justify-content: flex-start; }
 .pop .chip[style*="--c"] { margin-bottom: 4px; }
+
+  /* Connect apps + payment requests */
+  .modal:has(.app-grid){width:min(860px,94vw)}
+  .app-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin:12px 0}
+  .app-tile{border:1px solid var(--line,rgba(255,255,255,.1));border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:6px;background:rgba(255,255,255,.02)}
+  .app-tile.is-soon{opacity:.72}
+  .app-tile p{margin:0;font-size:13px;line-height:1.4}
+  .app-tile small{color:var(--muted,#9aa0aa);font-size:12px;line-height:1.35}
+  .app-top{display:flex;align-items:center;gap:8px}.app-top b{font-size:15px;flex:1}
+  .app-logo{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;font-weight:700;color:#fff;background:#5b6170;flex:none}
+  .app-gmail{background:#d93025}.app-stripe{background:#635bff}.app-ringcentral{background:#f80}.app-gcal{background:#1a73e8}.app-docusign{background:#ffbe0b;color:#111}.app-quickbooks{background:#2ca01c}.app-facebook{background:#1877f2}.app-api{background:#16181d;border:1px solid rgba(255,255,255,.2)}
+  .app-st{font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;white-space:nowrap}
+  .app-st.on{background:#0f7b4a;color:#fff}.app-st.set{background:#9d6b1d;color:#fff}.app-st.off{background:#4a4f5a;color:#fff}.app-st.soon{background:transparent;border:1px solid currentColor;opacity:.8}
+  .app-key{display:flex;gap:8px;margin-top:4px}.app-key input{flex:1;min-width:0}
+  .app-act{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+  .pay-form .em-row input{flex:1}
+  .pay-h{margin:16px 0 6px;font-size:13px;text-transform:uppercase;letter-spacing:.05em;opacity:.7}
+  .pay-list{display:flex;flex-direction:column;gap:8px}
+  .pay-row{border:1px solid var(--line,rgba(255,255,255,.1));border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+  .pay-row small{display:block;color:var(--muted,#9aa0aa);font-size:12px;margin-top:2px}
+  .pay-acts{display:flex;gap:6px;flex-wrap:wrap}.pay-acts .btn{padding:5px 10px;font-size:12.5px}
+
+  /* API keys & webhooks */
+  .modal:has(.int-tabs){width:min(720px,94vw)}
+  .int-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}.int-head h3{margin:0}
+  .int-guide{font-size:13px;color:inherit;opacity:.75}
+  .int-msg{border:1px solid rgba(255,255,255,.15);border-radius:12px;padding:10px 12px;margin:12px 0;font-size:13.5px;line-height:1.45;word-break:break-word}
+  .int-tabs{display:flex;gap:4px;margin:14px 0 4px;padding:4px;border-radius:12px;background:rgba(255,255,255,.05);overflow-x:auto}
+  .int-tab{flex:1;white-space:nowrap;border:0;background:transparent;color:inherit;font:inherit;font-size:14px;padding:8px 10px;border-radius:9px;cursor:pointer;opacity:.75}
+  .int-tab span{margin-left:6px;font-size:11.5px;padding:1px 7px;border-radius:99px;background:rgba(255,255,255,.12)}
+  .int-tab.on{background:rgba(255,255,255,.12);opacity:1;font-weight:600}
+  .int-body{display:flex;flex-direction:column;gap:8px;min-height:120px}
+  .int-help{margin:8px 0 4px;font-size:13.5px;opacity:.75;line-height:1.45}
+  .int-card{display:flex;gap:12px;align-items:center;justify-content:space-between;border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:12px 14px}
+  .int-card.is-off{opacity:.6}
+  .int-main{min-width:0;flex:1}.int-main b{font-size:14.5px}
+  .int-sub{font-size:13px;margin-top:3px;opacity:.85}.int-meta{font-size:12px;margin-top:4px;opacity:.6}
+  .int-url{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,monospace;font-size:12px}
+  .int-chips i{font-style:normal;display:inline-block;font-size:11px;padding:1px 7px;margin:0 4px 2px 0;border-radius:99px;background:rgba(255,255,255,.1)}
+  .int-acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;flex:none}.int-acts .btn{padding:5px 11px;font-size:12.5px}
+  .int-empty{border:1px dashed rgba(255,255,255,.18);border-radius:12px;padding:16px;text-align:center;font-size:13.5px;opacity:.7}
+  .int-add{align-self:flex-start;margin-top:4px}
+  .int-form{border:1px solid rgba(255,255,255,.14);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:12px;background:rgba(255,255,255,.03)}
+  .int-field{display:flex;flex-direction:column;gap:6px}.int-field>span{font-size:12px;text-transform:uppercase;letter-spacing:.05em;opacity:.65}
+  .int-evs{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:6px}
+  .int-ev{display:flex;align-items:center;gap:8px;font-size:13.5px;padding:7px 10px;border-radius:9px;border:1px solid rgba(255,255,255,.1);cursor:pointer}
+  .int-ev:has(input:checked){border-color:rgba(255,255,255,.4);background:rgba(255,255,255,.06)}
+  .int-ev.wide{align-self:flex-start}
+  .int-form-acts{display:flex;gap:8px}
+  @media (max-width:600px){.int-card{flex-direction:column;align-items:stretch}.int-acts{justify-content:flex-start}.int-tab{font-size:13px;padding:8px 4px}.int-tab span{margin-left:4px;padding:1px 5px}}
+  .drawer-actions{flex-wrap:wrap}
 </style>
 </head>
 <body>
@@ -2213,7 +2264,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
         html += `<div class="scrim" data-act="close-item"></div>
         <aside class="drawer ${W ? 'wide' : ''}" role="dialog" aria-modal="true" tabindex="-1" data-key="${esc(i.id + '|' + dtab + (W ? '|w' : ''))}" aria-label="${esc(i.name)}">
           <div class="drawer-head"><input class="drawer-title" data-edit="name" data-item="${esc(i.id)}" value="${esc(i.name)}" aria-label="Item name" ${S.canWrite ? '' : 'readonly'}>
-            <div class="drawer-actions">${canSendMsgs() && (b.columns || []).some(c => c.type === 'email' && String((i.values || {})[c.id] || '').includes('@')) ? `<button class="btn" data-act="compose-email" data-item="${esc(i.id)}">✉ Email</button>` : ''}${S.canWrite ? `<button class="btn" data-act="dup-item" data-item="${esc(i.id)}">Duplicate</button>` : ''}<button class="btn" data-act="close-item">Close</button></div></div>
+            <div class="drawer-actions">${canSendMsgs() ? `<button class="btn" data-act="pay-open" data-item="${esc(i.id)}">💳 Request payment</button>` : ''}${canSendMsgs() && (b.columns || []).some(c => c.type === 'email' && String((i.values || {})[c.id] || '').includes('@')) ? `<button class="btn" data-act="compose-email" data-item="${esc(i.id)}">✉ Email</button>` : ''}${S.canWrite ? `<button class="btn" data-act="dup-item" data-item="${esc(i.id)}">Duplicate</button>` : ''}<button class="btn" data-act="close-item">Close</button></div></div>
           ${W ? `<div class="dw-split"><div class="dw-left">${fgrid}</div><div class="dw-right">` : ''}<div class="drawer-tabs" role="tablist">
             ${[...(b.form ? [['fact', 'Fact find']] : []), ['updates', `Updates · ${(i.updates || []).length}`], ...(W ? [] : [['info', 'Info']]), ...(window.SolverExt ? SolverExt.drawerTabs(b, i) : []), ['history', 'History']].map(([k, l]) => `<button class="drawer-tab" role="tab" data-act="dtab" data-tab="${k}" aria-selected="${dtab === k}">${l}</button>`).join('')}
           </div>
@@ -2464,28 +2515,44 @@ html.mx-off.pet-docked .pet svg { animation: none; }
       const bname = id => (S.boards.find(x => x.id === id) || {}).name || 'All boards';
       const boardSel = (id, all) => `<select class="field-input" id="${id}" aria-label="Board">${all ? '<option value="">All boards</option>' : ''}${workspaces().map(w => `<optgroup label="${esc(wsLabel(w))}">${S.boards.filter(x => wsOf(x).id === w.id).map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')}</optgroup>`).join('')}</select>`;
       if (!I) return '<h3>Integrations</h3><p>Loading.</p>';
-      const keys = I.keys.filter(k => !k.revoked).map(k => `<div class="rule"><div class="rule-text"><b>${esc(k.name)}</b> · <code>${esc(k.prefix)}…</code> · ${k.scope === 'read' ? 'read only' : 'read and write'}<div class="card-meta">${k.last_used ? 'Last used ' + esc(fmtTime(k.last_used)) : 'Not used yet'}</div></div><button class="icon-btn" data-act="int-revoke" data-id="${esc(k.id)}">Revoke</button></div>`).join('');
-      const outs = I.hooks.filter(h => h.kind === 'out').map(h => `<div class="rule ${h.active ? '' : 'off'}"><div class="rule-text"><b>${esc(h.name)}</b> → <code style="word-break:break-all">${esc(h.url)}</code><div class="card-meta"><span>${esc(h.events.length ? h.events.map(e => evName[e] || e).join(', ') : 'Every event')}</span><span>${esc(bname(h.board))}</span><span>${h.last_at ? `Last: ${esc(h.last_status)} ${esc(fmtTime(h.last_at))}${h.last_error ? ' · ' + esc(h.last_error) : ''}` : 'Nothing sent yet'}</span></div></div>
-          <button class="icon-btn" data-act="int-test" data-id="${esc(h.id)}">Send test</button><button class="toggle" data-act="int-toggle" data-id="${esc(h.id)}" data-on="${h.active ? 1 : 0}" aria-pressed="${!!h.active}">${h.active ? 'On' : 'Off'}</button><button class="icon-btn" data-act="int-del" data-id="${esc(h.id)}">Delete</button></div>`).join('');
+      const tab = m.tab || 'keys', adding = m.adding === tab;
+      const pill = (on, txt) => `<span class="app-st ${on ? 'on' : 'off'}">${txt}</span>`;
+      const card = (title, sub, meta, acts, off) => `<div class="int-card${off ? ' is-off' : ''}"><div class="int-main"><b>${title}</b>${sub ? `<div class="int-sub">${sub}</div>` : ''}${meta ? `<div class="int-meta">${meta}</div>` : ''}</div><div class="int-acts">${acts}</div></div>`;
+      const keys = I.keys.filter(k => !k.revoked).map(k => card(esc(k.name), `<code>${esc(k.prefix)}…</code> · ${k.scope === 'read' ? 'Read only' : 'Read and write'}`, k.last_used ? 'Last used ' + esc(fmtTime(k.last_used)) : 'Not used yet', `<button class="btn" data-act="int-revoke" data-id="${esc(k.id)}">Revoke</button>`)).join('');
+      const outs = I.hooks.filter(h => h.kind === 'out').map(h => card(esc(h.name) + ' ' + pill(h.active, h.active ? 'On' : 'Off'),
+        `<span class="int-url">${esc(h.url)}</span>`,
+        `<span class="int-chips">${(h.events.length ? h.events : ['all']).map(e => `<i>${esc(e === 'all' ? 'Every event' : (evName[e] || e).replace(/ \(.*\)$/, ''))}</i>`).join('')}</span> · ${esc(bname(h.board))}${h.last_at ? ` · last ${esc(h.last_status)} ${esc(fmtTime(h.last_at))}` : ''}`,
+        `<button class="btn" data-act="int-test" data-id="${esc(h.id)}">Test</button><button class="btn" data-act="int-toggle" data-id="${esc(h.id)}" data-on="${h.active ? 1 : 0}">${h.active ? 'Turn off' : 'Turn on'}</button><button class="btn" data-act="int-del" data-id="${esc(h.id)}">Delete</button>`, !h.active)).join('');
       const ins = I.hooks.filter(h => h.kind === 'in').map(h => { const link = location.origin + '/api/v1/in/' + h.token; const g = ((S.boards.find(x => x.id === h.board) || { groups: [] }).groups.find(x => x.id === h.grp) || {}).name;
-        return `<div class="rule ${h.active ? '' : 'off'}"><div class="rule-text"><b>${esc(h.name)}</b> → ${esc(bname(h.board))}${g ? ' / ' + esc(g) : ''}<div class="card-meta"><code style="word-break:break-all">${esc(link)}</code></div><div class="card-meta">${h.last_at ? `Last lead: ${esc(h.last_status)} ${esc(fmtTime(h.last_at))}` : 'No leads yet'}</div></div>
-          <button class="icon-btn" data-act="int-copy" data-link="${esc(link)}">Copy link</button><button class="toggle" data-act="int-toggle" data-id="${esc(h.id)}" data-on="${h.active ? 1 : 0}" aria-pressed="${!!h.active}">${h.active ? 'On' : 'Off'}</button><button class="icon-btn" data-act="int-del" data-id="${esc(h.id)}">Delete</button></div>`; }).join('');
-      return `<h3>Integrations</h3>
-        <p>Connect Solver.ca to n8n, Zapier, Make, your website, forms, RingCentral, Google Sheets, or anything that can send or receive a web request. Solver.ca never texts, emails or calls anyone itself. Setup guide: <a href="/developers" target="_blank" rel="noopener" style="color:#fff">/developers</a></p>
-        ${m.msg ? `<div class="rule"><div class="rule-text">${m.msg}</div></div>` : ''}
-        <h3 style="font-size:16px">API keys</h3><p>For tools that read or change leads (n8n, Zapier, scripts).</p>
-        ${keys || '<p class="rail-note">No keys yet.</p>'}
-        <div class="form-row"><input class="field-input" id="ik-name" placeholder="What will use it, e.g. n8n" style="flex:1 1 180px"><select class="field-input" id="ik-scope"><option value="write">Read and write</option><option value="read">Read only</option></select><button class="btn primary" data-act="int-key">Create key</button></div><p class="int-err" data-int-err="key" role="alert" hidden></p>
-        <h3 style="font-size:16px">Outgoing webhooks</h3><p>Solver.ca tells another tool the moment something happens.</p>
-        ${outs || '<p class="rail-note">None yet.</p>'}
-        <div class="form-row"><input class="field-input" id="io-name" placeholder="Name, e.g. n8n new leads" style="flex:1 1 160px"><input class="field-input" id="io-url" placeholder="https://…" style="flex:2 1 220px"></div>
-        <div class="form-row">${EV.map(e => `<label class="pop-check" style="padding:2px 6px"><input type="checkbox" class="io-ev" value="${e}" ${e === 'item.created' ? 'checked' : ''}>${evName[e]}</label>`).join('')}</div>
-        <div class="form-row">${boardSel('io-board', true)}${I.hooks.some(h => h.kind === 'out') ? `<select class="field-input" id="io-secret" aria-label="Signing secret"><option value="">New signing secret</option>${I.hooks.filter(h => h.kind === 'out').map(h => `<option value="${esc(h.id)}">Same secret as ${esc(h.name)}</option>`).join('')}</select>` : ''}<button class="btn primary" data-act="int-out">Add webhook</button></div><p class="int-err" data-int-err="out" role="alert" hidden></p>
-        <h3 style="font-size:16px">Incoming lead links</h3><p>A private web address that turns anything posted to it (a website form, a Facebook lead form through Zapier or n8n) into a new item on a board. Fields are matched to columns by name.</p>
-        ${ins || '<p class="rail-note">None yet.</p>'}
-        <div class="form-row"><input class="field-input" id="ii-name" placeholder="Name, e.g. Website form" style="flex:1 1 160px">${boardSel('ii-board', false)}<input class="field-input" id="ii-group" placeholder="Group (optional)" style="flex:1 1 140px"></div>
-        <div class="form-row"><label class="pop-check"><input type="checkbox" id="ii-dedupe" checked>Skip if the phone number is already on the board</label><button class="btn primary" data-act="int-in">Create lead link</button></div><p class="int-err" data-int-err="in" role="alert" hidden></p>
-        <div><button class="btn" data-act="close-modal-btn">Done</button></div>`;
+        return card(esc(h.name) + ' ' + pill(h.active, h.active ? 'On' : 'Off'), `New leads go to <b>${esc(bname(h.board))}</b>${g ? ' → ' + esc(g) : ''}`, h.last_at ? `Last lead: ${esc(h.last_status)} ${esc(fmtTime(h.last_at))}` : 'No leads yet',
+          `<button class="btn primary" data-act="int-copy" data-link="${esc(link)}">Copy link</button><button class="btn" data-act="int-toggle" data-id="${esc(h.id)}" data-on="${h.active ? 1 : 0}">${h.active ? 'Turn off' : 'Turn on'}</button><button class="btn" data-act="int-del" data-id="${esc(h.id)}">Delete</button>`, !h.active); }).join('');
+      const n = { keys: I.keys.filter(k => !k.revoked).length, out: I.hooks.filter(h => h.kind === 'out').length, in: I.hooks.filter(h => h.kind === 'in').length };
+      const T = (id, label) => `<button class="int-tab${tab === id ? ' on' : ''}" data-act="int-tab" data-tab="${id}">${label}<span>${n[id]}</span></button>`;
+      const empty = txt => `<div class="int-empty">${txt}</div>`;
+      const addBtn = label => adding ? '' : `<button class="btn primary int-add" data-act="int-adding" data-tab="${tab}">+ ${label}</button>`;
+      const formBox = (inner, act, label) => adding ? `<div class="int-form">${inner}<div class="int-form-acts"><button class="btn primary" data-act="${act}">${label}</button><button class="btn" data-act="int-adding" data-tab="">Cancel</button></div></div>` : '';
+      const field = (label, ctl) => `<label class="int-field"><span>${label}</span>${ctl}</label>`;
+      let body = '';
+      if (tab === 'keys') body = `<p class="int-help">A key lets another tool (n8n, Zapier, a script) read or add leads. Treat it like a password.</p>
+        ${keys || empty('No keys yet.')}${addBtn('New key')}
+        ${formBox(field('What will use it', '<input class="field-input" id="ik-name" placeholder="e.g. n8n">') + field('Access', '<select class="field-input" id="ik-scope"><option value="write">Read and write</option><option value="read">Read only</option></select>'), 'int-key', 'Create key')}
+        <p class="int-err" data-int-err="key" role="alert" hidden></p>`;
+      if (tab === 'out') body = `<p class="int-help">Solver.ca pings another tool the moment something happens, like a new lead or a status change.</p>
+        ${outs || empty('Nothing set up yet.')}${addBtn('New webhook')}
+        ${formBox(field('Name', '<input class="field-input" id="io-name" placeholder="e.g. n8n new leads">') + field('Send to (web address)', '<input class="field-input" id="io-url" placeholder="https://…">')
+          + field('When', `<div class="int-evs">${EV.map(e => `<label class="int-ev"><input type="checkbox" class="io-ev" value="${e}" ${e === 'item.created' ? 'checked' : ''}><span>${esc(evName[e].replace(/ \(.*\)$/, ''))}</span></label>`).join('')}</div>`)
+          + field('Board', boardSel('io-board', true)) + (I.hooks.some(h => h.kind === 'out') ? field('Signing secret', `<select class="field-input" id="io-secret" aria-label="Signing secret"><option value="">New signing secret</option>${I.hooks.filter(h => h.kind === 'out').map(h => `<option value="${esc(h.id)}">Same as ${esc(h.name)}</option>`).join('')}</select>`) : ''), 'int-out', 'Add webhook')}
+        <p class="int-err" data-int-err="out" role="alert" hidden></p>`;
+      if (tab === 'in') body = `<p class="int-help">A private link that turns a website form or ad form into a new lead on a board. Paste it into Zapier, n8n or your form.</p>
+        ${ins || empty('No lead links yet.')}${addBtn('New lead link')}
+        ${formBox(field('Name', '<input class="field-input" id="ii-name" placeholder="e.g. Website form">') + field('Board', boardSel('ii-board', false)) + field('Group (optional)', '<input class="field-input" id="ii-group" placeholder="e.g. New Leads">')
+          + '<label class="int-ev wide"><input type="checkbox" id="ii-dedupe" checked><span>Skip if the phone number is already on the board</span></label>', 'int-in', 'Create lead link')}
+        <p class="int-err" data-int-err="in" role="alert" hidden></p>`;
+      return `<div class="int-head"><h3>API keys &amp; webhooks</h3><a class="int-guide" href="/developers" target="_blank" rel="noopener">Setup guide ↗</a></div>
+        ${m.msg ? `<div class="int-msg">${m.msg}</div>` : ''}
+        <div class="int-tabs">${T('keys', 'API keys')}${T('out', 'Send to a tool')}${T('in', 'Lead links')}</div>
+        <div class="int-body">${body}</div>
+        <div class="form-row"><button class="btn" data-act="close-modal-btn">Done</button></div>`;
     }
     if (m.type === 'board-sheet') return b ? boardSheet(b) : '';
     if (m.type === 'boards') {
@@ -2516,7 +2583,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
         ${S.isOwner ? `<div class="pf-sec">Admin</div>
         <div class="pf-group">
           ${row('team', PI.team, 'Team &amp; settings', 'People, roles, passwords')}
-          ${row('integrations', PI.plug, 'Integrations', 'API keys, webhooks, lead links')}
+          ${row('apps', PI.plug, 'Connect apps', 'Gmail, Stripe, RingCentral, API keys &amp; webhooks')}
         </div>` : ''}
         <div class="pf-sec">Look &amp; feel</div>
         <div class="pf-group settings-slot" data-slot="settings"></div>
@@ -2593,6 +2660,41 @@ html.mx-off.pet-docked .pet svg { animation: none; }
         <h3 style="font-size:16px">Copy from Monday</h3>
         ${renderSync(m.sync)}
         <div><button class="btn" data-act="close-modal-btn">Done</button></div>`;
+    }
+    if (m.type === 'apps') {
+      if (!m.data) return `<h3>Connect apps</h3><p>${m.msg ? esc(m.msg) : 'Loading.'}</p><div><button class="btn" data-act="close-modal-btn">Close</button></div>`;
+      const badge = st => ({ on: '<span class="app-st on">Connected</span>', setup: '<span class="app-st set">Needs setup</span>', off: '<span class="app-st off">Not connected</span>', paused: '<span class="app-st set">Paused</span>', soon: '<span class="app-st soon">Coming next</span>' })[st] || '';
+      const tile = a => `<div class="app-tile${a.state === 'soon' ? ' is-soon' : ''}">
+          <div class="app-top"><span class="app-logo app-${esc(a.id)}">${esc(a.name.slice(0, 1))}</span><b>${esc(a.name)}</b>${badge(a.state)}</div>
+          <p>${esc(a.what)}</p><small>${esc(a.detail || '')}</small>
+          ${a.id === 'stripe' && a.canKey ? (m.stripeEdit || a.state === 'off'
+            ? `<div class="app-key"><input class="field-input" id="stripe-key" type="password" autocomplete="off" placeholder="sk_live_… or rk_live_…" value=""><button class="btn primary" data-act="stripe-key-save" ${m.saving ? 'disabled' : ''}>${m.saving ? 'Checking…' : 'Connect'}</button></div><small class="rail-note">Stripe → Developers → API keys. A <b>restricted key</b> with write access to Products, Prices and Payment Links (and read on Checkout Sessions) is safest. It’s stored encrypted and never shown again.</small>`
+            : `<div class="app-act"><button class="btn" data-act="stripe-key-edit">Change key</button><button class="btn" data-act="stripe-key-del">Disconnect</button></div>`) : ''}
+          ${a.id === 'api' ? '<div class="app-act"><button class="btn" data-act="integrations">Open</button></div>' : ''}
+          ${a.id === 'gmail' && a.state === 'on' ? '<div class="app-act"><button class="btn" data-act="gmail">' + (S.gmail && S.gmail.connected ? 'My Gmail: ' + esc(S.gmail.connected.email) : 'Connect my Gmail') + '</button></div>' : ''}
+        </div>`;
+      return `<h3>Connect apps</h3><p class="rail-note" style="margin-top:0">Plug your tools into Solver.ca. Keys stay on the server, encrypted.</p>
+        ${m.msg ? `<p class="em-warn">${esc(m.msg)}</p>` : ''}
+        <div class="app-grid">${m.data.map(tile).join('')}</div>
+        <div class="form-row"><button class="btn" data-act="close-modal-btn">Close</button></div>`;
+    }
+    if (m.type === 'pay') {
+      const i = itemById(m.item); if (!i) return '<p>This lead isn’t on the board any more.</p><div><button class="btn" data-act="close-modal-btn">Close</button></div>';
+      const d = m.data, $$ = c => '$' + (c / 100).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      if (!d) return `<h3>Request payment · ${esc(i.name)}</h3><p>${m.msg ? esc(m.msg) : 'Loading.'}</p><div><button class="btn" data-act="close-modal-btn">Close</button></div>`;
+      const st = r => r.status === 'paid' ? '<span class="app-st on">Paid</span>' : r.status === 'open' ? '<span class="app-st set">Waiting</span>' : '<span class="app-st off">Cancelled</span>';
+      const rows = d.rows.map(r => `<div class="pay-row"><div><b>${$$(r.amount)}</b> · ${esc(r.descr)} ${st(r)}${r.test ? ' <span class="app-st soon">Test</span>' : ''}<small>${esc(fmtTime(r.at))} · ${esc(r.by || '')}${r.paidAt ? ' · paid ' + esc(fmtTime(r.paidAt)) : ''}</small></div>
+          ${r.url ? `<div class="pay-acts"><button class="btn" data-act="pay-copy" data-url="${esc(r.url)}">Copy link</button><button class="btn" data-act="pay-email" data-id="${esc(r.id)}">Email it</button><button class="btn" data-act="pay-text" data-id="${esc(r.id)}">Text it</button><button class="btn" data-act="pay-cancel" data-id="${esc(r.id)}">Cancel</button></div>` : ''}</div>`).join('');
+      return `<h3>Request payment · ${esc(i.name)}</h3>
+        ${!d.on ? '<p class="em-warn">Stripe isn’t connected yet. An admin can connect it: your name → Connect apps → Stripe.</p>' : d.test ? '<p class="em-warn">Stripe is in TEST mode: links work, but no real money moves.</p>' : ''}
+        ${d.canRequest ? `<div class="em-form pay-form">
+          <label class="em-row"><span>Amount</span><input class="field-input" id="pay-amt" inputmode="decimal" placeholder="$ 0.00" value="${esc(m.amt || '')}"></label>
+          <label class="em-row"><span>For</span><input class="field-input" id="pay-desc" maxlength="200" placeholder="e.g. Consumer proposal filing fee" value="${esc(m.desc || '')}"></label>
+          <p class="rail-note" style="margin:0">The client sees this on Stripe’s secure page. You then copy, email or text the link. When they pay, the lead shows ✅ Paid.</p>
+        </div>` : ''}
+        ${m.msg ? `<p class="em-warn">${esc(m.msg)}</p>` : ''}
+        <div class="form-row">${d.canRequest ? `<button class="btn primary" data-act="pay-create" ${m.busy ? 'disabled' : ''}>${m.busy ? 'Making link…' : 'Make payment link'}</button>` : ''}<button class="btn" data-act="close-modal-btn">Close</button></div>
+        ${rows ? `<h4 class="pay-h">Payment requests</h4><div class="pay-list">${rows}</div>` : ''}`;
     }
     if (m.type === 'blast') {
       const em = m.channel === 'email', pv = m.preview;
@@ -2767,11 +2869,13 @@ html.mx-off.pet-docked .pet svg { animation: none; }
       case 'run-import': runImport(); break;
       case 'logout': window.KS && KS.logout(); break;
       case 'integrations': S.pop = null; S.modal = { type: 'integrations', data: null, msg: '' }; renderLayer(); loadIntegrations(); break;
-      case 'int-key': { const name = $('#ik-name').value, scope = $('#ik-scope').value; KS.api('POST', '/api/admin/keys', { name, scope }).then(r => { S.modal.msg = `New key for <b>${esc(name)}</b>: <code style="word-break:break-all;user-select:all">${esc(r.key)}</code><br>Copy it now. It won’t be shown again.`; loadIntegrations(); }).catch(e => intErr('key', e.message)); break; }
+      case 'int-key': { const name = $('#ik-name').value, scope = $('#ik-scope').value; KS.api('POST', '/api/admin/keys', { name, scope }).then(r => { S.modal.msg = `New key for <b>${esc(name)}</b>: <code style="word-break:break-all;user-select:all">${esc(r.key)}</code><br>Copy it now. It won’t be shown again.`; S.modal.adding = null; loadIntegrations(); }).catch(e => intErr('key', e.message)); break; }
+      case 'int-tab': if (S.modal) { S.modal.tab = t.dataset.tab; S.modal.adding = null; S.modal.msg = ''; renderLayer(); } break;
+      case 'int-adding': if (S.modal) { S.modal.adding = t.dataset.tab || null; renderLayer(); const f = document.querySelector('.int-form input'); if (f) f.focus(); } break;
       case 'int-revoke': KS.api('DELETE', '/api/admin/keys/' + t.dataset.id).then(loadIntegrations); break;
-      case 'int-out': { const events = [...document.querySelectorAll('.io-ev:checked')].map(x => x.value); KS.api('POST', '/api/admin/hooks', { kind: 'out', name: $('#io-name').value, url: $('#io-url').value, events, board: $('#io-board').value, sameSecretAs: ($('#io-secret') || {}).value || undefined }).then(r => { S.modal.msg = r.secret ? `Webhook added. Its signing secret is <code style="word-break:break-all;user-select:all">${esc(r.secret)}</code>. Copy it now if the receiving tool checks the X-Solver-Signature header.` : `Webhook added. ${esc(r.note || '')}`; loadIntegrations(); }).catch(e => intErr('out', e.message)); break; }
+      case 'int-out': { const events = [...document.querySelectorAll('.io-ev:checked')].map(x => x.value); KS.api('POST', '/api/admin/hooks', { kind: 'out', name: $('#io-name').value, url: $('#io-url').value, events, board: $('#io-board').value, sameSecretAs: ($('#io-secret') || {}).value || undefined }).then(r => { S.modal.msg = r.secret ? `Webhook added. Its signing secret is <code style="word-break:break-all;user-select:all">${esc(r.secret)}</code>. Copy it now if the receiving tool checks the X-Solver-Signature header.` : `Webhook added. ${esc(r.note || '')}`; S.modal.adding = null; loadIntegrations(); }).catch(e => intErr('out', e.message)); break; }
       case 'int-in': { const bd = S.boards.find(x => x.id === $('#ii-board').value); const gname = $('#ii-group').value.trim(); const g = gname && bd && bd.groups.find(x => x.name.toLowerCase() === gname.toLowerCase()); if (gname && !g) { intErr('in', `No group called “${gname}” on ${bd ? bd.name : 'that board'}.`); break; }
-        const phone = bd && bd.columns.find(c => c.type === 'phone'); KS.api('POST', '/api/admin/hooks', { kind: 'in', name: $('#ii-name').value, board: $('#ii-board').value, group: g ? g.id : '', dedupe: $('#ii-dedupe').checked && phone ? phone.id : '' }).then(() => { S.modal.msg = 'Lead link created. Copy it below and paste it into your form tool.'; loadIntegrations(); }).catch(e => intErr('in', e.message)); break; }
+        const phone = bd && bd.columns.find(c => c.type === 'phone'); KS.api('POST', '/api/admin/hooks', { kind: 'in', name: $('#ii-name').value, board: $('#ii-board').value, group: g ? g.id : '', dedupe: $('#ii-dedupe').checked && phone ? phone.id : '' }).then(() => { S.modal.msg = 'Lead link created. Copy it below and paste it into your form tool.'; S.modal.adding = null; loadIntegrations(); }).catch(e => intErr('in', e.message)); break; }
       case 'int-test': KS.api('POST', '/api/admin/hooks/' + t.dataset.id + '/test', {}).then(r => { S.modal.msg = r.status >= 200 && r.status < 300 ? `Test delivered (${r.status}).` : `The other tool answered ${r.status || 'nothing'}. Check the address.`; loadIntegrations(); }); break;
       case 'int-toggle': KS.api('PATCH', '/api/admin/hooks/' + t.dataset.id, { active: t.dataset.on !== '1' }).then(loadIntegrations); break;
       case 'int-del': KS.api('DELETE', '/api/admin/hooks/' + t.dataset.id).then(loadIntegrations); break;
@@ -2858,6 +2962,36 @@ html.mx-off.pet-docked .pet svg { animation: none; }
         break;
       }
       case 'blast-stop': KS.api('POST', `/api/blast/${encodeURIComponent(t.dataset.id)}/stop`, {}).then(() => { toast('Stopped. Nothing else from that blast will be sent.'); pollBlasts(); }).catch(e => toast(e.message)); break;
+      case 'apps': S.pop = null; S.modal = { type: 'apps', data: null, msg: '' }; renderLayer(); loadApps(); break;
+      case 'stripe-key-edit': if (S.modal) { S.modal.stripeEdit = true; renderLayer(); } break;
+      case 'stripe-key-del': { if (!confirm('Disconnect Stripe? Payment links already sent keep working, but you can’t make new ones or see payments come in until it’s connected again.')) break; KS.api('DELETE', '/api/apps/stripe/key').then(() => { toast('Stripe disconnected.'); loadApps(); }).catch(e => toast(e.message)); break; }
+      case 'stripe-key-save': {
+        const m = S.modal, k = ($('#stripe-key') || {}).value || ''; if (!m || m.saving) break; m.saving = true; m.msg = ''; renderLayer();
+        KS.api('PUT', '/api/apps/stripe/key', { key: k.trim() }).then(r => { m.saving = false; m.stripeEdit = false; toast(`Stripe connected${r.account ? ': ' + r.account : ''}${r.test ? ' (test mode)' : ''}.`); loadApps(); })
+          .catch(e => { m.saving = false; m.msg = e.message; renderLayer(); });
+        break;
+      }
+      case 'pay-open': { const b0 = board(); if (!b0) break; S.modal = { type: 'pay', item: t.dataset.item, board: b0.id }; renderLayer(); loadPay(); break; }
+      case 'pay-create': {
+        const m = S.modal; if (!m || m.type !== 'pay' || m.busy) break;
+        m.amt = ($('#pay-amt') || {}).value || ''; m.desc = ($('#pay-desc') || {}).value || ''; m.busy = true; m.msg = ''; renderLayer();
+        KS.api('POST', '/api/pay/request', { board: m.board, item: m.item, amount: m.amt, descr: m.desc }).then(r => { m.busy = false; m.amt = ''; m.desc = ''; toast('Payment link made. Copy, email or text it below.'); loadPay(); })
+          .catch(e => { m.busy = false; m.msg = e.message; renderLayer(); });
+        break;
+      }
+      case 'pay-copy': { const u = t.dataset.url; (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).then(() => toast('Link copied.')).catch(() => prompt('Copy this link:', u)); break; }
+      case 'pay-cancel': { const m = S.modal; if (!m || !confirm('Cancel this payment request? The link stops working.')) break; KS.api('POST', `/api/pay/${encodeURIComponent(t.dataset.id)}/cancel`, {}).then(() => { toast('Cancelled.'); loadPay(); }).catch(e => toast(e.message)); break; }
+      case 'pay-email': case 'pay-text': {
+        const m = S.modal; if (!m || !m.data) break; const r = m.data.rows.find(x => x.id === t.dataset.id); if (!r) break;
+        const amt = '$' + (r.amount / 100).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        if (a === 'pay-email') {
+          S.modal = { type: 'email', item: m.item, board: m.board, subject: `Your secure payment link: ${amt}`, text: `Hi {first name},\n\nHere is your secure payment link for ${amt} (${r.descr}):\n${r.url}\n\nIt opens Stripe's secure checkout. Let me know if you have any questions.\n\nThank you,` };
+          S.modal.text = S.modal.text.replace('{first name}', (itemById(m.item) || {}).name ? String(itemById(m.item).name).trim().split(/\s+/)[0] : 'there');
+          renderLayer();
+          KS.api('GET', `/api/email/check?board=${encodeURIComponent(m.board)}&item=${encodeURIComponent(m.item)}`).then(c => { if (S.modal && S.modal.type === 'email') { S.modal.check = c; renderLayer(); } }).catch(e => { if (S.modal) { S.modal.msg = e.message; renderLayer(); } });
+        } else S.modal = { type: 'blast', channel: 'text', board: m.board, items: [m.item], text: `Hi {first name}, here's your secure payment link for ${amt} (${r.descr}): ${r.url}` }, renderLayer();
+        break;
+      }
       case 'compose-email': {
         const id = t.dataset.item, b0 = board(); if (!b0) break;
         S.modal = { type: 'email', item: id, board: b0.id }; renderLayer();
@@ -3372,6 +3506,11 @@ html.mx-off.pet-docked .pet svg { animation: none; }
     catch (e) {}
   }
 
+  function loadApps() { KS.api('GET', '/api/apps').then(d => { if (S.modal && S.modal.type === 'apps') { S.modal.data = d.apps; renderLayer(); } }).catch(e => { if (S.modal && S.modal.type === 'apps') { S.modal.msg = e.message; renderLayer(); } }); }
+  function loadPay() {
+    const m = S.modal; if (!m || m.type !== 'pay') return;
+    KS.api('GET', `/api/pay/list?board=${encodeURIComponent(m.board)}&item=${encodeURIComponent(m.item)}`).then(d => { if (S.modal === m) { m.data = d; renderLayer(); } }).catch(e => { if (S.modal === m) { m.msg = e.message; renderLayer(); } });
+  }
   async function loadIntegrations() {
     try { const [keys, hooks] = await Promise.all([KS.api('GET', '/api/admin/keys'), KS.api('GET', '/api/admin/hooks')]); if (S.modal && S.modal.type === 'integrations') { S.modal.data = { keys, hooks }; renderLayer(); } }
     catch (e) { if (S.modal) { S.modal.msg = esc(e.message); renderLayer(); } }
