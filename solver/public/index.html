@@ -1057,6 +1057,26 @@ html.mx-off.pet-docked .pet svg { animation: none; }
   th[data-coldrag]:active{cursor:grabbing}
   th.drop-l{box-shadow:inset 4px 0 0 #ffb627}
   th.drop-r{box-shadow:inset -4px 0 0 #ffb627}
+
+  /* Email sequences (sequences-ui.js) */
+  #seqm .sq-wrap{position:fixed;inset:0;z-index:8500;background:rgba(0,0,0,.6);display:flex;align-items:flex-start;justify-content:center;padding:5vh 16px;overflow:auto}
+  #seqm .sq-modal{width:min(760px,100%);background:var(--panel,#141518);color:inherit;border:1px solid rgba(255,255,255,.12);border-radius:20px;padding:20px 22px;box-shadow:0 30px 80px rgba(0,0,0,.5)}
+  #seqm h3{margin:0 0 10px}.sq-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+  .sq-board{margin:16px 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.06em;opacity:.65}
+  .sq-card{border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:12px 14px;margin-bottom:8px}
+  .sq-card.on{border-color:rgba(60,200,120,.55);background:rgba(60,200,120,.06)}
+  .sq-row1,.sq-row2{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .sq-row2{margin-top:8px;font-size:12.5px;opacity:.85}.sq-row2 .btn{padding:5px 11px;font-size:12.5px;margin-left:6px}
+  .sq-meta{font-size:13px;opacity:.75;margin-top:4px}.sq-note{font-size:12.5px;margin-top:6px;color:#ffcf6b}
+  .sq-switch{position:relative;width:44px;height:24px;flex:none;cursor:pointer}.sq-switch input{opacity:0;width:0;height:0}
+  .sq-switch span{position:absolute;inset:0;border-radius:99px;background:#4a4f5a;transition:.2s}.sq-switch span::after{content:"";position:absolute;width:18px;height:18px;left:3px;top:3px;border-radius:50%;background:#fff;transition:.2s}
+  .sq-switch input:checked+span{background:#18a957}.sq-switch input:checked+span::after{transform:translateX(20px)}
+  .sq-form{display:flex;flex-direction:column;gap:12px}.sq-boards{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px}
+  .sq-2{display:flex;gap:8px}.sq-2>*{flex:1}
+  .sq-step{border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:8px;margin-bottom:8px}
+  .sq-step-h{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px}.sq-step-h span{flex:1}.sq-n{width:62px;display:inline-block;padding:4px 6px}
+  .sq-person{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.07)}
+  .sq-person .btn{padding:4px 10px;font-size:12px;margin-left:auto}.linkish{background:none;border:0;color:inherit;font:inherit;font-weight:600;text-decoration:underline;cursor:pointer;padding:0}
 </style>
 </head>
 <body>
@@ -2306,7 +2326,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
         html += `<div class="scrim" data-act="close-item"></div>
         <aside class="drawer ${W ? 'wide' : ''}" role="dialog" aria-modal="true" tabindex="-1" data-key="${esc(i.id + '|' + dtab + (W ? '|w' : ''))}" aria-label="${esc(i.name)}">
           <div class="drawer-head"><input class="drawer-title" data-edit="name" data-item="${esc(i.id)}" value="${esc(i.name)}" aria-label="Item name" ${S.canWrite ? '' : 'readonly'}>
-            <div class="drawer-actions">${canSendMsgs() ? `<button class="btn" data-act="pay-open" data-item="${esc(i.id)}">💳 Request payment</button>` : ''}${canSendMsgs() && (b.columns || []).some(c => c.type === 'email' && String((i.values || {})[c.id] || '').includes('@')) ? `<button class="btn" data-act="compose-email" data-item="${esc(i.id)}">✉ Email</button>` : ''}${S.canWrite ? `<button class="btn" data-act="dup-item" data-item="${esc(i.id)}">Duplicate</button>` : ''}<button class="btn" data-act="close-item">Close</button></div></div>
+            <div class="drawer-actions">${canSendMsgs() ? `<button class="btn" data-act="seq-lead" data-item="${esc(i.id)}">📨 Sequences</button>` : ''}${canSendMsgs() ? `<button class="btn" data-act="pay-open" data-item="${esc(i.id)}">💳 Request payment</button>` : ''}${canSendMsgs() && (b.columns || []).some(c => c.type === 'email' && String((i.values || {})[c.id] || '').includes('@')) ? `<button class="btn" data-act="compose-email" data-item="${esc(i.id)}">✉ Email</button>` : ''}${S.canWrite ? `<button class="btn" data-act="dup-item" data-item="${esc(i.id)}">Duplicate</button>` : ''}<button class="btn" data-act="close-item">Close</button></div></div>
           ${W ? `<div class="dw-split"><div class="dw-left">${fgrid}</div><div class="dw-right">` : ''}<div class="drawer-tabs" role="tablist">
             ${[...(b.form ? [['fact', 'Fact find']] : []), ['updates', `Updates · ${(i.updates || []).length}`], ...(W ? [] : [['info', 'Info']]), ...(window.SolverExt ? SolverExt.drawerTabs(b, i) : []), ['history', 'History']].map(([k, l]) => `<button class="drawer-tab" role="tab" data-act="dtab" data-tab="${k}" aria-selected="${dtab === k}">${l}</button>`).join('')}
           </div>
@@ -2627,6 +2647,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
         <div class="pf-group">
           ${row('team', PI.team, 'Team &amp; settings', 'People, roles, passwords')}
           ${row('apps', PI.plug, 'Connect apps', 'Gmail, Stripe, RingCentral, API keys &amp; webhooks')}
+          ${row('seqs', IC_MAIL.replace('<svg ', '<svg fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" '), 'Email sequences', 'Drips and status emails from Monday')}
         </div>` : ''}
         <div class="pf-sec">Look &amp; feel</div>
         <div class="pf-group settings-slot" data-slot="settings"></div>
@@ -3005,6 +3026,8 @@ html.mx-off.pet-docked .pet svg { animation: none; }
         break;
       }
       case 'blast-stop': KS.api('POST', `/api/blast/${encodeURIComponent(t.dataset.id)}/stop`, {}).then(() => { toast('Stopped. Nothing else from that blast will be sent.'); pollBlasts(); }).catch(e => toast(e.message)); break;
+      case 'seqs': S.pop = null; S.modal = null; renderLayer(); window.SolverSeq && SolverSeq.openList(); break;
+      case 'seq-lead': { const b0 = board(); if (b0 && window.SolverSeq) SolverSeq.openLead(b0.id, t.dataset.item); break; }
       case 'apps': S.pop = null; S.modal = { type: 'apps', data: null, msg: '' }; renderLayer(); loadApps(); break;
       case 'stripe-key-edit': if (S.modal) { S.modal.stripeEdit = true; renderLayer(); } break;
       case 'stripe-key-del': { if (!confirm('Disconnect Stripe? Payment links already sent keep working, but you can’t make new ones or see payments come in until it’s connected again.')) break; KS.api('DELETE', '/api/apps/stripe/key').then(() => { toast('Stripe disconnected.'); loadApps(); }).catch(e => toast(e.message)); break; }
@@ -3781,6 +3804,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
 <script src="/motion-fx.js"></script>
 <script src="/address.js"></script>
 <script src="/newlead.js"></script>
+<script src="/sequences-ui.js"></script>
 <script src="/fun.js"></script>
 <script src="/install.js"></script>
 </body>

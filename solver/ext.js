@@ -15,6 +15,7 @@ module.exports = function ext(ctx) {
   const blast = require('./blast.js')(ctx, email);
   const apps = require('./apps.js')(ctx, email);
   const newleads = require('./newleads.js')(ctx);
+  const sequences = require('./sequences.js')(ctx, email);
 
   // integrations.js calls these for rules run through the API, date reminders and /api/v1/events
   integHooks.ruleRan = (bid, rid, iid, itemName, result, via) => automation.logRun(bid, rid, iid, itemName, result, true, via);
@@ -22,8 +23,9 @@ module.exports = function ext(ctx) {
   integHooks.webhookThrottled = (bid, iid, rule) => automation.throttled(bid, iid, rule);
   integHooks.onEvent = (body, hits, actor) => comms.onEvent(body, hits, actor);
   integHooks.newItem = (bid, iid, doc) => newleads.noteItem(bid, iid, doc); // NEW LEAD banners
+  integHooks.itemSaved = (bid, iid, before, after) => sequences.onItem(bid, iid, before, after); // email sequences
 
-  const modules = [automation, ai, docs, push, alerts, comms, email, blast, apps, newleads];
+  const modules = [automation, ai, docs, push, alerts, comms, email, blast, apps, newleads, sequences];
   return {
     // signed-in API routes; returns false when none of them matched
     async handle(req, res, url, user) {
@@ -33,12 +35,13 @@ module.exports = function ext(ctx) {
     // a board is about to be saved through /api/doc: check its automations
     checkBoard: (data, before) => automation.checkBoard(data, before),
     // an item was saved by a person through /api/doc
-    itemSaved(dp, before, after, user) { try { ai.itemSaved(dp, before, after, user); } catch (e) { console.error('ai autorun:', e.message); } },
+    itemSaved(dp, before, after, user) { try { ai.itemSaved(dp, before, after, user); } catch (e) { console.error('ai autorun:', e.message); }
+      const m = /^boards\/([^/]+)\/items\/([^/]+)$/.exec(String(dp || '')); if (m) sequences.onItem(m[1], m[2], before, after); },
     // an in-app notification was made for this person
     onNotify(user, n) {
       try { push.onNotify(user, n); } catch (e) { console.error('push:', e.message); }
       try { alerts.onNotify(user, n); } catch (e) { console.error('alerts:', e.message); }
     },
-    automation, ai, docs, push, alerts, comms, email, blast, apps, newleads,
+    automation, ai, docs, push, alerts, comms, email, blast, apps, newleads, sequences,
   };
 };

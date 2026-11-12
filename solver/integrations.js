@@ -283,6 +283,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     itemChanged(path, before, data, actor.id);
     if (!opts.quiet) buzz(bid, iid, before, data, actor.id);
     if (!before && hooks.newItem) { try { hooks.newItem(bid, iid, data); } catch (e) { /* banner only */ } }
+    if (hooks.itemSaved) { try { hooks.itemSaved(bid, iid, before, data); } catch (e) { /* sequences only */ } }
     try { itemNotifications(path, before, data, actor); } catch (e) { console.error('notifications:', e.message); }
   }
   // opts.quiet: no pet heads-up per item (used by spreadsheet imports, which can add thousands of rows)
