@@ -764,6 +764,7 @@ html.pet-away .pet { opacity: 0; visibility: hidden; pointer-events: none; }
 
 /* ---- sidebar: quiet nav, workspace + boards, and you at the bottom (settings live in your profile sheet) ---- */
 #rail { display: flex; flex-direction: column; gap: 14px; }
+@media (max-width: 780px) { #rail { display: none; } }
 #rail .rl-nav { display: flex; flex-direction: column; gap: 2px; }
 #rail .rl-link { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: none; color: var(--muted); font: inherit; font-size: 14px; padding: 7px 10px; border-radius: 8px; text-align: left; cursor: pointer; }
 #rail .rl-link:hover { color: var(--fg); background: rgba(255,255,255,0.05); }
@@ -867,6 +868,15 @@ span.tm-status { cursor: default; }
 .name-open { cursor: pointer; }
 .name-open .nm { font-size: 14px; }
 @media (hover: hover) { .name-open:hover .nm { text-decoration: underline; text-underline-offset: 3px; } }
+
+/* Home banner: a slow aurora video (made with Grok Imagine) behind the greeting and the motto */
+.home-hero { position: relative; overflow: hidden; border-radius: 20px; border: 1px solid var(--line); padding: 26px 22px 24px; min-height: 168px; align-items: flex-start; background: #0b0b0d url('/media/home-banner.jpg') center / cover no-repeat; }
+.home-hero .hero-vid { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: .9; pointer-events: none; }
+.home-hero::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, rgba(0,0,0,.72) 0%, rgba(0,0,0,.35) 55%, rgba(0,0,0,.15) 100%); pointer-events: none; }
+.home-hero > * { position: relative; z-index: 1; }
+.home-hero .hero-in h1 { text-shadow: 0 2px 18px rgba(0,0,0,.5); }
+.hero-quote { margin: 8px 0 0; font-size: 13px; font-style: italic; color: rgba(255,255,255,.72); letter-spacing: .01em; }
+@media (max-width: 780px) { .home-hero { border-radius: 16px; padding: 20px 16px; min-height: 140px; } }
 </style>
 </head>
 <body>
@@ -1425,6 +1435,10 @@ span.tm-status { cursor: default; }
   }
   document.addEventListener('input', e => { const t = e.target; if (t && t.id === 'board-title') fitTitle(); if (t && S.modal && S.modal.type === 'email') { if (t.id === 'em-subject') S.modal.subject = t.value; if (t.id === 'em-text') S.modal.text = t.value; }
     if (t && S.modal && S.modal.type === 'blast' && (t.id === 'bl-subject' || t.id === 'bl-text')) { if (t.id === 'bl-subject') S.modal.subject = t.value; else S.modal.text = t.value; if (S.modal.preview) { S.modal.preview = null; renderLayer(); const f = $('#' + t.id); if (f) { f.focus(); f.setSelectionRange(f.value.length, f.value.length); } } } });
+  // Home banner video: one element kept across redraws, so it doesn't restart every time the page updates
+  { let heroVid = null; const keep = () => { const nv = document.querySelector('.home-hero .hero-vid'); if (!nv || nv === heroVid) return;
+      if (heroVid) { nv.replaceWith(heroVid); if (nv.hasAttribute('autoplay') && heroVid.paused) heroVid.play().catch(() => {}); } else heroVid = nv; };
+    const c = document.getElementById('content'); if (c) new MutationObserver(keep).observe(c, { childList: true, subtree: true }); }
   // progress pill for mass email / text that are still sending, with Stop
   let blastTimer = null;
   function pollBlasts() {
@@ -3246,7 +3260,8 @@ span.tm-status { cursor: default; }
     const name = first && !/^your$/i.test(first) ? first : '';
     const wsName = (workspaces().find(w => w.id === S.ws) || {}).name || 'your workspace';
     const sm = S.summary && S.summary.ws === S.ws ? S.summary : null;
-    const top = `<div class="home-top"><div><p class="eyebrow">${esc(new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' }))}</p><h1>${greeting()}${name ? ', ' + esc(name) : ''}</h1>${S.isGuest ? '<span class="pill guest-badge">Guest</span>' : ''}</div><div style="display:flex;gap:10px">${fx('homeTop') || ''}<button class="icon-round" data-act="sheet-profile" aria-label="Menu">${IC.menu}</button></div></div>`;
+    const motionOk = (() => { let m = 'full'; try { m = localStorage.getItem('ks-motion') || 'full'; } catch (e) {} return m !== 'off' && !(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches); })();
+    const top = `<div class="home-top home-hero"><video class="hero-vid" muted loop playsinline ${motionOk ? 'autoplay' : ''} preload="auto" poster="/media/home-banner.jpg" src="/media/home-banner.mp4" aria-hidden="true"></video><div class="hero-in"><p class="eyebrow">${esc(new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' }))}</p><h1>${greeting()}${name ? ', ' + esc(name) : ''}</h1><p class="hero-quote">“Summer 2019 and a million dollars after taxes.”</p>${S.isGuest ? '<span class="pill guest-badge">Guest</span>' : ''}</div><div style="display:flex;gap:10px">${fx('homeTop') || ''}<button class="icon-round" data-act="sheet-profile" aria-label="Menu">${IC.menu}</button></div></div>`;
     if (!sm) return `<div class="home">${top}<div class="glass hero"><p class="home-skel">Adding up ${esc(wsName)}…</p></div></div>`;
     const f = sm.followups, dueAll = f.overdue + f.dueToday + f.upcoming;
     const onTrack = dueAll ? (f.dueToday + f.upcoming) / dueAll : 1;

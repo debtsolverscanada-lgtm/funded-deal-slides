@@ -515,13 +515,30 @@ function googleRedirectUri(req) {
 }
 const canWrite = u => u && (u.role === 'admin' || u.role === 'member');
 
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json', '.mp4': 'video/mp4', '.jpg': 'image/jpeg', '.webp': 'image/webp' };
 function serveStatic(req, res, file) {
   const full = path.join(PUBLIC_DIR, file);
   if (!full.startsWith(PUBLIC_DIR)) return send(res, 404, 'Not found');
+  // videos: byte ranges (Safari on iPhone won't play a video without them) and a day of caching
+  if (path.extname(full) === '.mp4') {
+    return fs.stat(full, (err, st) => {
+      if (err || !st.isFile()) return send(res, 404, 'Not found');
+      const m = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range || ''));
+      const head = { 'Content-Type': 'video/mp4', 'Accept-Ranges': 'bytes', 'Cache-Control': 'public, max-age=86400', 'X-Content-Type-Options': 'nosniff' };
+      if (m && (m[1] || m[2])) {
+        let start = m[1] ? Number(m[1]) : Math.max(0, st.size - Number(m[2])), end = m[1] && m[2] ? Math.min(Number(m[2]), st.size - 1) : st.size - 1;
+        if (start > end || start >= st.size) { res.writeHead(416, { 'Content-Range': `bytes */${st.size}` }); return res.end(); }
+        res.writeHead(206, { ...head, 'Content-Range': `bytes ${start}-${end}/${st.size}`, 'Content-Length': end - start + 1 });
+        return req.method === 'HEAD' ? res.end() : fs.createReadStream(full, { start, end }).pipe(res);
+      }
+      res.writeHead(200, { ...head, 'Content-Length': st.size });
+      return req.method === 'HEAD' ? res.end() : fs.createReadStream(full).pipe(res);
+    });
+  }
   fs.readFile(full, (err, buf) => {
     if (err) return send(res, 404, 'Not found');
     const html = path.extname(full) === '.html';
+    if (/\.(jpg|webp|png)$/.test(full) && full.includes(path.sep + 'media' + path.sep)) { res.writeHead(200, { 'Content-Type': MIME[path.extname(full)], 'Cache-Control': 'public, max-age=86400', 'X-Content-Type-Options': 'nosniff' }); return res.end(buf); }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(full)] || 'application/octet-stream', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin',
       ...(html ? { 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "frame-ancestors 'none'" } : {}) });
     res.end(buf);
