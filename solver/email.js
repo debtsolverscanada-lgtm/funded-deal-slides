@@ -37,6 +37,22 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
   const env = k => String(process.env[k] || '').trim();
   const fromOf = user => { const r = db.prepare('SELECT email_from FROM users WHERE id = ?').get(user.id); const f = r && String(r.email_from || '').trim().toLowerCase(); return f && EMAIL.test(f) ? f : ''; };
   const canSendRole = user => !!user && (user.role === 'admin' || user.role === 'member' || !!fromOf(user));
+  // A board's sender: the one non-admin person on the board's access list who has a sending address (Mariel on
+  // Mariel Leads). Anyone who can see that board emails and texts as that rep; a board with no rep uses the
+  // sender's own address.
+  const lc = s => String(s || '').trim().toLowerCase();
+  function boardFrom(bid) {
+    const r = q.doc.get('boards/' + bid); if (!r) return '';
+    let members = []; try { members = ((JSON.parse(r.data).access || {}).members || []).map(lc); } catch (e) { return ''; }
+    if (!members.length) return '';
+    const froms = new Set();
+    for (const u of db.prepare("SELECT email, role, email_from FROM users WHERE email_from IS NOT NULL AND email_from != '' AND role != 'admin'").all())
+      if (members.includes(lc(u.email)) && EMAIL.test(lc(u.email_from))) froms.add(lc(u.email_from));
+    return froms.size === 1 ? [...froms][0] : '';
+  }
+  const sendFromFor = (user, bid) => boardFrom(bid) || fromOf(user);
+  const nameForFrom = from => (db.prepare('SELECT name FROM users WHERE lower(email_from) = ?').get(lc(from)) || {}).name || '';
+  const asNote = (user, from) => from && from !== fromOf(user) ? `\n(sent by ${user.name || user.email} as ${from})` : '';
   const emailLog = db.prepare('INSERT INTO email_log (id, at, user_id, from_email, to_email, board, item, subject, message_id, thread_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const textLog = db.prepare('INSERT INTO text_log (id, at, user_id, from_email, to_phone, board, item, message_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const rid = p => p + crypto.randomBytes(9).toString('base64url');
@@ -103,7 +119,7 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
     catch (e) { emailLog.run(id, now(), user.id, from, to, bid, iid, subject, null, null, 'failed'); throw new Error(String(e.message || 'the email service didn’t answer').slice(0, 200)); }
     if (out.ok === false) { emailLog.run(id, now(), user.id, from, to, bid, iid, subject, null, null, 'failed'); throw new Error(String(out.error || 'Gmail refused it').slice(0, 200)); }
     emailLog.run(id, now(), user.id, from, to, bid, iid, subject, String(out.id || '') || null, String(out.threadId || '') || null, 'sent');
-    addUpdate(bid, iid, { by: user.id, byName: user.name || user.email, text: `📧 ${blastId ? 'Mass email' : 'Email'} sent to ${to}\nSubject: ${subject}\n\n${text}`, email: { dir: 'out', to, from, subject, threadId: out.threadId || null } }, `Emailed ${to}: “${subject.slice(0, 80)}”`);
+    addUpdate(bid, iid, { by: user.id, byName: user.name || user.email, text: `📧 ${blastId ? 'Mass email' : 'Email'} sent to ${to}${asNote(user, from)}\nSubject: ${subject}\n\n${text}`, email: { dir: 'out', to, from, subject, threadId: out.threadId || null } }, `Emailed ${to}: “${subject.slice(0, 80)}”`);
     return out;
   }
   async function sendTextNow({ user, from, bid, iid, to10, text, blastId }) {
@@ -113,7 +129,7 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
     catch (e) { textLog.run(id, now(), user.id, from, to10, bid, iid, null, 'failed'); throw new Error(String(e.message || 'the texting service didn’t answer').slice(0, 200)); }
     if (out.ok === false) { textLog.run(id, now(), user.id, from, to10, bid, iid, null, 'failed'); throw new Error(String(out.error || 'RingCentral refused it').slice(0, 200)); }
     textLog.run(id, now(), user.id, from, to10, bid, iid, String(out.id || '') || null, 'sent');
-    addUpdate(bid, iid, { by: user.id, byName: user.name || user.email, text: `💬 ${blastId ? 'Mass text' : 'Text'} sent to ${to10.replace(/(\d{3})(\d{3})(\d{4})/, '($1) $2-$3')}\n\n${text}`, sms: { dir: 'out', to: to10 } }, 'Texted the lead');
+    addUpdate(bid, iid, { by: user.id, byName: user.name || user.email, text: `💬 ${blastId ? 'Mass text' : 'Text'} sent to ${to10.replace(/(\d{3})(\d{3})(\d{4})/, '($1) $2-$3')}${asNote(user, from)}\n\n${text}`, sms: { dir: 'out', to: to10 } }, 'Texted the lead');
     return out;
   }
 
@@ -122,13 +138,13 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
     if (p.startsWith('/api/gmail/')) return gmail.handle(req, res, url, user);
     if (p === '/api/email/check' && method === 'GET') {
       const { board, item } = loadItem(user, url.searchParams.get('board'), url.searchParams.get('item'));
-      return send(res, 200, { configured: emailReady(fromOf(user)), gmail: gmail.on() ? (gmail.mine(user.id) || false) : null, textConfigured: !!env('TEXT_SEND_HOOK_URL'), from: fromOf(user), canSend: canSendRole(user), to: leadEmails(board, item), phones: leadPhones(board, item), blocked: blockedReason(board, item), name: item.name || '' }), true;
+      const sf = sendFromFor(user, url.searchParams.get('board'));
+      return send(res, 200, { configured: emailReady(sf), gmail: gmail.on() ? (gmail.mine(user.id) || false) : null, textConfigured: !!env('TEXT_SEND_HOOK_URL'), from: sf, canSend: !!sf, fromName: nameForFrom(sf), to: leadEmails(board, item), phones: leadPhones(board, item), blocked: blockedReason(board, item), name: item.name || '' }), true;
     }
     if (p === '/api/email/send' && method === 'POST') {
-      if (!canSendRole(user)) throw new HttpError(403, 'Ask an admin to set the address you send from (Team & settings).');
-      const from = fromOf(user); if (!from) throw new HttpError(400, 'An admin needs to set the Gmail address you send from (Team & settings).');
-      if (!emailReady(from)) throw new HttpError(400, gmail.on() ? 'Connect your Gmail first (your profile menu → Connect Gmail).' : 'Email sending isn’t set up yet.');
       const b = await readBody(req, 256 * 1024);
+      const from = sendFromFor(user, String(b.board || '')); if (!from) throw new HttpError(400, 'This board has no rep with a sending address, and you don’t have one either. An admin can set one in Team & settings.');
+      if (!emailReady(from)) throw new HttpError(400, gmail.on() ? 'Connect your Gmail first (your profile menu → Connect Gmail).' : 'Email sending isn’t set up yet.');
       const bid = String(b.board || ''), iid = String(b.item || '');
       const { board, item } = loadItem(user, bid, iid);
       const why = blockedReason(board, item); if (why) throw new HttpError(400, why);
@@ -197,5 +213,5 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
   const firstMs = Number(process.env.EMAIL_REPLY_FIRST_MS) || 45e3, everyMs = Math.max(20e3, Number(process.env.EMAIL_REPLY_EVERY_MS) || 3 * 60e3);
   setTimeout(() => { checkReplies().catch(e => console.error('replies:', e.message)); setInterval(() => checkReplies().catch(e => console.error('replies:', e.message)), everyMs).unref(); }, firstMs).unref();
 
-  return { handle, gmail, emailReady, checkReplies, blockedReason, leadEmails, leadPhones, loadItem, fromOf, canSendRole, sendEmailNow, sendTextNow, env, phone10, isOptedOut, optOut };
+  return { handle, gmail, emailReady, boardFrom, sendFromFor, nameForFrom, checkReplies, blockedReason, leadEmails, leadPhones, loadItem, fromOf, canSendRole, sendEmailNow, sendTextNow, env, phone10, isOptedOut, optOut };
 };

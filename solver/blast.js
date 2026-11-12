@@ -69,11 +69,10 @@ module.exports = function blast({ db, q, now, HttpError, readBody, send, mustSee
     }
     return { board, go, skip };
   }
-  function checkReady(user, channel) {
-    if (!mail.canSendRole(user)) throw new HttpError(403, 'Ask an admin to set the address you send from (Team & settings).');
+  function checkReady(user, channel, bid) {
     if (off()) throw new HttpError(400, 'Mass sending is switched off right now.');
     if (channel !== 'email' && channel !== 'text') throw new HttpError(400, 'Pick email or text.');
-    const from = mail.fromOf(user); if (!from) throw new HttpError(400, 'An admin needs to set the address you send from (Team & settings → Sends email as).');
+    const from = mail.sendFromFor(user, String(bid || '')); if (!from) throw new HttpError(400, 'This board has no rep with a sending address, and you don’t have one either. An admin can set one in Team & settings.');
     if (channel === 'email' ? !mail.emailReady(from) : !mail.env('TEXT_SEND_HOOK_URL')) throw new HttpError(400, channel === 'email' ? (mail.gmail.on() ? 'Connect your Gmail first (your profile menu → Connect Gmail).' : 'Email sending isn’t set up yet.') : 'Texting isn’t set up yet.');
     return from;
   }
@@ -104,10 +103,11 @@ module.exports = function blast({ db, q, now, HttpError, readBody, send, mustSee
         const nowTo = bl.channel === 'email' ? mail.leadEmails(board, item) : mail.leadPhones(board, item);
         if (!nowTo.includes(row.to_addr)) { mark('skipped', 'The lead’s ' + (bl.channel === 'email' ? 'email' : 'number') + ' changed'); continue; }
         const user = { id: bl.user_id, name: bl.user_name, role: bl.user_role };
-        const text = withFooter(bl.channel, fill(bl.body, item, user), board);
+        const rep = { ...user, name: mail.nameForFrom(bl.from_email) || user.name };
+        const text = withFooter(bl.channel, fill(bl.body, item, rep), board);
         lastSent.set(key, Date.now());
         try {
-          if (bl.channel === 'email') await mail.sendEmailNow({ user, from: bl.from_email, bid: bl.board, iid: row.item, to: row.to_addr, subject: fill(bl.subject, item, user), text, blastId: bl.id });
+          if (bl.channel === 'email') await mail.sendEmailNow({ user, from: bl.from_email, bid: bl.board, iid: row.item, to: row.to_addr, subject: fill(bl.subject, item, rep), text, blastId: bl.id });
           else await mail.sendTextNow({ user, from: bl.from_email, bid: bl.board, iid: row.item, to10: row.to_addr, text, blastId: bl.id });
           mark('sent');
         } catch (e) {
@@ -129,16 +129,16 @@ module.exports = function blast({ db, q, now, HttpError, readBody, send, mustSee
     if (!p.startsWith('/api/blast')) return false;
     if (p === '/api/blast/preview' && method === 'POST') {
       const b = await readBody(req, 256 * 1024), channel = String(b.channel || '');
-      const from = checkReady(user, channel), msg = readMsg({ subject: b.subject || (channel === 'text' ? '-' : ''), text: b.text || ' ' }, channel);
+      const from = checkReady(user, channel, b.board), msg = readMsg({ subject: b.subject || (channel === 'text' ? '-' : ''), text: b.text || ' ' }, channel);
       const { board, go, skip } = plan(user, String(b.board || ''), Array.isArray(b.items) ? b.items : [], channel);
-      const s = go[0], u = { id: user.id, name: user.name, role: user.role };
+      const s = go[0], u = { id: user.id, name: mail.nameForFrom(from) || user.name, role: user.role };
       return send(res, 200, { from, channel, count: go.length, skipped: skip, limit: user.role === 'admin' ? MAX : MEMBER_MAX,
         sample: s ? { name: s.name, to: s.to, subject: channel === 'email' ? fill(msg.subject, s.lead, u) : '', text: withFooter(channel, fill(msg.body, s.lead, u), board) } : null,
         minutes: Math.ceil(go.length * gap(channel) / 60000) }), true;
     }
     if (p === '/api/blast/start' && method === 'POST') {
       const b = await readBody(req, 256 * 1024), channel = String(b.channel || '');
-      const from = checkReady(user, channel), msg = readMsg(b, channel), bid = String(b.board || '');
+      const from = checkReady(user, channel, b.board), msg = readMsg(b, channel), bid = String(b.board || '');
       const { go, skip } = plan(user, bid, Array.isArray(b.items) ? b.items : [], channel);
       if (!go.length) throw new HttpError(400, 'None of the selected leads can get this.');
       if (user.role !== 'admin' && go.length > MEMBER_MAX) throw new HttpError(403, `That’s ${go.length} leads. Blasts over ${MEMBER_MAX} need an admin to send them.`);

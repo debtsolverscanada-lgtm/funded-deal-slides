@@ -1097,7 +1097,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
     if (S.isGuest) return (permsOf(b).guestEdit || []).includes(col.id);
     return S.canWrite;
   }
-  const canSendMsgs = () => !!S.me && (S.me.role === 'admin' || S.me.role === 'member' || !!S.me.sends);
+  const canSendMsgs = () => !!S.me; // anyone who can see a board can email/text from it; the server picks the board's rep as the sender
   const roleLabel = () => S.isOwner ? 'Admin' : S.isGuest ? 'Guest' : S.canWrite ? 'Member' : 'Viewer';
   // File columns hold [{ name, url }]. Older copies stored Monday's text: a comma-separated list of links.
   const isFileCol = c => !!c && (c.type === 'file' || c.source === 'file');
@@ -2700,7 +2700,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
       const em = m.channel === 'email', pv = m.preview;
       const groups = {}; (pv ? pv.skipped : []).forEach(x => { (groups[x.why] = groups[x.why] || []).push(x.name); });
       return `<h3>${em ? 'Mass email' : 'Mass text'} · ${m.items.length} selected</h3>
-        <p class="rail-note" style="margin-top:0">Each lead gets their <b>own</b> ${em ? 'email' : 'text'}, sent one at a time from ${em ? 'your Gmail' : 'your RingCentral line'}. Use <code>{first name}</code> to personalise.${em ? ' An unsubscribe line is added at the bottom.' : ' “Reply STOP to opt out.” is added at the end.'}</p>
+        <p class="rail-note" style="margin-top:0">Each lead gets their <b>own</b> ${em ? 'email' : 'text'}, sent one at a time from ${em ? 'the board rep’s Gmail' : 'the board rep’s RingCentral line'} (you’ll see exactly which after Check). Use <code>{first name}</code> to personalise.${em ? ' An unsubscribe line is added at the bottom.' : ' “Reply STOP to opt out.” is added at the end.'}</p>
         <div class="em-form">
           ${em ? `<input class="field-input" id="bl-subject" placeholder="Subject" value="${esc(m.subject || '')}" maxlength="300">` : ''}
           <textarea class="field-input" id="bl-text" rows="${em ? 9 : 4}" maxlength="${em ? 20000 : 600}" placeholder="${em ? 'Hi {first name},\n\n…' : 'Hi {first name}, it’s … from DebtSolvers Canada. …'}">${esc(m.text || '')}</textarea>
@@ -2726,11 +2726,11 @@ html.mx-off.pet-docked .pet svg { animation: none; }
       const to = m.to || c.to[0] || '';
       const mailto = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(m.subject || '')}&body=${encodeURIComponent(m.text || '')}`;
       const ready = c.configured && c.from && c.canSend && !c.blocked && to;
-      const why = c.blocked ? c.blocked : !c.to.length ? 'This lead has no email address.' : !c.canSend ? 'Only team members can send email.' : !c.configured ? (c.gmail === false ? 'Connect your Gmail first, then emails go out from your own inbox.' : 'Sending from Gmail isn’t switched on yet.') : !c.from ? 'An admin needs to set the Gmail address you send from (Team & settings).' : '';
+      const why = c.blocked ? c.blocked : !c.to.length ? 'This lead has no email address.' : !c.canSend ? 'This board has no rep with a sending address yet. An admin can set one in Team & settings.' : !c.configured ? (c.gmail === false ? 'Connect your Gmail first, then emails go out from your own inbox.' : 'Sending from Gmail isn’t switched on yet.') : !c.from ? 'An admin needs to set the Gmail address you send from (Team & settings).' : '';
       return `<h3>Email ${esc(i.name)}</h3>
         ${why ? `<p class="em-warn">${esc(why)}</p>` : ''}
         <div class="em-form">
-          <label class="em-row"><span>From</span><b>${esc(c.from || 'not set up')}</b></label>
+          <label class="em-row"><span>From</span><b>${esc(c.from ? (c.fromName ? c.fromName + ' · ' : '') + c.from : 'not set up')}</b></label>
           <label class="em-row"><span>To</span>${c.to.length > 1 ? `<select class="field-input" id="em-to">${c.to.map(x => `<option ${x === to ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>` : `<b>${esc(to || 'no email on this lead')}</b>`}</label>
           <input class="field-input" id="em-subject" placeholder="Subject" value="${esc(m.subject || '')}" maxlength="300" ${c.blocked ? 'disabled' : ''}>
           <textarea class="field-input" id="em-text" rows="10" placeholder="Write your email" ${c.blocked ? 'disabled' : ''}>${esc(m.text || '')}</textarea>
