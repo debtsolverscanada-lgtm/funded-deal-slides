@@ -10,10 +10,10 @@
     ['maroon', 'Maroon', '#4a1020'], ['blue', 'Blue', '#102a5c'], ['beige', 'Beige', '#efe3cf'],
   ];
   const get = () => { try { const t = localStorage.getItem('ks-theme'); return THEMES.some(x => x[0] === t) ? t : 'dark'; } catch (e) { return 'dark'; } };
-  const KEEP = '.home-hero, video, img, picture, canvas#coins, .pet, .penny, .penny-desk, .fx-avatar img, .mx-confetti, iframe';
+  const KEEP = '.home-hero, video, img, picture, canvas#coins, .pet, .penny, .penny-desk, .fx-avatar img, .mx-confetti, iframe, #newlead';
   const css = `
   html[data-theme="light"], html[data-theme="beige"] { filter: invert(1) hue-rotate(180deg); }
-  html[data-theme="light"] :is(${KEEP}):not(.home-hero *):not(.penny-desk *), html[data-theme="beige"] :is(${KEEP}):not(.home-hero *):not(.penny-desk *) { filter: invert(1) hue-rotate(180deg); }
+  html[data-theme="light"] :is(${KEEP}):not(.home-hero *):not(.penny-desk *):not(#newlead *), html[data-theme="beige"] :is(${KEEP}):not(.home-hero *):not(.penny-desk *):not(#newlead *) { filter: invert(1) hue-rotate(180deg); }
   html[data-theme] { background: #000; }
   html[data-theme]:not([data-theme="dark"])::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 2147483646; }
   html[data-theme="grey"]::after { background: #34353a; mix-blend-mode: screen; }
