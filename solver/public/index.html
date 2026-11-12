@@ -2511,6 +2511,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
           ${row('security', PI.shield, 'Security', twofa ? 'Two-factor is on' : '<span class="pf-warn">Two-factor is off · turn it on</span>')}
           ${row('notifs', IC.bell, 'Notifications', S.notifs.unread ? `${S.notifs.unread} new` : 'All caught up')}
           ${window.SolverExt ? row('pf-page', PI.phone, 'Alerts', 'Phone, desktop and email', 'data-page="alerts"') : ''}
+          ${S.gmail && S.gmail.available && canSendMsgs() ? row('gmail', IC_MAIL, S.gmail.connected ? 'Gmail connected' : 'Connect Gmail', S.gmail.connected ? esc(S.gmail.connected.email) + ' · tap to disconnect' : '<span class="pf-warn">Send lead emails from your own Gmail</span>') : ''}
         </div>
         ${S.isOwner ? `<div class="pf-sec">Admin</div>
         <div class="pf-group">
@@ -2623,7 +2624,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
       const to = m.to || c.to[0] || '';
       const mailto = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(m.subject || '')}&body=${encodeURIComponent(m.text || '')}`;
       const ready = c.configured && c.from && c.canSend && !c.blocked && to;
-      const why = c.blocked ? c.blocked : !c.to.length ? 'This lead has no email address.' : !c.canSend ? 'Only team members can send email.' : !c.configured ? 'Sending from Gmail isn’t switched on yet.' : !c.from ? 'An admin needs to set the Gmail address you send from (Team & settings).' : '';
+      const why = c.blocked ? c.blocked : !c.to.length ? 'This lead has no email address.' : !c.canSend ? 'Only team members can send email.' : !c.configured ? (c.gmail === false ? 'Connect your Gmail first, then emails go out from your own inbox.' : 'Sending from Gmail isn’t switched on yet.') : !c.from ? 'An admin needs to set the Gmail address you send from (Team & settings).' : '';
       return `<h3>Email ${esc(i.name)}</h3>
         ${why ? `<p class="em-warn">${esc(why)}</p>` : ''}
         <div class="em-form">
@@ -2634,6 +2635,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
         </div>
         ${m.msg ? `<p class="em-warn">${esc(m.msg)}</p>` : ''}
         <div class="form-row">
+          ${!ready && c.gmail === false && !c.blocked ? '<button class="btn primary" data-act="gmail">Connect Gmail</button>' : ''}
           ${ready ? `<button class="btn primary" data-act="email-send" ${m.sending ? 'disabled' : ''}>${m.sending ? 'Sending…' : 'Send'}</button>` : ''}
           ${!ready && !c.blocked && to && c.canSend ? `<a class="btn" href="${esc(mailto)}" target="_blank" rel="noopener">Open in my email app</a>` : ''}
           <button class="btn" data-act="close-modal-btn">Cancel</button>
@@ -2891,6 +2893,13 @@ html.mx-off.pet-docked .pet svg { animation: none; }
       }
       case 'close-modal': case 'close-modal-btn': S.modal = null; renderLayer(); break;
       // ---- security: two-factor ----
+      case 'gmail': {
+        if (S.gmail && S.gmail.connected && !(S.modal && S.modal.type === 'email')) {
+          if (!confirm(`Disconnect ${S.gmail.connected.email}? Emails from Solver.ca stop until you connect it again.`)) break;
+          KS.api('POST', '/api/gmail/disconnect', {}).then(() => { toast('Gmail disconnected.'); loadGmail(); }).catch(e => toast(e.message || 'Couldn’t disconnect.'));
+        } else location.href = '/api/gmail/connect';
+        break;
+      }
       case 'security': S.pop = null; S.modal = { type: 'security', status: null, msg: '' }; renderLayer(); loadTwoFactor(); break;
       case 'tf-setup': KS.api('POST', '/api/2fa/setup', {}).then(r => { S.modal.setup = r; S.modal.msg = ''; renderLayer(); setTimeout(() => $('#tf-code') && $('#tf-code').focus(), 0); }).catch(e => { S.modal.msg = e.message; renderLayer(); }); break;
       case 'tf-enable': { const code = ($('#tf-code').value || '').trim(); KS.api('POST', '/api/2fa/enable', { code }).then(r => { S.modal.setup = null; S.modal.codes = r.backupCodes; S.modal.msg = 'Two-factor is on.'; if (S.me) S.me.twofa = true; renderLayer(); }).catch(e => { S.modal.msg = e.message; renderLayer(); }); break; }
@@ -3330,11 +3339,14 @@ html.mx-off.pet-docked .pet svg { animation: none; }
       render();
     }
   }
+  function loadGmail() { if (!window.KS) return; KS.api('GET', '/api/gmail/status').then(d => { S.gmail = d; if (S.modal && S.modal.type === 'profile') renderLayer(); }).catch(() => {}); }
   async function checkImport() {
     try { S.isOwner = !!(S.user && await S.user.isOwner()); } catch (e) {}
     try { if (S.user) S.me = await S.user.me(); } catch (e) {}
     if (S.me && S.me.timeZone && window.KSFormula && KSFormula.setTimeZone) KSFormula.setTimeZone(S.me.timeZone); // formulas and TODAY() read the workspace's day
     if (S.me) { S.role = S.me.role; S.isGuest = S.role === 'guest'; }
+    loadGmail();
+    { const h = location.hash; if (/^#gmail=/.test(h)) { const sp = new URLSearchParams(h.slice(1)); history.replaceState(null, '', location.pathname + location.search); setTimeout(() => toast(sp.get('gmail') === 'ok' ? `Gmail connected: ${sp.get('email') || ''}. Emails now go out from it.` : (sp.get('msg') || 'Gmail wasn’t connected.')), 600); } }
     tryLand();
     render();
     if (!S.isOwner) return;

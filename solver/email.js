@@ -40,6 +40,9 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
   const emailLog = db.prepare('INSERT INTO email_log (id, at, user_id, from_email, to_email, board, item, subject, message_id, thread_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const textLog = db.prepare('INSERT INTO text_log (id, at, user_id, from_email, to_phone, board, item, message_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const rid = p => p + crypto.randomBytes(9).toString('base64url');
+  // "Connect Gmail" (gmail.js): a rep who linked their mailbox in Solver.ca sends straight from it; others go through n8n
+  const gmail = require('./gmail.js')({ db, now, HttpError, send });
+  const emailReady = from => gmail.hasFor(from) || !!env('EMAIL_SEND_HOOK_URL');
 
   // ---------- opt-outs ----------
   const phone10 = s => { const d = String(s || '').replace(/\D/g, ''); const t = d.length === 11 && d[0] === '1' ? d.slice(1) : d; return t.length === 10 ? t : ''; };
@@ -96,7 +99,7 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
   async function sendEmailNow({ user, from, bid, iid, to, subject, text, blastId }) {
     const id = rid('em_');
     let out;
-    try { out = await postHook(env('EMAIL_SEND_HOOK_URL'), { id, from, to, subject, text }, 30000); }
+    try { out = gmail.hasFor(from) ? await gmail.sendMail(from, { to, subject, text, name: user.name }) : await postHook(env('EMAIL_SEND_HOOK_URL'), { id, from, to, subject, text }, 30000); }
     catch (e) { emailLog.run(id, now(), user.id, from, to, bid, iid, subject, null, null, 'failed'); throw new Error(String(e.message || 'the email service didn’t answer').slice(0, 200)); }
     if (out.ok === false) { emailLog.run(id, now(), user.id, from, to, bid, iid, subject, null, null, 'failed'); throw new Error(String(out.error || 'Gmail refused it').slice(0, 200)); }
     emailLog.run(id, now(), user.id, from, to, bid, iid, subject, String(out.id || '') || null, String(out.threadId || '') || null, 'sent');
@@ -116,14 +119,15 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
 
   async function handle(req, res, url, user) {
     const p = url.pathname, method = req.method;
+    if (p.startsWith('/api/gmail/')) return gmail.handle(req, res, url, user);
     if (p === '/api/email/check' && method === 'GET') {
       const { board, item } = loadItem(user, url.searchParams.get('board'), url.searchParams.get('item'));
-      return send(res, 200, { configured: !!env('EMAIL_SEND_HOOK_URL'), textConfigured: !!env('TEXT_SEND_HOOK_URL'), from: fromOf(user), canSend: canSendRole(user), to: leadEmails(board, item), phones: leadPhones(board, item), blocked: blockedReason(board, item), name: item.name || '' }), true;
+      return send(res, 200, { configured: emailReady(fromOf(user)), gmail: gmail.on() ? (gmail.mine(user.id) || false) : null, textConfigured: !!env('TEXT_SEND_HOOK_URL'), from: fromOf(user), canSend: canSendRole(user), to: leadEmails(board, item), phones: leadPhones(board, item), blocked: blockedReason(board, item), name: item.name || '' }), true;
     }
     if (p === '/api/email/send' && method === 'POST') {
       if (!canSendRole(user)) throw new HttpError(403, 'Ask an admin to set the address you send from (Team & settings).');
-      if (!env('EMAIL_SEND_HOOK_URL')) throw new HttpError(400, 'Email sending isn’t set up yet.');
       const from = fromOf(user); if (!from) throw new HttpError(400, 'An admin needs to set the Gmail address you send from (Team & settings).');
+      if (!emailReady(from)) throw new HttpError(400, gmail.on() ? 'Connect your Gmail first (your profile menu → Connect Gmail).' : 'Email sending isn’t set up yet.');
       const b = await readBody(req, 256 * 1024);
       const bid = String(b.board || ''), iid = String(b.item || '');
       const { board, item } = loadItem(user, bid, iid);
@@ -150,13 +154,14 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
     busy = true;
     try {
       const since30 = new Date(Date.now() - 30 * 864e5).toISOString();
-      if (env('EMAIL_REPLY_HOOK_URL')) {
+      if (env('EMAIL_REPLY_HOOK_URL') || gmail.on()) {
         const rows = db.prepare("SELECT from_email, thread_id, board, item, to_email FROM email_log WHERE status = 'sent' AND thread_id IS NOT NULL AND at > ? GROUP BY thread_id").all(since30);
         const byFrom = new Map(); rows.forEach(r => { if (!byFrom.has(r.from_email)) byFrom.set(r.from_email, []); byFrom.get(r.from_email).push(r); });
         for (const [from, list] of byFrom) {
           for (let i = 0; i < list.length; i += 100) {
             const part = list.slice(i, i + 100);
-            let d; try { d = await postHook(env('EMAIL_REPLY_HOOK_URL'), { from, threads: part.map(r => r.thread_id) }, 60000); } catch (e) { console.error('email replies:', e.message); continue; }
+            if (!gmail.hasFor(from) && !env('EMAIL_REPLY_HOOK_URL')) continue;
+            let d; try { d = gmail.hasFor(from) ? await gmail.threads(from, part.map(r => r.thread_id)) : await postHook(env('EMAIL_REPLY_HOOK_URL'), { from, threads: part.map(r => r.thread_id) }, 60000); } catch (e) { console.error('email replies:', e.message); continue; }
             for (const m of Array.isArray(d.messages) ? d.messages : []) {
               const mid = String(m.id || ''), tid = String(m.threadId || ''); if (!mid || !tid) continue;
               if (String(m.from || '').toLowerCase().includes(from)) continue; // our own message in the thread
@@ -192,5 +197,5 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
   const firstMs = Number(process.env.EMAIL_REPLY_FIRST_MS) || 45e3, everyMs = Math.max(20e3, Number(process.env.EMAIL_REPLY_EVERY_MS) || 3 * 60e3);
   setTimeout(() => { checkReplies().catch(e => console.error('replies:', e.message)); setInterval(() => checkReplies().catch(e => console.error('replies:', e.message)), everyMs).unref(); }, firstMs).unref();
 
-  return { handle, checkReplies, blockedReason, leadEmails, leadPhones, loadItem, fromOf, canSendRole, sendEmailNow, sendTextNow, env, phone10, isOptedOut, optOut };
+  return { handle, gmail, emailReady, checkReplies, blockedReason, leadEmails, leadPhones, loadItem, fromOf, canSendRole, sendEmailNow, sendTextNow, env, phone10, isOptedOut, optOut };
 };

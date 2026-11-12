@@ -73,8 +73,8 @@ module.exports = function blast({ db, q, now, HttpError, readBody, send, mustSee
     if (!mail.canSendRole(user)) throw new HttpError(403, 'Ask an admin to set the address you send from (Team & settings).');
     if (off()) throw new HttpError(400, 'Mass sending is switched off right now.');
     if (channel !== 'email' && channel !== 'text') throw new HttpError(400, 'Pick email or text.');
-    if (!mail.env(channel === 'email' ? 'EMAIL_SEND_HOOK_URL' : 'TEXT_SEND_HOOK_URL')) throw new HttpError(400, channel === 'email' ? 'Email sending isn’t set up yet.' : 'Texting isn’t set up yet.');
     const from = mail.fromOf(user); if (!from) throw new HttpError(400, 'An admin needs to set the address you send from (Team & settings → Sends email as).');
+    if (channel === 'email' ? !mail.emailReady(from) : !mail.env('TEXT_SEND_HOOK_URL')) throw new HttpError(400, channel === 'email' ? (mail.gmail.on() ? 'Connect your Gmail first (your profile menu → Connect Gmail).' : 'Email sending isn’t set up yet.') : 'Texting isn’t set up yet.');
     return from;
   }
   function readMsg(b, channel) {
