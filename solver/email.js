@@ -36,7 +36,7 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
   const EMAIL = /^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[^\s@<>(),;:"]+$/;
   const env = k => String(process.env[k] || '').trim();
   const fromOf = user => { const r = db.prepare('SELECT email_from FROM users WHERE id = ?').get(user.id); const f = r && String(r.email_from || '').trim().toLowerCase(); return f && EMAIL.test(f) ? f : ''; };
-  const canSendRole = user => user && (user.role === 'admin' || user.role === 'member');
+  const canSendRole = user => !!user && (user.role === 'admin' || user.role === 'member' || !!fromOf(user));
   const emailLog = db.prepare('INSERT INTO email_log (id, at, user_id, from_email, to_email, board, item, subject, message_id, thread_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const textLog = db.prepare('INSERT INTO text_log (id, at, user_id, from_email, to_phone, board, item, message_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const rid = p => p + crypto.randomBytes(9).toString('base64url');
@@ -121,7 +121,7 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
       return send(res, 200, { configured: !!env('EMAIL_SEND_HOOK_URL'), textConfigured: !!env('TEXT_SEND_HOOK_URL'), from: fromOf(user), canSend: canSendRole(user), to: leadEmails(board, item), phones: leadPhones(board, item), blocked: blockedReason(board, item), name: item.name || '' }), true;
     }
     if (p === '/api/email/send' && method === 'POST') {
-      if (!canSendRole(user)) throw new HttpError(403, 'Only team members can send email.');
+      if (!canSendRole(user)) throw new HttpError(403, 'Ask an admin to set the address you send from (Team & settings).');
       if (!env('EMAIL_SEND_HOOK_URL')) throw new HttpError(400, 'Email sending isn’t set up yet.');
       const from = fromOf(user); if (!from) throw new HttpError(400, 'An admin needs to set the Gmail address you send from (Team & settings).');
       const b = await readBody(req, 256 * 1024);

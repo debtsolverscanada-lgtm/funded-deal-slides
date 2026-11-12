@@ -461,7 +461,7 @@ function currentUser(req) {
   if (!row || row.disabled || row.expires < now()) return null;
   return { id: row.id, email: row.email, name: row.name, role: row.role, homeBoard: row.home_board || '', token, method: row.method || 'pw', totpOn: !!row.totp_on, needs2fa: needsTwoFactor(row, row.method) };
 }
-const publicUser = u => ({ id: u.id, email: u.email, name: u.name, role: u.role, homeBoard: u.homeBoard ?? u.home_board ?? '' });
+const publicUser = u => ({ id: u.id, email: u.email, name: u.name, role: u.role, homeBoard: u.homeBoard ?? u.home_board ?? '', sends: !!(u.email_from || u.emailFrom) });
 
 // ---------- sign-in security settings (meta/security, admins only) ----------
 let secCache = { at: 0, v: null };

@@ -1046,6 +1046,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
     if (S.isGuest) return (permsOf(b).guestEdit || []).includes(col.id);
     return S.canWrite;
   }
+  const canSendMsgs = () => !!S.me && (S.me.role === 'admin' || S.me.role === 'member' || !!S.me.sends);
   const roleLabel = () => S.isOwner ? 'Admin' : S.isGuest ? 'Guest' : S.canWrite ? 'Member' : 'Viewer';
   // File columns hold [{ name, url }]. Older copies stored Monday's text: a comma-separated list of links.
   const isFileCol = c => !!c && (c.type === 'file' || c.source === 'file');
@@ -1745,7 +1746,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
         return `<button class="people-cell" data-act="person" data-item="${esc(item.id)}" data-col="${esc(col.id)}" aria-label="${esc(col.title)}: ${esc(ps.join(', ') || 'nobody')}" ${canEd ? '' : 'disabled'}>${ps.length ? avs + (inDrawer ? `<span class="pnames">${esc(ps.join(', '))}</span>` : ps.length > 3 ? `<span class="pmore">+${ps.length - 3}</span>` : '') : `<span class="pempty">${inDrawer ? 'Assign' : ''}</span>`}</button>`;
       }
       case 'phone': return lz ? lazyCell(col, item, v) : `<input type="text" inputmode="tel" ${base} value="${esc(v)}">`;
-      case 'email': { const inner = lz ? lazyCell(col, item, v) : `<input type="text" inputmode="email" ${base} value="${esc(v)}">`; return String(v).includes('@') && !S.isGuest ? `<span class="email-cell">${inner}<button class="mail-btn" data-act="compose-email" data-item="${esc(item.id)}" title="Send an email" aria-label="Email ${esc(v)}">${IC_MAIL}</button></span>` : inner; }
+      case 'email': { const inner = lz ? lazyCell(col, item, v) : `<input type="text" inputmode="email" ${base} value="${esc(v)}">`; return String(v).includes('@') && canSendMsgs() ? `<span class="email-cell">${inner}<button class="mail-btn" data-act="compose-email" data-item="${esc(item.id)}" title="Send an email" aria-label="Email ${esc(v)}">${IC_MAIL}</button></span>` : inner; }
       default: return lz ? lazyCell(col, item, v) : `<input type="text" ${base} value="${esc(v)}">`;
     }
   }
@@ -2212,7 +2213,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
         html += `<div class="scrim" data-act="close-item"></div>
         <aside class="drawer ${W ? 'wide' : ''}" role="dialog" aria-modal="true" tabindex="-1" data-key="${esc(i.id + '|' + dtab + (W ? '|w' : ''))}" aria-label="${esc(i.name)}">
           <div class="drawer-head"><input class="drawer-title" data-edit="name" data-item="${esc(i.id)}" value="${esc(i.name)}" aria-label="Item name" ${S.canWrite ? '' : 'readonly'}>
-            <div class="drawer-actions">${S.canWrite && (b.columns || []).some(c => c.type === 'email' && String((i.values || {})[c.id] || '').includes('@')) ? `<button class="btn" data-act="compose-email" data-item="${esc(i.id)}">✉ Email</button>` : ''}${S.canWrite ? `<button class="btn" data-act="dup-item" data-item="${esc(i.id)}">Duplicate</button>` : ''}<button class="btn" data-act="close-item">Close</button></div></div>
+            <div class="drawer-actions">${canSendMsgs() && (b.columns || []).some(c => c.type === 'email' && String((i.values || {})[c.id] || '').includes('@')) ? `<button class="btn" data-act="compose-email" data-item="${esc(i.id)}">✉ Email</button>` : ''}${S.canWrite ? `<button class="btn" data-act="dup-item" data-item="${esc(i.id)}">Duplicate</button>` : ''}<button class="btn" data-act="close-item">Close</button></div></div>
           ${W ? `<div class="dw-split"><div class="dw-left">${fgrid}</div><div class="dw-right">` : ''}<div class="drawer-tabs" role="tablist">
             ${[...(b.form ? [['fact', 'Fact find']] : []), ['updates', `Updates · ${(i.updates || []).length}`], ...(W ? [] : [['info', 'Info']]), ...(window.SolverExt ? SolverExt.drawerTabs(b, i) : []), ['history', 'History']].map(([k, l]) => `<button class="drawer-tab" role="tab" data-act="dtab" data-tab="${k}" aria-selected="${dtab === k}">${l}</button>`).join('')}
           </div>
@@ -2244,7 +2245,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
       html += `<div class="bulkbar" role="region" aria-label="Selected items">
         <div class="bb-count"><span class="bb-num">${S.selected.size}</span><span class="bb-label">${S.selected.size === 1 ? 'Lead' : 'Leads'} selected</span></div>
         <div class="bb-actions">
-        ${S.canWrite && !S.isGuest ? btn('data-act="blast-open" data-ch="email"', I.mail, 'Mass email') + btn('data-act="blast-open" data-ch="text"', I.text, 'Mass text') : ''}
+        ${canSendMsgs() ? btn('data-act="blast-open" data-ch="email"', I.mail, 'Mass email') + btn('data-act="blast-open" data-ch="text"', I.text, 'Mass text') : ''}
         ${S.canWrite ? `${sc.map(c => btn(`data-act="bulk-status" data-col="${esc(c.id)}"`, I.status, sc.length > 1 ? esc(c.title) : 'Status')).join('')}
         ${pick(I.group, 'Move to group', `<select class="bb-sel" id="bulk-move" aria-label="Move to group"><option value="">Move to group…</option>${b.groups.map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('')}</select>`)}
         ${mbs ? pick(I.board, 'Move to board', mbs.replace('class="kbd-select" id="bulk-board"', 'class="bb-sel" id="bulk-board"')) : ''}
