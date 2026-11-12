@@ -459,7 +459,7 @@ function currentUser(req) {
   if (!token) return null;
   const row = q.session.get(token);
   if (!row || row.disabled || row.expires < now()) return null;
-  return { id: row.id, email: row.email, name: row.name, role: row.role, homeBoard: row.home_board || '', token, method: row.method || 'pw', totpOn: !!row.totp_on, needs2fa: needsTwoFactor(row, row.method) };
+  return { id: row.id, email: row.email, name: row.name, role: row.role, homeBoard: row.home_board || '', emailFrom: row.email_from || '', token, method: row.method || 'pw', totpOn: !!row.totp_on, needs2fa: needsTwoFactor(row, row.method) };
 }
 const publicUser = u => ({ id: u.id, email: u.email, name: u.name, role: u.role, homeBoard: u.homeBoard ?? u.home_board ?? '', sends: !!(u.email_from || u.emailFrom) });
 
