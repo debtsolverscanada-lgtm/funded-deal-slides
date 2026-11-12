@@ -1495,7 +1495,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
   function viewControls(b) {
     const statusCols = b.columns.filter(c => c.type === 'status');
     return `${S.view === 'calendar' && b.columns.filter(c => c.type === 'date').length > 1 ? `<select class="kbd-select" id="cal-col" aria-label="Date column">${b.columns.filter(c => c.type === 'date').map(c => `<option value="${c.id}" ${c.id === calColId(b) ? 'selected' : ''}>By ${esc(c.title)}</option>`).join('')}</select>` : ''}
-        ${S.view === 'kanban' && statusCols.length > 1 ? `<select class="kbd-select" id="kanban-col" aria-label="Group cards by">${statusCols.map(c => `<option value="${c.id}" ${c.id === kanbanColId(b) ? 'selected' : ''}>By ${esc(c.title)}</option>`).join('')}</select>` : ''}
+        ${S.view === 'kanban' && (statusCols.length > 1 || (dsPipeline(b) && statusCols.length)) ? `<select class="kbd-select" id="kanban-col" aria-label="Group cards by">${dsPipeline(b) ? `<option value="__pipe__" ${usePipeline(b) ? 'selected' : ''}>By pipeline</option>` : ''}${statusCols.map(c => `<option value="${c.id}" ${!usePipeline(b) && c.id === kanbanColId(b) ? 'selected' : ''}>By ${esc(c.title)}</option>`).join('')}</select>` : ''}
         ${window.KSViews ? KSViews.head(b) : ''}`;
   }
   function filterChips(b) {
@@ -2118,7 +2118,40 @@ html.mx-off.pet-docked .pet svg { animation: none; }
     return (cols.find(c => c.id === S.kanbanCol) || cols[0] || {}).id;
   }
 
+  // DebtSolvers boards track the pipeline with groups: Kanban shows Follow up / Pitched / Callback / Signed lanes
+  // built from them (Flopped and Junk stay off). Dragging a card to a lane moves the lead to that group.
+  function dsPipeline(b) {
+    if (!b || companyOf(wsOf(b)) !== 'DebtSolvers') return null;
+    const gs = b.groups || []; if (!gs.some(g => /^(pitched|signed)/i.test(g.name))) return null;
+    const isFollow = g => !/callback|pitched|signed|flop|junk|unqualif|lost|dead/i.test(g.name);
+    const follow = gs.filter(isFollow);
+    return [
+      { key: 'follow', label: 'Follow up', color: '#579bfc', groups: follow.map(g => g.id), target: (follow.find(g => /new uncontacted/i.test(g.name)) || follow[0] || {}).id },
+      { key: 'pitched', label: 'Pitched', color: '#fdab3d', ...pick(gs, /^pitched/i) },
+      { key: 'callback', label: 'Callback', color: '#a25ddc', ...pick(gs, /callback/i) },
+      { key: 'signed', label: 'Signed', color: '#00c875', ...pick(gs, /^signed/i) },
+    ];
+    function pick(list, re) { const m = list.filter(g => re.test(g.name)); return { groups: m.map(g => g.id), target: (m[0] || {}).id }; }
+  }
+  const usePipeline = b => !!dsPipeline(b) && (!S.kanbanCol || S.kanbanCol === '__pipe__');
+  function renderPipeline(b) {
+    const lanesDef = dsPipeline(b), items = visibleItems(), CAP = 150;
+    const amountCol = b.columns.find(c => c.type === 'number'), phoneCol = b.columns.find(c => c.type === 'phone');
+    return `<div class="kanban">${lanesDef.map(L => {
+      const li = items.filter(i => L.groups.includes(i.group));
+      const cards = li.slice(0, CAP).map(i => { const g = b.groups.find(x => x.id === i.group), v = i.values || {};
+        return `<div class="card" draggable="${S.canWrite}" data-act="open" data-item="${esc(i.id)}" data-drag="${esc(i.id)}" tabindex="0" role="button">
+          <span class="card-name">${esc(i.name)}</span>
+          <span class="card-meta">${amountCol && v[amountCol.id] !== '' && v[amountCol.id] != null ? `<span class="amt">${amountCol.format === 'currency' ? '$' : ''}${esc(fmtMoney(v[amountCol.id]))}</span>` : ''}${phoneCol && v[phoneCol.id] ? `<span>${esc(v[phoneCol.id])}</span>` : ''}</span>
+          ${g && L.groups.length > 1 ? `<span class="group-tag" style="--gc:${esc(g.color)}">${esc(g.name)}</span>` : ''}
+        </div>`; }).join('');
+      return `<div class="lane" data-glane="${esc(L.target || '')}" data-glabel="${esc(L.label)}" style="--lc:${esc(L.color)}">
+        <div class="lane-head"><span>${esc(L.label)}</span><span class="group-count">${li.length.toLocaleString('en-CA')}</span></div>
+        <div class="lane-body">${cards}${li.length > CAP ? `<p class="rail-note" style="padding:6px 8px">Showing ${CAP} of ${li.length.toLocaleString('en-CA')}. Search to find a lead.</p>` : ''}${!L.target ? '<p class="rail-note" style="padding:6px 8px">This board has no ' + esc(L.label) + ' group.</p>' : ''}</div></div>`;
+    }).join('')}</div>`;
+  }
   function renderKanban(b) {
+    if (usePipeline(b)) return renderPipeline(b);
     const colId = kanbanColId(b);
     const col = b.columns.find(c => c.id === colId);
     if (!col) return `<div class="empty"><h3>Kanban needs a status column</h3>Add a Status column with “+ Column”, then cards can sit in a lane for each status.</div>`;
@@ -3137,7 +3170,9 @@ html.mx-off.pet-docked .pet svg { animation: none; }
       rest.splice(after ? k + 1 : k, 0, moving);
       patchBoard({ groups: rest }); localBoard({ groups: rest }); return;
     }
-    if (kind === 'card') { const l = e.target.closest('.lane'); if (l) { e.preventDefault(); setValue(id, l.dataset.col, l.dataset.lane); } return; }
+    if (kind === 'card') { const l = e.target.closest('.lane'); if (l) { e.preventDefault();
+      if (l.dataset.glane !== undefined) { const it = itemById(id), bb = board(); if (!l.dataset.glane) { toast(`This board has no ${l.dataset.glabel} group.`); return; } if (it && bb && it.group !== l.dataset.glane) { moveToGroup(bb, it, l.dataset.glane); render(); } return; }
+      setValue(id, l.dataset.col, l.dataset.lane); } return; }
     if (kind !== 'row') return;
     const item = itemById(id), b = board(); if (!item || !b) return;
     const row = e.target.closest('tr[data-row]'), gh = e.target.closest('[data-dropgroup]');
