@@ -123,6 +123,12 @@ body { min-height: 100dvh; height: auto; overflow-x: hidden; overflow-y: auto; g
 .world .aurora { opacity: .28; }
 .motto { margin: -4px 0 14px; font-size: 13px; font-style: italic; letter-spacing: .01em; color: rgba(255,255,255,.62); text-align: center; }
 @media (prefers-reduced-motion: reduce) { .bgvid { opacity: .55; } }
+
+/* shine across Sign in every few seconds */
+#go { position: relative; overflow: hidden; }
+#go::after { content: ''; position: absolute; top: -50%; bottom: -50%; width: 40%; left: -60%; transform: skewX(-20deg); background: linear-gradient(90deg, transparent, rgba(160,170,190,.5) 50%, transparent); animation: goShine 5s ease-in-out 1.5s infinite; pointer-events: none; }
+@keyframes goShine { 0% { left: -60%; } 25%, 100% { left: 130%; } }
+@media (prefers-reduced-motion: reduce) { #go::after { display: none; } }
 </style>
 </head>
 <body>
