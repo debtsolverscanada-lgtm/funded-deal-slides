@@ -61,7 +61,7 @@ module.exports = function stats({ db, q, now, HttpError, send }) {
     const [mv, dl] = await Promise.all([mondayMoves(boards, ws), dials(ws)]);
     const reps = [], src = new Map();
     for (const lb of boards) {
-      const b = lb.b, dcol = colBy(b, /date entered/i), adc = colBy(b, /^ad name$/i), cpc = colBy(b, /campaign name/i);
+      const b = lb.b, dcol = colBy(b, /date entered/i), adc = colBy(b, /^ad name$/i), cpc = colBy(b, /campaign name/i), asc = colBy(b, /ad\s*set name/i);
       const gk = new Map((b.groups || []).map(g => [g.id, kind(g.name)]));
       let leadsToday = 0, leadsWeek = 0, uncontacted = 0;
       for (const r of q.docsInCol.all(`boards/${lb.id}/items`)) {
@@ -70,7 +70,7 @@ module.exports = function stats({ db, q, now, HttpError, send }) {
         if (ent === today) leadsToday++; if (ent >= ws) leadsWeek++;
         if (k === 'new' && ent >= month) uncontacted++;
         if (ent >= month && /@|\d/.test(JSON.stringify(v))) {
-          for (const [dim, col] of [['ad', adc], ['campaign', cpc]]) {
+          for (const [dim, col] of [['ad', adc], ['adset', asc], ['campaign', cpc]]) {
             const name = String((col && v[col.id]) || '').trim() || '(no ad info)'; const key = dim + '|' + name;
             const s = src.get(key) || { dim, name, leads: 0, junk: 0, pitched: 0, signed: 0, reps: new Set() };
             s.leads++; if (k === 'junk') s.junk++; if (['pitched', 'signed', 'flopped', 'callback'].includes(k)) s.pitched++; if (k === 'signed') s.signed++; s.reps.add(lb.rep); src.set(key, s);
