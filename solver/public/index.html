@@ -1051,6 +1051,12 @@ html.mx-off.pet-docked .pet svg { animation: none; }
   .nl-open:hover{transform:translateY(-1px)}
   @media (max-width:600px){.nl-card{padding:20px 18px 18px;border-radius:24px}.nl-name{font-size:32px}.nl-row{font-size:16px;padding:11px 13px}.nl-pill{font-size:14px}}
   html.mx-off #newlead,html.mx-off .nl-card,html.mx-off .nl-card::before,html.mx-off .nl-pill i{animation:none}
+
+  /* drag column headers to reorder (personal) */
+  th[data-coldrag]{cursor:grab}
+  th[data-coldrag]:active{cursor:grabbing}
+  th.drop-l{box-shadow:inset 4px 0 0 #ffb627}
+  th.drop-r{box-shadow:inset -4px 0 0 #ffb627}
 </style>
 </head>
 <body>
@@ -1146,9 +1152,13 @@ html.mx-off.pet-docked .pet svg { animation: none; }
   const pad = n => String(n).padStart(2, '0');
   const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   function loadHidden() { try { S.hidden = new Set(JSON.parse(localStorage.getItem('ks-hidden-' + S.boardId) || '[]')); } catch (e) { S.hidden = new Set(); } }
+  function loadColOrder() { try { S.colOrder = JSON.parse(localStorage.getItem('ks-colorder-' + S.boardId) || '[]'); } catch (e) { S.colOrder = []; } if (!Array.isArray(S.colOrder)) S.colOrder = []; }
+  function saveColOrder() { try { localStorage.setItem('ks-colorder-' + S.boardId, JSON.stringify(S.colOrder || [])); } catch (e) {} }
+  // each person's own column order (dragged headers), kept in this browser; columns they never moved keep the board's order
+  const myOrder = cols => { const o = S.colOrder || []; if (!o.length) return cols; const rank = (c, k) => { const i = o.indexOf(c.id); return i < 0 ? 1e6 + k : i; }; return cols.map((c, k) => [c, rank(c, k)]).sort((x, y) => x[1] - y[1]).map(x => x[0]); };
   function saveHidden() { try { localStorage.setItem('ks-hidden-' + S.boardId, JSON.stringify([...S.hidden])); } catch (e) {} }
   const curView = () => { const b = board(); return b && S.viewId ? (b.views || []).find(v => v.id === S.viewId) : null; };
-  const visCols = b => { const v = curView(); let cols = b.columns; if (v && Array.isArray(v.columns) && v.columns.length) { const order = v.columns.filter(id => id !== 'name'); cols = order.map(id => b.columns.find(c => c.id === id)).filter(Boolean); } return cols.filter(c => !S.hidden.has(c.id)); };
+  const visCols = b => { const v = curView(); let cols = b.columns; if (v && Array.isArray(v.columns) && v.columns.length) { const order = v.columns.filter(id => id !== 'name'); cols = order.map(id => b.columns.find(c => c.id === id)).filter(Boolean); } else cols = myOrder(cols); return cols.filter(c => !S.hidden.has(c.id)); };
   function viewMatch(b, item, r) {
     const c = b.columns.find(x => x.id === r.col); const raw = (item.values || {})[r.col]; const empty = raw === undefined || raw === null || raw === '';
     if (r.op === 'empty') return empty; if (r.op === 'not_empty') return !empty;
@@ -1952,7 +1962,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
     rs = rs || [TV.win]; const cells = tvCells(rs), span = cells.length + 2;
     const colgroup = `<colgroup><col style="width:${nameW()}px">${cells.map(c => `<col style="width:${isSp(c) ? c.sp : colW(c)}px">`).join('')}<col></colgroup>`;
     const sortMark = id => S.sort && S.sort.col === id ? `<span class="th-sort">${S.sort.dir === 'desc' ? '↓' : '↑'}</span>` : '';
-    const head = cells.map(c => !isSp(c) ? `<th class="w-${c.type}" data-ci="${ciOf(c)}"><button class="col-head" data-act="col-menu" data-col="${esc(c.id)}" title="${isLocked(c, b) ? (colEditable(c, b) ? 'Locked: you can still change it' : 'Locked: only admins can change it') + '. ' : ''}${esc(c.title)}: sort, filter or hide">${isLocked(c, b) ? IC.lock : ''}<span class="col-t">${esc(c.title)}</span> ${sortMark(c.id)}${(S.filters[c.id] || []).length ? '<span class="th-filter" title="Filtered"></span>' : ''}</button></th>` : '<th class="tsp"></th>').join('');
+    const head = cells.map(c => !isSp(c) ? `<th class="w-${c.type}" data-ci="${ciOf(c)}" draggable="true" data-coldrag="${esc(c.id)}"><button class="col-head" data-act="col-menu" data-col="${esc(c.id)}" title="${isLocked(c, b) ? (colEditable(c, b) ? 'Locked: you can still change it' : 'Locked: only admins can change it') + '. ' : ''}${esc(c.title)}: sort, filter or hide">${isLocked(c, b) ? IC.lock : ''}<span class="col-t">${esc(c.title)}</span> ${sortMark(c.id)}${(S.filters[c.id] || []).length ? '<span class="th-filter" title="Filtered"></span>' : ''}</button></th>` : '<th class="tsp"></th>').join('');
     const addColTh = S.canWrite ? '<th class="add-col"><button data-act="add-column" aria-label="Add column" title="Add column">+</button></th>' : '<th class="add-col"></th>';
     const limit = S.shown[g.id] || PAGE, allSel = gi.length && gi.every(i => S.selected.has(i.id));
     const rows = gi.slice(0, limit).map(i => tvRow(b, g, i, cells, span)).join('');
@@ -2028,7 +2038,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
     const cells = tvCells(rs), span = cells.length + 2, gi = tvGroupItems(g), want = new Set();
     cells.forEach(c => { if (!isSp(c)) want.add(String(ciOf(c))); });
     const sortMark = id => S.sort && S.sort.col === id ? `<span class="th-sort">${S.sort.dir === 'desc' ? '↓' : '↑'}</span>` : '';
-    const thOf = c => `<th class="w-${c.type}" data-ci="${ciOf(c)}"><button class="col-head" data-act="col-menu" data-col="${esc(c.id)}" title="${isLocked(c, b) ? (colEditable(c, b) ? 'Locked: you can still change it' : 'Locked: only admins can change it') + '. ' : ''}${esc(c.title)}: sort, filter or hide">${isLocked(c, b) ? IC.lock : ''}<span class="col-t">${esc(c.title)}</span> ${sortMark(c.id)}${(S.filters[c.id] || []).length ? '<span class="th-filter" title="Filtered"></span>' : ''}</button></th>`;
+    const thOf = c => `<th class="w-${c.type}" data-ci="${ciOf(c)}" draggable="true" data-coldrag="${esc(c.id)}"><button class="col-head" data-act="col-menu" data-col="${esc(c.id)}" title="${isLocked(c, b) ? (colEditable(c, b) ? 'Locked: you can still change it' : 'Locked: only admins can change it') + '. ' : ''}${esc(c.title)}: sort, filter or hide">${isLocked(c, b) ? IC.lock : ''}<span class="col-t">${esc(c.title)}</span> ${sortMark(c.id)}${(S.filters[c.id] || []).length ? '<span class="th-filter" title="Filtered"></span>' : ''}</button></th>`;
     const tdOf = (c, i) => { lazyCells = true; try { return `<td class="c-${c.type} ${c.type === 'number' ? 'num-cell' : ''} ${c.format || ''}" data-ci="${ciOf(c)}">${cellEditor(c, i)}</td>`; } finally { lazyCells = false; } };
     for (const tr of [...t.rows]) {
       let gen;
@@ -2440,6 +2450,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
         <button class="pop-btn" data-act="sort" data-col="${esc(c.id)}" data-dir="desc">Sort descending ↓</button>
         ${S.sort && S.sort.col === c.id ? '<button class="pop-btn" data-act="clear-sort">Clear sort</button>' : ''}
         ${filt}
+        ${(S.colOrder || []).length ? '<button class="pop-btn" data-act="reset-colorder">Reset my column order</button>' : ''}
         ${c.id !== 'name' ? `<button class="pop-btn" data-act="hide-col" data-col="${esc(c.id)}">Hide column</button>
         <button class="pop-btn" data-act="col-settings" data-col="${esc(c.id)}">Rename, move or delete…</button>` : ''}
       </div>`;
@@ -2791,7 +2802,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
       if (!c) return '<p>This column was removed.</p><div><button class="btn" data-act="close-modal-btn">Close</button></div>';
       return `<h3>${esc(c.title)}</h3><p>${esc(TYPES[c.type])} column${c.format === 'currency' ? ' in dollars' : ''}.</p>
         ${S.canWrite ? `<div class="form-row"><label for="c-rename">Rename</label><input class="field-input" id="c-rename" value="${esc(c.title)}" style="flex:1 1 180px"><button class="btn primary" data-act="rename-column">Save</button></div>
-        <div class="form-row"><button class="btn" data-act="move-col" data-dir="-1">Move left</button><button class="btn" data-act="move-col" data-dir="1">Move right</button><span class="spacer"></span>
+        <div class="form-row">${(S.colOrder || []).length ? '<button class="btn" data-act="reset-colorder">Reset my column order</button>' : ''}<button class="btn" data-act="move-col" data-dir="-1">Move left</button><button class="btn" data-act="move-col" data-dir="1">Move right</button><span class="spacer"></span>
         <button class="btn danger" data-act="delete-column">${S.confirmDelete === 'c:' + c.id ? 'Click again to delete' : 'Delete column'}</button></div>` : ''}
         ${c.type === 'formula' && S.canWrite ? `<div class="form-row"><label for="c-formula-edit">Formula</label><input class="field-input" id="c-formula-edit" value="${esc(String(c.formula || '').replace(/\{([^}]+)\}/g, (m0, id) => { const x = b.columns.find(k => k.id === id); return x ? `{${x.title}}` : m0; }))}" style="flex:1 1 240px"><button class="btn primary" data-act="save-formula">Save formula</button></div>` : ''}
         ${window.SolverExt ? SolverExt.colSettings(c, b) : ''}
@@ -3124,6 +3135,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
       }
       case 'save-formula': { const f = ($('#c-formula-edit').value || '').trim(); if (!f) return; const formula = f.replace(/\{([^}]+)\}/g, (m0, ref) => { const hit = b.columns.find(x => x.id === ref) || b.columns.find(x => x.title.toLowerCase() === ref.trim().toLowerCase()); return hit ? `{${hit.id}}` : m0; }); const columns = b.columns.map(c => c.id === S.modal.col ? { ...c, formula } : c); patchBoard({ columns }); localBoard({ columns }); toast('Formula saved'); break; }
       case 'rename-column': { const v = $('#c-rename').value.trim(); if (!v) return; const columns = b.columns.map(c => c.id === S.modal.col ? { ...c, title: v } : c); patchBoard({ columns }); localBoard({ columns }); S.modal = null; break; }
+      case 'reset-colorder': S.colOrder = []; saveColOrder(); S.modal = null; S.pop = null; renderLayer(); render(); toast('Columns are back in the board’s order.'); break;
       case 'move-col': {
         const cols = b.columns.slice(), ix = cols.findIndex(c => c.id === S.modal.col), to = ix + Number(t.dataset.dir);
         if (to < 0 || to >= cols.length) return; [cols[ix], cols[to]] = [cols[to], cols[ix]]; patchBoard({ columns: cols }); localBoard({ columns: cols }); break;
@@ -3312,11 +3324,13 @@ html.mx-off.pet-docked .pet svg { animation: none; }
   });
 
   // Drag and drop: table rows between groups, Kanban cards between lanes
-  const clearDrop = () => document.querySelectorAll('.drop, .drop-target').forEach(x => x.classList.remove('drop', 'drop-target'));
+  const clearDrop = () => document.querySelectorAll('.drop, .drop-target, .drop-l, .drop-r').forEach(x => x.classList.remove('drop', 'drop-target', 'drop-l', 'drop-r'));
   document.addEventListener('dragstart', e => {
     const r = e.target.closest && e.target.closest('[data-rowdrag]');
     const c = e.target.closest && e.target.closest('[data-drag]');
     const gd = e.target.closest && e.target.closest('[data-groupdrag]');
+    const cd = e.target.closest && e.target.closest('th[data-coldrag]');
+    if (cd) { S.dragKind = 'col'; e.dataTransfer.setData('text/plain', cd.dataset.coldrag); e.dataTransfer.effectAllowed = 'move'; return; }
     if (gd) { S.dragKind = 'group'; e.dataTransfer.setData('text/plain', gd.dataset.groupdrag); e.dataTransfer.effectAllowed = 'move'; const h = gd.closest('.group-head'); if (h) e.dataTransfer.setDragImage(h, 20, 18); return; }
     if (r) { S.dragKind = 'row'; e.dataTransfer.setData('text/plain', r.dataset.rowdrag); e.dataTransfer.effectAllowed = 'move'; const tr = r.closest('tr'); if (tr) e.dataTransfer.setDragImage(tr, 20, 18); }
     else if (c) { S.dragKind = 'card'; e.dataTransfer.setData('text/plain', c.dataset.drag); e.dataTransfer.effectAllowed = 'move'; }
@@ -3324,6 +3338,10 @@ html.mx-off.pet-docked .pet svg { animation: none; }
   document.addEventListener('dragend', () => { S.dragKind = null; clearDrop(); });
   document.addEventListener('dragover', e => {
     if (!e.target.closest) return;
+    if (S.dragKind === 'col') {
+      const th = e.target.closest('th[data-coldrag]'); if (!th) return; e.preventDefault(); clearDrop();
+      const r = th.getBoundingClientRect(); th.classList.add(e.clientX > r.left + r.width / 2 ? 'drop-r' : 'drop-l'); return;
+    }
     if (S.dragKind === 'group') {
       const sec = e.target.closest('#content section.group[data-g]'); if (!sec) return; e.preventDefault(); clearDrop();
       const h = sec.querySelector('.group-head'); if (h) h.classList.add('drop-target');
@@ -3338,6 +3356,13 @@ html.mx-off.pet-docked .pet svg { animation: none; }
     if (!e.target.closest) return;
     const id = e.dataTransfer.getData('text/plain'); const kind = S.dragKind; S.dragKind = null; clearDrop();
     if (!id) return;
+    if (kind === 'col') {
+      const th = e.target.closest('th[data-coldrag]'), b = board(); if (!th || !b || th.dataset.coldrag === id) return; e.preventDefault();
+      const r = th.getBoundingClientRect(), after = e.clientX > r.left + r.width / 2;
+      const ids = myOrder(b.columns).map(c => c.id).filter(x => x !== id), k = ids.indexOf(th.dataset.coldrag); if (k < 0) return;
+      ids.splice(after ? k + 1 : k, 0, id); S.colOrder = ids; saveColOrder(); render();
+      const moved = b.columns.find(c => c.id === id); toast(`Moved ${moved ? moved.title : 'the column'}. Only you see this order.`); return;
+    }
     if (kind === 'group') {
       const sec = e.target.closest('#content section.group[data-g]'), b = board(); if (!sec || !b || sec.dataset.g === id) return; e.preventDefault();
       const r = sec.getBoundingClientRect(), after = e.clientY > r.top + Math.min(r.height / 2, 60);
@@ -3405,7 +3430,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
     if (!S.boards.some(b => b.id === id)) return;
     if (S.boardId === id && S.itemsUnsub) { render(); return; }
     S.boardId = id; S.openItem = null; S.modal = null; S.pop = null; S.search = ''; S.person = ''; S.shown = {}; S.expanded = new Set();
-    S.sort = null; S.filters = {}; S.selected = new Set(); S.viewId = null; S.mSearch = false; loadHidden();
+    S.sort = null; S.filters = {}; S.selected = new Set(); S.viewId = null; S.mSearch = false; loadHidden(); loadColOrder();
     { const c = $('#content'); c.scrollTop = 0; c.scrollLeft = 0; c.parentElement.classList.remove("head-up"); document.body.classList.remove("head-up"); }
     S.ws = wsOf(S.boards.find(b => b.id === id)).id; try { localStorage.setItem('ks-ws', S.ws); } catch (e) {}
     try { localStorage.setItem('ks-board', id); } catch (e) {}
