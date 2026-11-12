@@ -899,6 +899,13 @@ html.mx-off .hero-coin, html.mx-off .coin3d, html.mx-off .coin-shadow, html.mx-o
 html.mx-calm .coin3d { animation-duration: 12s; }
 @media (prefers-reduced-motion: reduce) { .hero-coin, .coin3d, .coin-shadow, .coin-face::after { animation: none !important; } }
 @media (max-width: 780px) { .home-hero .hero-coin { width: 64px; height: 64px; margin-top: -32px; right: 18px; top: auto; bottom: 30px; } .coin-face .c-val { font-size: 21px; } .coin-face .c-val small { font-size: 12px; } }
+
+/* rotating banner quotes */
+.hero-quote { max-width: 620px; transition: opacity .38s ease, transform .38s ease, filter .38s ease; min-height: 1.4em; }
+.hero-quote.q-out { opacity: 0; transform: translateY(-6px); filter: blur(3px); }
+.hero-quote.q-in { animation: qIn .5s ease both; }
+@keyframes qIn { from { opacity: 0; transform: translateY(6px); filter: blur(3px); } to { opacity: 1; transform: none; filter: none; } }
+@media (max-width: 780px) { .hero-quote { max-width: 70%; } }
 </style>
 </head>
 <body>
@@ -1457,6 +1464,50 @@ html.mx-calm .coin3d { animation-duration: 12s; }
   }
   document.addEventListener('input', e => { const t = e.target; if (t && t.id === 'board-title') fitTitle(); if (t && S.modal && S.modal.type === 'email') { if (t.id === 'em-subject') S.modal.subject = t.value; if (t.id === 'em-text') S.modal.text = t.value; }
     if (t && S.modal && S.modal.type === 'blast' && (t.id === 'bl-subject' || t.id === 'bl-text')) { if (t.id === 'bl-subject') S.modal.subject = t.value; else S.modal.text = t.value; if (S.modal.preview) { S.modal.preview = null; renderLayer(); const f = $('#' + t.id); if (f) { f.focus(); f.setSelectionRange(f.value.length, f.value.length); } } } });
+  // Home banner quotes: the motto first, then roasts and inside jokes (no client names, ever), rotating every ~10 s.
+  // 'ds' = DebtSolvers workspaces, 'ms' = MortgageSolvers, 'all' = both.
+  const MOTTO = '“Summer 2019 and a million dollars after taxes.”';
+  const QUOTES = [
+    ['all', '“I’ll call you right back.” The longest-running lie in Canadian finance.'],
+    ['all', '“Just send me the paperwork.” Never opens the paperwork.'],
+    ['all', 'Client: “Any update?” It has been two business minutes.'],
+    ['all', '“Is this a scam?” Asked by someone currently paying five payday lenders.'],
+    ['all', '“Don’t call me, I’ll call you.” Narrator: they did not call.'],
+    ['all', 'That’s a great question. I do not have the answer to it.'],
+    ['all', 'Client: “I don’t really have debt.” The credit bureau: “Respectfully, nine accounts.”'],
+    ['all', '“What does she want us to do?” Every rep, every Monday.'],
+    ['all', 'Pitch paused. He’s eating. We resume after the sandwich.'],
+    ['all', 'He’s not ignoring you. He’s “at work”. Since March.'],
+    ['ds', 'Client asked if we can get it down to $250 a month. Sir, this is debt relief, not a magic show.'],
+    ['ds', 'Signed up and finished paying before the welcome pack even went out. Legend.'],
+    ['ds', 'Signs, then ghosts. Like a gym membership, but for debt.'],
+    ['ds', '“Can we sign him again?” No. No, we cannot.'],
+    ['ds', '“Do I literally have to say ‘you’re not getting a refund’?” Admin, 9pm.'],
+    ['ds', 'Doesn’t know the name of the lender. Knows the exact payment. Priorities.'],
+    ['ds', 'Another company “guaranteed” 90% off. Ask for the name. Nobody offers that.'],
+    ['ds', 'Lead bounced to three other reps… then back to you. Main character energy.'],
+    ['ds', 'Is anyone’s RingCentral working besides Cath’s?'],
+    ['ds', 'Brandon has the admin email, the admin account, the admin title… and one password.'],
+    ['ms', '“Can we close Friday?” It’s Thursday. At 4:59.'],
+    ['ms', 'Lender says two business days. Client starts the countdown in minutes.'],
+    ['ms', 'Choosing brand colours exposed everyone’s colour blindness.'],
+    ['ms', 'What this team really needs is an AI detox.'],
+    ['ms', '“My credit is fine.” The bureau has entered the chat.'],
+  ];
+  const heroPool = () => { const ws = (workspaces().find(w => w.id === S.ws) || {}); const c = companyOf(ws) === 'MortgageSolvers' ? 'ms' : 'ds'; return QUOTES.filter(q => q[0] === 'all' || q[0] === c).map(q => q[1]); };
+  let heroQ = { at: 0, text: MOTTO, n: 0 };
+  const heroQuote = () => heroQ.text;
+  setInterval(() => {
+    const q = document.querySelector('.home-hero .hero-quote'); if (!q || document.hidden) return;
+    if (document.querySelector('.home-hero .fx-caret')) return; // still typing the motto
+    const pool = heroPool(); if (!pool.length) return;
+    heroQ.n++; let next = heroQ.n % 4 === 0 ? MOTTO : pool[Math.floor(Math.random() * pool.length)];
+    if (next === heroQ.text) next = pool[(pool.indexOf(next) + 1) % pool.length];
+    heroQ.text = next;
+    const calm = document.documentElement.classList.contains('mx-off') || (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+    if (calm) { q.textContent = next; return; }
+    q.classList.add('q-out'); setTimeout(() => { q.textContent = next; q.classList.remove('q-out'); q.classList.add('q-in'); setTimeout(() => q.classList.remove('q-in'), 500); }, 380);
+  }, 10000);
   // Home banner video: one element kept across redraws, so it doesn't restart every time the page updates
   { let heroVid = null; const keep = () => { const nv = document.querySelector('.home-hero .hero-vid'); if (!nv || nv === heroVid) return;
       if (heroVid) { nv.replaceWith(heroVid); if (nv.hasAttribute('autoplay') && heroVid.paused) heroVid.play().catch(() => {}); } else heroVid = nv; };
@@ -3283,7 +3334,7 @@ html.mx-calm .coin3d { animation-duration: 12s; }
     const wsName = (workspaces().find(w => w.id === S.ws) || {}).name || 'your workspace';
     const sm = S.summary && S.summary.ws === S.ws ? S.summary : null;
     const motionOk = (() => { let m = 'full'; try { m = localStorage.getItem('ks-motion') || 'full'; } catch (e) {} return m !== 'off' && !(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches); })();
-    const top = `<div class="home-top home-hero"><video class="hero-vid" muted loop playsinline ${motionOk ? 'autoplay' : ''} preload="auto" poster="/media/home-banner.jpg" src="/media/home-banner.mp4" aria-hidden="true"></video><div class="hero-coin" aria-hidden="true"><div class="coin3d">${Array.from({ length: 10 }, (_, k) => `<i class="coin-edge" style="--z:${(k - 4.5) * 0.9}px"></i>`).join('')}<b class="coin-face front"><span class="c-val">19<small>¢</small></span><span class="c-ring"></span></b><b class="coin-face back"><span class="c-val">$</span><span class="c-ring"></span></b></div><div class="coin-shadow"></div></div><div class="hero-in"><p class="eyebrow">${esc(new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' }))}</p><h1>${greeting()}${name ? ', ' + esc(name) : ''}</h1><p class="hero-quote">“Summer 2019 and a million dollars after taxes.”</p>${S.isGuest ? '<span class="pill guest-badge">Guest</span>' : ''}</div><div style="display:flex;gap:10px">${fx('homeTop') || ''}<button class="icon-round" data-act="sheet-profile" aria-label="Menu">${IC.menu}</button></div></div>`;
+    const top = `<div class="home-top home-hero"><video class="hero-vid" muted loop playsinline ${motionOk ? 'autoplay' : ''} preload="auto" poster="/media/home-banner.jpg" src="/media/home-banner.mp4" aria-hidden="true"></video><div class="hero-coin" aria-hidden="true"><div class="coin3d">${Array.from({ length: 10 }, (_, k) => `<i class="coin-edge" style="--z:${(k - 4.5) * 0.9}px"></i>`).join('')}<b class="coin-face front"><span class="c-val">19<small>¢</small></span><span class="c-ring"></span></b><b class="coin-face back"><span class="c-val">$</span><span class="c-ring"></span></b></div><div class="coin-shadow"></div></div><div class="hero-in"><p class="eyebrow">${esc(new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' }))}</p><h1>${greeting()}${name ? ', ' + esc(name) : ''}</h1><p class="hero-quote" aria-live="polite">${esc(heroQuote())}</p>${S.isGuest ? '<span class="pill guest-badge">Guest</span>' : ''}</div><div style="display:flex;gap:10px">${fx('homeTop') || ''}<button class="icon-round" data-act="sheet-profile" aria-label="Menu">${IC.menu}</button></div></div>`;
     if (!sm) return `<div class="home">${top}<div class="glass hero"><p class="home-skel">Adding up ${esc(wsName)}…</p></div></div>`;
     const f = sm.followups, dueAll = f.overdue + f.dueToday + f.upcoming;
     const onTrack = dueAll ? (f.dueToday + f.upcoming) / dueAll : 1;
