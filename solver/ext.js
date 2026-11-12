@@ -16,6 +16,7 @@ module.exports = function ext(ctx) {
   const apps = require('./apps.js')(ctx, email);
   const newleads = require('./newleads.js')(ctx);
   const sequences = require('./sequences.js')(ctx, email);
+  const crossboard = require('./crossboard.js')(ctx, integHooks);
 
   // integrations.js calls these for rules run through the API, date reminders and /api/v1/events
   integHooks.ruleRan = (bid, rid, iid, itemName, result, via) => automation.logRun(bid, rid, iid, itemName, result, true, via);
@@ -25,7 +26,7 @@ module.exports = function ext(ctx) {
   integHooks.newItem = (bid, iid, doc) => newleads.noteItem(bid, iid, doc); // NEW LEAD banners
   integHooks.itemSaved = (bid, iid, before, after) => sequences.onItem(bid, iid, before, after); // email sequences
 
-  const modules = [automation, ai, docs, push, alerts, comms, email, blast, apps, newleads, sequences];
+  const modules = [automation, ai, docs, push, alerts, comms, email, blast, apps, newleads, sequences, crossboard];
   return {
     // signed-in API routes; returns false when none of them matched
     async handle(req, res, url, user) {

@@ -1326,7 +1326,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
         case 'clear': { if (!col) break; patch.values[col.id] = ''; lines.push({ auto: true, text: `${name} cleared ${col.title}` }); break; }
         case 'assign': { if (!col) break; const cur = splitPeople(patch.values[col.id] ?? (item.values || {})[col.id]); const v = [...new Set([...cur, a.value])].join(', '); patch.values[col.id] = v; lines.push({ auto: true, text: `${name} assigned ${a.value}` }); break; }
         case 'create_update': lines.push({ auto: true, text: `${name} posted an update` }); after.push({ kind: 'update', text: a.value || a.message || '' }); break;
-        case 'move_board': case 'copy_to_board': { const tb = (S.boards || []).find(x => x.id === a.board); lines.push({ auto: true, text: `${name} ${a.type === 'move_board' ? 'moved' : 'copied'} this to “${tb ? tb.name : 'another board'}”` }); after.push({ kind: a.type === 'move_board' ? 'move_board' : 'copy_board', board: a.board, group: a.group, name, map: a.map }); break; }
+        case 'move_board': case 'copy_to_board': { const tb = (S.boards || []).find(x => x.id === a.board); lines.push({ auto: true, text: `${name} ${a.type === 'move_board' ? 'moved' : 'copied'} this to “${tb ? tb.name : 'another board'}”` }); after.push({ kind: a.type === 'move_board' ? 'move_board' : 'copy_board', board: a.board, group: a.group, name, map: a.map, rule: rule.id }); break; }
         case 'duplicate': after.push({ kind: 'duplicate', name, withUpdates: !!a.withUpdates }); break;
         case 'external': lines.push({ auto: true, text: `${name} would ${a.label} in Monday. Not run in Solver.ca, so nothing was sent.` }); break;
         case 'notify': lines.push({ auto: true, text: `${name} notified ${fillTpl(b, { ...item, values: { ...(item.values || {}), ...patch.values } }, a.to || '') || 'someone'} in Solver.ca` }); after.push({ kind: 'notify', to: a.to, message: a.message, title: rule.title }); break;
@@ -1373,13 +1373,20 @@ html.mx-off.pet-docked .pet svg { animation: none; }
       // in-app notifications for the Solver.ca people the rule names (unknown names are skipped by the server)
       if (x.kind === 'notify' && window.KS) { const msg = fillTpl(b, item, x.message || '').replace(/\s+/g, ' ').trim(); KS.notify({ board: b.id, item: item.id, to: fillTpl(b, item, x.to || ''), text: `${item.name}: ${msg || String(x.title || 'Automation').replace(/\s*→.*$/, '')}`.slice(0, 400) }).catch(() => {}); }
       if (x.kind === 'update' && x.text) { const u = { at: now(), by: 'automation', byName: 'Automation', text: x.text }; item.updates = [...(item.updates || []), u]; const p = 'boards/' + b.id + '/items/' + item.id; write(p, () => S.db.doc(p).update({ $append: { updates: [u] } })); } // added to what's stored, never the whole list
-      if ((x.kind === 'move_board' || x.kind === 'copy_board') && hop < 4) moveItemToBoard(b, item, x.board, x.group, x.name, x.kind === 'move_board', x.map, hop + 1);
+      if ((x.kind === 'move_board' || x.kind === 'copy_board') && hop < 4) moveItemToBoard(b, item, x.board, x.group, x.name, x.kind === 'move_board', x.map, hop + 1, x.rule);
       if (x.kind === 'duplicate' && b.id === S.boardId) duplicateItem(item, false, x.withUpdates);
       if (window.SolverExt) SolverExt.after(x, b, item); // "Send to a connected tool" (automations.js)
     }
   }
-  function moveItemToBoard(b, item, targetBoardId, groupId, why, removeHere = true, map = null, hop = 1) {
-    const tb = S.boards.find(x => x.id === targetBoardId); if (!tb) { toast('The board this automation moves items to isn’t in Solver.ca.'); return; }
+  function moveItemToBoard(b, item, targetBoardId, groupId, why, removeHere = true, map = null, hop = 1, ruleId = null) {
+    const tb = S.boards.find(x => x.id === targetBoardId);
+    if (!tb && ruleId) { // a board this person can't see (e.g. a rep's "Signed → copy to Clients"): the server does it for this rule
+      KS.api('POST', '/api/rules/crossboard', { board: b.id, item: item.id, rule: ruleId, target: targetBoardId, type: removeHere ? 'move_board' : 'copy_to_board' })
+        .then(r => { if (removeHere) { S.items = S.items.filter(i => i.id !== item.id); render(); } toast(r.already ? `Already on ${r.board || 'that board'}.` : `Sent to ${r.board || 'the other board'}.`); })
+        .catch(e => toast(e.message || 'The automation couldn’t copy it.'));
+      return;
+    }
+    if (!tb) { toast('The board this automation moves items to isn’t in Solver.ca.'); return; }
     const g = (groupId === '__top__' ? tb.groups[0] : tb.groups.find(x => x.id === groupId)) || tb.groups[0];
     const values = {};
     // 1) Monday's own mapping for this automation (target column ← source column)
