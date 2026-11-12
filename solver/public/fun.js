@@ -145,7 +145,7 @@
   const wait = ms => new Promise(r => setTimeout(r, ms));
   let pos = { x: 0, y: 0 }, roaming = false, cancel = false, lastKey = 0;
   document.addEventListener('keydown', () => { lastKey = Date.now(); }, true);
-  const canRoam = () => motionOn() && !html.classList.contains('mx-calm') && html.getAttribute('data-flair-roam') !== 'off' && html.getAttribute('data-flair-pet') !== 'off'
+  const canRoam = () => motionOn() && !html.classList.contains('pet-docked') && !html.classList.contains('mx-calm') && html.getAttribute('data-flair-roam') !== 'off' && html.getAttribute('data-flair-pet') !== 'off'
     && document.visibilityState === 'visible' && !pet.classList.contains('pet-sleep') && !pet.querySelector('.pet-news')
     && !document.querySelector('#layer .drawer, #layer .modal, .modal-wrap, .mx-banner, .mx-dragging') && Date.now() - lastKey > 8000;
   const place = (x, y, ms) => { pos = { x, y }; pet.style.transition = ms ? `transform ${ms}ms linear` : 'none'; pet.style.transform = (x || y) ? `translate(${Math.round(x)}px, ${Math.round(y)}px)` : ''; };
@@ -241,5 +241,16 @@
   const layer = document.getElementById('layer');
   if (layer) new MutationObserver(() => { const m = layer.querySelector('.modal'); if (m && m.querySelector('[data-slot="settings"]')) addFlairButton(m); }).observe(layer, { childList: true });
   setTimeout(() => { decorate(); addFlairButton(rail); }, 300);
+  // ---------- Penny's desk: on computers she sits at her desk in the sidebar instead of roaming over the leads ----------
+  function dock() {
+    const spot = document.querySelector('#rail .penny-desk .pd-spot');
+    const r = spot && spot.offsetParent !== null ? spot.getBoundingClientRect() : null;
+    const on = !!(r && r.width && innerWidth > 780 && html.getAttribute('data-flair-pet') !== 'off');
+    html.classList.toggle('pet-docked', on);
+    if (on) { html.style.setProperty('--pd-left', Math.round(r.left) + 'px'); html.style.setProperty('--pd-bottom', Math.round(innerHeight - r.bottom) + 'px'); if (pos.x || pos.y) place(0, 0, 0); }
+  }
+  if (rail) new MutationObserver(() => requestAnimationFrame(dock)).observe(rail, { childList: true, subtree: true });
+  addEventListener('resize', () => requestAnimationFrame(dock));
+  setTimeout(dock, 300); setInterval(dock, 4000);
   window.SolverFlair = { openFlair, say, set, roam };
 })();

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <meta name="theme-color" content="#000000">
+<script src="/theme.js"></script>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -906,6 +907,34 @@ html.mx-calm .coin3d { animation-duration: 12s; }
 .hero-quote.q-in { animation: qIn .5s ease both; }
 @keyframes qIn { from { opacity: 0; transform: translateY(6px); filter: blur(3px); } to { opacity: 1; transform: none; filter: none; } }
 @media (max-width: 780px) { .hero-quote { max-width: 70%; } }
+
+/* Penny's desk in the sidebar: Penny sits here at her computer on computers (phones keep her as before) */
+#rail .penny-desk { position: relative; flex-shrink: 0; height: 120px; margin: 4px 0 -6px; pointer-events: none; }
+#rail .penny-desk .pd-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+#rail .penny-desk .pd-spot { position: absolute; left: 6px; bottom: 6px; width: 74px; height: 86px; }
+.pd-l { width: 0; animation: pdType 9s steps(1) infinite; }
+.pd-l.l1 { --w: 30px; animation-name: pdT1; } .pd-l.l2 { --w: 40px; animation-name: pdT2; } .pd-l.l3 { --w: 22px; animation-name: pdT3; } .pd-l.l4 { --w: 34px; animation-name: pdT4; } .pd-l.l5 { --w: 18px; animation-name: pdT5; }
+@keyframes pdT1 { 0% { width: 0; } 4% { width: 10px; } 8% { width: 20px; } 12%, 92% { width: 30px; } 100% { width: 0; } }
+@keyframes pdT2 { 0%, 14% { width: 0; } 18% { width: 14px; } 22% { width: 28px; } 26%, 92% { width: 40px; } 100% { width: 0; } }
+@keyframes pdT3 { 0%, 30% { width: 0; } 34% { width: 12px; } 38%, 92% { width: 22px; } 100% { width: 0; } }
+@keyframes pdT4 { 0%, 42% { width: 0; } 46% { width: 12px; } 50% { width: 24px; } 54%, 92% { width: 34px; } 100% { width: 0; } }
+@keyframes pdT5 { 0%, 58% { width: 0; } 62% { width: 10px; } 66%, 92% { width: 18px; } 100% { width: 0; } }
+.pd-cur { animation: pdBlink .9s steps(1) infinite; }
+@keyframes pdBlink { 50% { opacity: 0; } }
+.pd-kb { animation: pdKey .25s steps(2) infinite; }
+@keyframes pdKey { 50% { fill: #474c5a; } }
+.pd-steam { animation: pdSteam 3s ease-in-out infinite; transform-box: fill-box; transform-origin: bottom; }
+.pd-steam.s2 { animation-delay: 1.4s; }
+@keyframes pdSteam { 0% { opacity: 0; transform: translateY(4px) scaleY(.7); } 40% { opacity: 1; } 100% { opacity: 0; transform: translateY(-6px) scaleY(1.1); } }
+html.mx-off .penny-desk *, html.mx-off .penny-desk { animation: none !important; }
+html.mx-off .pd-l { width: var(--w); }
+@media (prefers-reduced-motion: reduce) { .penny-desk * { animation: none !important; } .pd-l { width: var(--w); } }
+@media (max-height: 680px) { #rail .penny-desk { display: none; } }
+/* Penny docked at her desk: she sits on the chair, facing the screen, typing */
+html.pet-docked .pet { left: var(--pd-left, 22px) !important; bottom: var(--pd-bottom, 100px) !important; right: auto !important; top: auto !important; }
+html.pet-docked .pet svg { animation: pdPennyType 1.6s ease-in-out infinite; }
+@keyframes pdPennyType { 0%, 100% { transform: translateY(0) rotate(4deg); } 50% { transform: translateY(-2px) rotate(6deg); } }
+html.mx-off.pet-docked .pet svg { animation: none; }
 </style>
 </head>
 <body>
@@ -1362,6 +1391,47 @@ html.mx-calm .coin3d { animation-duration: 12s; }
       </div>
       ${S.isGuest ? '<p class="rail-note">You’re a guest: you see only the boards shared with you, and you can read items and post updates.</p>' : ''}
       <div class="settings-slot" data-slot="settings" hidden></div>
+      <div class="penny-desk" aria-hidden="true"><svg viewBox="0 0 204 116" class="pd-svg">
+        <defs>
+          <linearGradient id="pdTop" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#8a6a4a"/><stop offset="1" stop-color="#5c4330"/></linearGradient>
+          <linearGradient id="pdScr" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="#1b2a44"/><stop offset="1" stop-color="#0d1526"/></linearGradient>
+          <radialGradient id="pdGlow" cx=".5" cy=".5" r=".6"><stop offset="0" stop-color="#9cc4ff" stop-opacity=".35"/><stop offset="1" stop-color="#9cc4ff" stop-opacity="0"/></radialGradient>
+        </defs>
+        <ellipse cx="104" cy="111" rx="98" ry="5" fill="rgba(255,255,255,.06)"/>
+        <!-- office chair (Penny sits in front of it) -->
+        <rect x="16" y="34" width="54" height="46" rx="12" fill="#2a2d36" stroke="rgba(255,255,255,.12)"/>
+        <rect x="22" y="40" width="42" height="34" rx="9" fill="#343845"/>
+        <rect x="40" y="80" width="6" height="18" fill="#4a4f5c"/>
+        <path d="M24 104 L43 97 L62 104" stroke="#4a4f5c" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <circle cx="24" cy="106" r="3" fill="#20232b"/><circle cx="62" cy="106" r="3" fill="#20232b"/><circle cx="43" cy="107" r="3" fill="#20232b"/>
+        <!-- desk -->
+        <rect x="78" y="70" width="124" height="8" rx="3" fill="url(#pdTop)"/>
+        <rect x="84" y="78" width="6" height="30" fill="#4a3727"/><rect x="190" y="78" width="6" height="30" fill="#4a3727"/>
+        <rect x="150" y="78" width="40" height="22" rx="2" fill="#5a4231"/><rect x="164" y="87" width="12" height="2.5" rx="1" fill="#c9a35a"/>
+        <!-- monitor -->
+        <ellipse cx="136" cy="44" rx="40" ry="30" fill="url(#pdGlow)"/>
+        <rect x="108" y="22" width="58" height="38" rx="4" fill="#1a1c22" stroke="rgba(255,255,255,.25)"/>
+        <rect x="111" y="25" width="52" height="32" rx="2" fill="url(#pdScr)"/>
+        <g class="pd-code">
+          <rect class="pd-l l1" x="115" y="29" height="2.6" rx="1.3" fill="#7ee2a0"/>
+          <rect class="pd-l l2" x="115" y="34" height="2.6" rx="1.3" fill="#9cc4ff"/>
+          <rect class="pd-l l3" x="119" y="39" height="2.6" rx="1.3" fill="#f3d6a0"/>
+          <rect class="pd-l l4" x="119" y="44" height="2.6" rx="1.3" fill="#9cc4ff"/>
+          <rect class="pd-l l5" x="115" y="49" height="2.6" rx="1.3" fill="#ff9ab8"/>
+          <rect class="pd-cur" x="115" y="53" width="3" height="2.6" fill="#fff"/>
+        </g>
+        <rect x="133" y="60" width="8" height="7" fill="#2a2d36"/><rect x="124" y="66" width="26" height="4" rx="2" fill="#2a2d36"/>
+        <!-- keyboard -->
+        <rect class="pd-kb" x="96" y="66" width="34" height="5" rx="2" fill="#3a3e4a" stroke="rgba(255,255,255,.18)"/>
+        <!-- mug -->
+        <rect x="174" y="58" width="12" height="12" rx="2.5" fill="#e9e3d6"/><path d="M186 61 q5 0 5 4 q0 4 -5 4" fill="none" stroke="#e9e3d6" stroke-width="2"/>
+        <text x="176.5" y="67.5" font-size="7" font-weight="800" fill="#b88d3e" font-family="-apple-system, system-ui, sans-serif">$</text>
+        <path class="pd-steam s1" d="M178 54 q-3 -5 0 -9 q3 -4 0 -8" stroke="rgba(255,255,255,.45)" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+        <path class="pd-steam s2" d="M183 55 q-3 -5 0 -9 q3 -4 0 -8" stroke="rgba(255,255,255,.35)" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+        <!-- plant -->
+        <rect x="88" y="60" width="8" height="10" rx="2" fill="#b4673f"/>
+        <path d="M92 60 q-7 -8 -3 -16 M92 60 q6 -9 2 -17 M92 60 q0 -10 0 -14" stroke="#6fbf73" stroke-width="2.4" fill="none" stroke-linecap="round"/>
+      </svg><span class="pd-spot"></span></div>
       <button class="rl-me" data-act="sheet-profile" aria-haspopup="dialog" title="Your profile, settings and sign out">
         <span class="rl-av" aria-hidden="true">${esc(initials(name))}</span>
         <span class="rl-who"><b>${esc(name)}</b><small>${S.isGuest ? 'Guest' : roleLabel()}</small></span>
