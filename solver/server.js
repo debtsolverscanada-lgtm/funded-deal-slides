@@ -805,6 +805,20 @@ async function api(req, res, url) {
       if (b.password && String(b.password).length < 8) throw new HttpError(400, 'Passwords need at least 8 characters.');
       if (b.role) db.prepare('UPDATE users SET role = ? WHERE id = ?').run(b.role, target.id);
       if (b.name) db.prepare('UPDATE users SET name = ? WHERE id = ?').run(String(b.name).trim(), target.id);
+      // change the email someone signs in with (their sharing on boards moves with it)
+      if (typeof b.email === 'string' && b.email.trim().toLowerCase() !== String(target.email).toLowerCase()) {
+        const ne = b.email.trim().toLowerCase();
+        if (!/^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[^\s@<>(),;:"]+$/.test(ne)) throw new HttpError(400, 'That isn’t an email address.');
+        if (q.userByEmail.get(ne)) throw new HttpError(409, 'Someone already signs in with that email.');
+        const was = String(target.email).toLowerCase();
+        db.prepare('UPDATE users SET email = ? WHERE id = ?').run(ne, target.id);
+        for (const r of q.docsInCol.all('boards')) { let d; try { d = JSON.parse(r.data); } catch (e) { continue; }
+          const m = ((d.access || {}).members || []); if (!m.some(e => String(e).toLowerCase() === was)) continue;
+          d.access = { ...d.access, members: m.map(e => String(e).toLowerCase() === was ? ne : e) };
+          q.upsertDoc.run('boards/' + r.id, 'boards', r.id, JSON.stringify(d), now(), user.id); boardCache.delete(r.id); }
+        try { db.prepare('DELETE FROM login_known WHERE email = ?').run(was); } catch (e) {}
+        summaryCache.clear(); teamCache.at = 0; console.log(`Sign-in email changed by an admin for ${target.id}`);
+      }
       if (typeof b.emailFrom === 'string') {
         const ef = b.emailFrom.trim().toLowerCase();
         if (ef && !/^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[^\s@<>(),;:"]+$/.test(ef)) throw new HttpError(400, 'That isn’t an email address.');
