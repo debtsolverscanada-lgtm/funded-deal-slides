@@ -1445,7 +1445,7 @@ async function runMondayPull() {
     const itemPath = (bid, iid) => `boards/${bid}/items/${iid}`;
     const store = {
       getItem: (bid, iid) => { const r = q.doc.get(itemPath(bid, iid)); return r ? JSON.parse(r.data) : null; },
-      saveItem: (bid, iid, doc) => { const prev = q.doc.get(itemPath(bid, iid)); q.upsertDoc.run(itemPath(bid, iid), `boards/${bid}/items`, String(iid), JSON.stringify(doc), now(), 'monday-sync'); broadcast({ op: 'set', col: `boards/${bid}/items`, id: String(iid), data: doc }); buzz(bid, iid, prev ? JSON.parse(prev.data) : null, doc, 'monday'); },
+      saveItem: (bid, iid, doc) => { const prev = q.doc.get(itemPath(bid, iid)); q.upsertDoc.run(itemPath(bid, iid), `boards/${bid}/items`, String(iid), JSON.stringify(doc), now(), 'monday-sync'); broadcast({ op: 'set', col: `boards/${bid}/items`, id: String(iid), data: doc }); buzz(bid, iid, prev ? JSON.parse(prev.data) : null, doc, 'monday'); if (!prev) ext.newleads.noteItem(bid, iid, doc); },
       removeItem: (bid, iid) => {
         const r = q.doc.get(itemPath(bid, iid)); if (!r) return false;
         let d = {}; try { d = JSON.parse(r.data); } catch (e) {}

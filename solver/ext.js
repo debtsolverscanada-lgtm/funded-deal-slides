@@ -14,14 +14,16 @@ module.exports = function ext(ctx) {
   const email = require('./email.js')(ctx);
   const blast = require('./blast.js')(ctx, email);
   const apps = require('./apps.js')(ctx, email);
+  const newleads = require('./newleads.js')(ctx);
 
   // integrations.js calls these for rules run through the API, date reminders and /api/v1/events
   integHooks.ruleRan = (bid, rid, iid, itemName, result, via) => automation.logRun(bid, rid, iid, itemName, result, true, via);
   integHooks.sendWebhook = (bid, iid, rule, item, via) => automation.sendWebhook(bid, iid, rule, item, via);
   integHooks.webhookThrottled = (bid, iid, rule) => automation.throttled(bid, iid, rule);
   integHooks.onEvent = (body, hits, actor) => comms.onEvent(body, hits, actor);
+  integHooks.newItem = (bid, iid, doc) => newleads.noteItem(bid, iid, doc); // NEW LEAD banners
 
-  const modules = [automation, ai, docs, push, alerts, comms, email, blast, apps];
+  const modules = [automation, ai, docs, push, alerts, comms, email, blast, apps, newleads];
   return {
     // signed-in API routes; returns false when none of them matched
     async handle(req, res, url, user) {
@@ -37,6 +39,6 @@ module.exports = function ext(ctx) {
       try { push.onNotify(user, n); } catch (e) { console.error('push:', e.message); }
       try { alerts.onNotify(user, n); } catch (e) { console.error('alerts:', e.message); }
     },
-    automation, ai, docs, push, alerts, comms, email, blast, apps,
+    automation, ai, docs, push, alerts, comms, email, blast, apps, newleads,
   };
 };

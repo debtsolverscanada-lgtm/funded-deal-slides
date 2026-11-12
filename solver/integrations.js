@@ -282,6 +282,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     broadcast({ op: 'set', col: `boards/${bid}/items`, id: iid, data });
     itemChanged(path, before, data, actor.id);
     if (!opts.quiet) buzz(bid, iid, before, data, actor.id);
+    if (!before && hooks.newItem) { try { hooks.newItem(bid, iid, data); } catch (e) { /* banner only */ } }
     try { itemNotifications(path, before, data, actor); } catch (e) { console.error('notifications:', e.message); }
   }
   // opts.quiet: no pet heads-up per item (used by spreadsheet imports, which can add thousands of rows)

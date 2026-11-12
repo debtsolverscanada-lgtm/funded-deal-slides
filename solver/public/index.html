@@ -1019,6 +1019,30 @@ html.mx-off.pet-docked .pet svg { animation: none; }
   .int-form-acts{display:flex;gap:8px}
   @media (max-width:600px){.int-card{flex-direction:column;align-items:stretch}.int-acts{justify-content:flex-start}.int-tab{font-size:13px;padding:8px 4px}.int-tab span{margin-left:4px;padding:1px 5px}}
   .drawer-actions{flex-wrap:wrap}
+
+  /* NEW LEAD banner (newlead.js) */
+  #newlead{position:fixed;inset:0 0 auto 0;z-index:9000;display:flex;justify-content:center;padding:18px 16px 0;pointer-events:none}
+  .nl-card{pointer-events:auto;width:min(560px,100%);border-radius:20px;padding:18px 20px 16px;color:#fff;
+    background:linear-gradient(160deg,#1d1f25 0%,#121318 100%);border:1px solid rgba(255,255,255,.12);
+    box-shadow:0 24px 60px rgba(0,0,0,.55),0 0 0 1px rgba(232,180,60,.25),inset 0 3px 0 #e8b43c}
+  .nl-card.nl-in{animation:nlIn .45s cubic-bezier(.2,1.2,.4,1)}
+  @keyframes nlIn{from{transform:translateY(-40px) scale(.96);opacity:0}to{transform:none;opacity:1}}
+  .nl-top{display:flex;align-items:center;gap:10px}
+  .nl-pill{display:inline-flex;align-items:center;gap:8px;font-weight:800;letter-spacing:.14em;font-size:13px;padding:6px 12px;border-radius:99px;background:#e5243b;color:#fff}
+  .nl-pill i{width:8px;height:8px;border-radius:50%;background:#fff;animation:nlPulse 1.1s infinite}
+  @keyframes nlPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.7)}}
+  .nl-count{font-size:13px;font-weight:600;opacity:.75}
+  .nl-x{margin-left:auto;width:36px;height:36px;border-radius:50%;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);color:#fff;font-size:16px;cursor:pointer}
+  .nl-x:hover{background:rgba(255,255,255,.16)}
+  .nl-name{font-size:32px;font-weight:800;line-height:1.15;margin:14px 0 10px;letter-spacing:-.01em;word-break:break-word}
+  .nl-rows{display:flex;flex-direction:column;gap:8px}
+  .nl-row{display:flex;align-items:center;gap:10px;font-size:17px;color:#fff;text-decoration:none;padding:9px 12px;border-radius:12px;background:rgba(255,255,255,.06);word-break:break-all}
+  a.nl-row:hover{background:rgba(255,255,255,.12)}
+  .nl-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;font-size:13px;opacity:.95}
+  .nl-foot span{opacity:.7}
+  .nl-open{border:0;border-radius:99px;padding:9px 16px;font-weight:700;font-size:14px;background:#e8b43c;color:#16120a;cursor:pointer}
+  @media (max-width:600px){.nl-name{font-size:26px}.nl-row{font-size:15px}}
+  html.mx-off .nl-card.nl-in,html.mx-off .nl-pill i{animation:none}
 </style>
 </head>
 <body>
@@ -3723,6 +3747,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
 <script src="/motion.js"></script>
 <script src="/motion-fx.js"></script>
 <script src="/address.js"></script>
+<script src="/newlead.js"></script>
 <script src="/fun.js"></script>
 <script src="/install.js"></script>
 </body>
