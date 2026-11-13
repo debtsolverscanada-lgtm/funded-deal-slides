@@ -12,9 +12,10 @@
 
   function shell(html) {
     if (!root) { root = document.createElement('div'); root.id = 'seqm'; document.body.appendChild(root); root.addEventListener('click', onClick); root.addEventListener('change', onChange); }
-    root.innerHTML = `<div class="sq-wrap"><div class="sq-modal" role="dialog" aria-modal="true">${html}</div></div>`;
+    root.innerHTML = `<div class="sq-wrap"><div class="sq-modal" role="dialog" aria-modal="true"><button class="sq-x" data-sq="close" aria-label="Close" title="Close">✕</button>${html}</div></div>`;
+    document.documentElement.classList.add('sq-open');
   }
-  const close = () => { if (root) { root.remove(); root = null; } state = {}; };
+  const close = () => { if (root) { root.remove(); root = null; } state = {}; document.documentElement.classList.remove('sq-open'); };
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && root) close(); });
 
   const trig = s => { const t = s.trigger || {}; const b = fullBoard(s.boards[0]) || {};

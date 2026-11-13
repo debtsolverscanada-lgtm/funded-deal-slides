@@ -1122,6 +1122,16 @@ html.mx-off.pet-docked .pet svg { animation: none; }
   .nl-card.nl-client.nl-in{animation:nlIn .5s cubic-bezier(.2,1.4,.4,1)}
   .nl-client .nl-pill{color:#0f9d58}.nl-client .nl-pill i{background:#0f9d58}.nl-client .nl-open{color:#0b7a43}
   .nl-client .nl-name{text-shadow:0 3px 14px rgba(0,60,30,.35)}
+
+  /* sequences window: always scrollable, close button always reachable (phones) */
+  #seqm .sq-wrap{overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y}
+  #seqm .sq-modal{position:relative;max-height:calc(100dvh - 10vh);overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y}
+  #seqm .sq-x{position:sticky;top:0;float:right;z-index:3;width:40px;height:40px;margin:-6px -8px 0 8px;border-radius:50%;border:1px solid rgba(255,255,255,.25);background:rgba(20,21,24,.92);color:#fff;font-size:17px;cursor:pointer}
+  html.sq-open,html.sq-open body{overflow:hidden}
+  @media (max-width:600px){#seqm .sq-wrap{padding:0;align-items:stretch}#seqm .sq-modal{width:100%;max-height:100dvh;height:100dvh;border-radius:0;padding:calc(64px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom))}
+    #seqm .sq-modal::before{content:"";position:fixed;left:0;right:0;top:0;height:calc(56px + env(safe-area-inset-top));background:var(--panel,#141518);border-bottom:1px solid rgba(255,255,255,.1);z-index:5}
+    #seqm .sq-x{position:fixed;top:calc(8px + env(safe-area-inset-top));right:12px;float:none;margin:0;z-index:6}
+    .sq-row2{flex-wrap:wrap}.sq-row2 span:last-child{display:flex;gap:6px;margin-left:auto}.sq-row2 .btn{margin-left:0}}
 </style>
 </head>
 <body>
