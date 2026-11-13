@@ -51,7 +51,8 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
     return froms.size === 1 ? [...froms][0] : '';
   }
   // viewers never send; a guest sends only once an admin gave them their own address
-  const sendFromFor = (user, bid) => !user || user.role === 'viewer' || (user.role === 'guest' && !fromOf(user)) ? '' : boardFrom(bid) || fromOf(user);
+  // anyone who can see a rep's board sends as that rep (the owner's rule); viewers never send
+  const sendFromFor = (user, bid) => !user || user.role === 'viewer' ? '' : boardFrom(bid) || fromOf(user);
   const nameForFrom = from => (db.prepare('SELECT name FROM users WHERE lower(email_from) = ?').get(lc(from)) || {}).name || '';
   const asNote = (user, from) => from && from !== fromOf(user) ? `\n(sent by ${user.name || user.email} as ${nameForFrom(from) || from})` : '';
   const emailLog = db.prepare('INSERT INTO email_log (id, at, user_id, from_email, to_email, board, item, subject, message_id, thread_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');

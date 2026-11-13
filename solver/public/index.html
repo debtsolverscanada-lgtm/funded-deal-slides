@@ -1282,7 +1282,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
     if (S.isGuest) return (permsOf(b).guestEdit || []).includes(col.id);
     return S.canWrite;
   }
-  const canSendMsgs = () => !!S.me && S.me.role !== 'viewer' && (S.me.role !== 'guest' || !!S.me.sends); // the server picks the board's rep as the sender; viewers never send, a guest only with their own address
+  const canSendMsgs = () => !!S.me && S.me.role !== 'viewer'; // the server picks the board's rep as the sender; viewers never send
   const roleLabel = () => S.isOwner ? 'Admin' : S.isGuest ? 'Guest' : S.canWrite ? 'Member' : 'Viewer';
   // File columns hold [{ name, url }]. Older copies stored Monday's text: a comma-separated list of links.
   const isFileCol = c => !!c && (c.type === 'file' || c.source === 'file');
