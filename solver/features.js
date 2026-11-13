@@ -16,7 +16,7 @@ const SKIP_KEYS = new Set(['activity', 'pos', 'reminded', 'values', 'updates', '
 
 module.exports = function features(ctx) {
   const { db, q, now, broadcast, HttpError, readBody, send, canSee, mustSee, boardInfo, boardCache, itemVisible, restricted, lockedCols, lockError,
-    canWrite, integ, cleanAccess, clearSummary = () => {}, formulaText = () => '', itemNotifications = () => {}, publicDir, startIndex = true,
+    canWrite, integ, cleanAccess, workspaceAccess = () => null, clearSummary = () => {}, formulaText = () => '', itemNotifications = () => {}, publicDir, startIndex = true,
     clientIp = req => String(req.socket.remoteAddress || '') } = ctx;
   const als = new AsyncLocalStorage();
   const store = () => als.getStore() || {};
@@ -402,12 +402,24 @@ module.exports = function features(ctx) {
     if (to) { where.push('at <= ?'); args.push(String(to).length === 10 ? to + 'T23:59:59.999Z' : String(to)); }
     if (before) { where.push('id < ?'); args.push(Number(before)); }
     const n = Math.min(200, Math.max(1, Number(limit) || 60));
-    const lim = restricted(user, info) ? n * 4 : n + 1;
-    let rows = db.prepare(`SELECT * FROM item_history WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ${lim}`).all(...args);
-    if (restricted(user, info)) { const vis = new Map(); rows = rows.filter(r => { if (!r.item) return true; if (!vis.has(r.item)) { const d = itemDoc(board, r.item); vis.set(r.item, !!d && itemVisible(user, info, d)); } return vis.get(r.item); }); }
-    const more = rows.length > n; rows = rows.slice(0, n);
+    let rows, more, cursor = null;
+    if (restricted(user, info)) {
+      // page through in batches, dropping rows on items this person can't see, until a page of visible rows is found
+      // (or 20,000 rows were looked at: then 'Load older changes' carries on from where the scan stopped)
+      const vis = new Map(), ok = r => { if (!r.item) return true; if (!vis.has(r.item)) { const d = itemDoc(board, r.item); vis.set(r.item, !!d && itemVisible(user, info, d)); } return vis.get(r.item); };
+      const stmt = db.prepare(`SELECT * FROM item_history WHERE ${where.join(' AND ')} AND id < ? ORDER BY id DESC LIMIT 500`);
+      rows = []; let scanned = 0, last = Number.MAX_SAFE_INTEGER, full = true;
+      while (rows.length <= n && full && scanned < 20000) {
+        const batch = stmt.all(...args, last); full = batch.length === 500; scanned += batch.length;
+        for (const r of batch) { last = r.id; if (ok(r)) { rows.push(r); if (rows.length > n) break; } }
+      }
+      more = rows.length > n || (full && scanned >= 20000);
+      if (rows.length <= n && more) cursor = last;
+    } else rows = db.prepare(`SELECT * FROM item_history WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ${n + 1}`).all(...args);
+    if (more === undefined) more = rows.length > n;
+    rows = rows.slice(0, n);
     const big = new Set(db.prepare('SELECT id FROM item_history_big WHERE id IN (SELECT value FROM json_each(?))').all(JSON.stringify(rows.filter(r => truncated(r.before)).map(r => r.id))).map(r => r.id));
-    return { more, next: more ? rows[rows.length - 1].id : null, rows: rows.map(r => ({
+    return { more, next: more ? (cursor != null ? cursor : rows[rows.length - 1].id) : null, rows: rows.map(r => ({
       id: r.id, at: r.at, item: r.item, itemName: r.item_name, kind: r.kind, col: r.col, colName: colName(b, r.col), by: r.by_id, byName: r.by_name, source: r.source, undone: !!r.undone,
       before: r.kind === 'change' ? histVal(b, r.col, r.before) : null,
       after: r.kind === 'change' ? histVal(b, r.col, r.after) : r.after ? J(r.after) : null,
@@ -474,6 +486,9 @@ module.exports = function features(ctx) {
     if (r.kind === 'item') {
       const info = boardInfo(r.board); if (!info) throw bad(409, `Its board “${r.board_name}” was deleted. Restore the board first.`);
       if (q.doc.get(`boards/${r.board}/items/${r.item}`)) throw bad(409, 'An item with the same id is already on the board.');
+      // it was moved to another board and is still there: putting the old copy back would make the same lead twice
+      const elsewhere = db.prepare("SELECT path FROM docs WHERE id = ? AND path <> ? AND col LIKE 'boards/%/items'").get(r.item, `boards/${r.board}/items/${r.item}`);
+      if (elsewhere) { const ob = boardInfo(elsewhere.path.split('/')[1]); throw bad(409, `This item is on “${ob ? ob.name : 'another board'}” now. Move it back from there instead.`); }
       const data = J(r.data);
       if (!(info.groups || []).some(g => g.id === data.group)) data.group = ((info.groups || [])[0] || {}).id || data.group;
       saveItem(r.board, r.item, data, user, 'restore'); out = { board: r.board, item: r.item };
@@ -523,7 +538,7 @@ module.exports = function features(ctx) {
   }
 
   // ---------- search ----------
-  function search(user, text) {
+  function search(user, text, allOf) { // allOf: a board id whose matches are all listed (Show all), not just 8
     const qs = String(text || '').trim().slice(0, 100); if (qs.length < 2) return { q: qs, boards: [], total: 0 };
     const digits = qs.replace(/\D/g, ''), ql = qs.toLowerCase();
     const ids = new Set(), phrase = x => '"' + String(x).replace(/"/g, '""') + '"';
@@ -534,6 +549,9 @@ module.exports = function features(ctx) {
       if (qs.length >= 3) add(db.prepare('SELECT rowid FROM search_tri WHERE search_tri MATCH ? LIMIT 3000').all(phrase(qs)));
       else { const like = '%' + qs.replace(/[\\%_]/g, c => '\\' + c) + '%'; add(db.prepare("SELECT rowid FROM search_items WHERE name LIKE ? ESCAPE '\\' LIMIT 3000").all(like)); }
       if (words.length) try { add(db.prepare('SELECT rowid FROM search_words WHERE search_words MATCH ? LIMIT 3000').all(words.map(w => phrase(w) + '*').join(' AND '))); } catch (e) { /* odd input: the substring results stand */ }
+      // several words ("Taylor Tester"): each one somewhere in the name or short fields (first and last name live apart)
+      const toks = qs.split(/[^\p{L}\p{N}@.+-]+/u).filter(Boolean), long = toks.filter(w => w.length >= 3).slice(0, 6);
+      if (toks.length >= 2 && long.length) try { add(db.prepare('SELECT rowid FROM search_tri WHERE search_tri MATCH ? LIMIT 3000').all(long.map(phrase).join(' AND '))); } catch (e) { /* odd input */ }
       // phone numbers typed with spaces or dashes: match the digits too
       if (digits.length >= 4 && digits !== qs) add(db.prepare('SELECT rowid FROM search_tri WHERE search_tri MATCH ? LIMIT 500').all(phrase(digits)));
     } else {
@@ -565,7 +583,7 @@ module.exports = function features(ctx) {
       const hit = Math.max(val.toLowerCase().indexOf(ql), words.length ? val.toLowerCase().indexOf(words[0].toLowerCase()) : -1);
       const at = Math.max(0, hit - 40); it.snip = (at ? '…' : '') + val.slice(at, at + 120) + (val.length > at + 120 ? '…' : '');
     };
-    const boards = [...byBoard.values()].map(g => { g.items.sort((a, b) => (b.nameHit - a.nameHit) || String(a.name).localeCompare(String(b.name))); g.items = g.items.slice(0, 8); return g; })
+    const boards = [...byBoard.values()].map(g => { g.items.sort((a, b) => (b.nameHit - a.nameHit) || String(a.name).localeCompare(String(b.name))); g.items = g.items.slice(0, allOf && allOf === g.id ? 200 : 8); return g; })
       .sort((a, b) => b.items.filter(x => x.nameHit).length - a.items.filter(x => x.nameHit).length || b.count - a.count).slice(0, 25);
     for (const g of boards) for (const it of g.items) if (!it.nameHit) snippet(g.id, it);
     // a second line for every result: its group, its status and a phone or email (the person can open the item, so
@@ -702,7 +720,7 @@ module.exports = function features(ctx) {
   async function handle(req, res, url, user) {
     const p = url.pathname, method = req.method, sp = url.searchParams;
     const body = method === 'GET' || method === 'DELETE' ? {} : await readBody(req);
-    if (p === '/api/x/search' && method === 'GET') return send(res, 200, search(user, sp.get('q')));
+    if (p === '/api/x/search' && method === 'GET') return send(res, 200, search(user, sp.get('q'), sp.get('all') || ''));
 
     if (p === '/api/x/history' && method === 'GET') {
       const board = sp.get('board') || ''; if (!okId(board)) throw bad(400, 'Pick a board.');
@@ -711,8 +729,16 @@ module.exports = function features(ctx) {
     }
     if (p === '/api/x/history/facets' && method === 'GET') {
       const board = sp.get('board') || ''; if (!okId(board) || !boardInfo(board)) throw bad(404, 'No such board.');
-      mustSee(user, board); const b = boardDoc(board) || {};
-      const people = db.prepare('SELECT by_id AS id, MAX(by_name) AS name, COUNT(*) AS n FROM item_history WHERE board = ? GROUP BY by_id ORDER BY n DESC LIMIT 100').all(board);
+      const fInfo = mustSee(user, board), b = boardDoc(board) || {};
+      let people;
+      if (restricted(user, fInfo)) { // only people with changes on items this person can see
+        const vis = new Map(), tot = new Map();
+        for (const r of db.prepare('SELECT by_id AS id, MAX(by_name) AS name, item, COUNT(*) AS n FROM item_history WHERE board = ? GROUP BY by_id, item').all(board)) {
+          if (r.item) { if (!vis.has(r.item)) { const d = itemDoc(board, r.item); vis.set(r.item, !!d && itemVisible(user, fInfo, d)); } if (!vis.get(r.item)) continue; }
+          const t = tot.get(r.id) || { id: r.id, name: r.name, n: 0 }; t.n += r.n; tot.set(r.id, t);
+        }
+        people = [...tot.values()].sort((x, y) => y.n - x.n).slice(0, 100);
+      } else people = db.prepare('SELECT by_id AS id, MAX(by_name) AS name, COUNT(*) AS n FROM item_history WHERE board = ? GROUP BY by_id ORDER BY n DESC LIMIT 100').all(board);
       const cols = db.prepare('SELECT col, COUNT(*) AS n FROM item_history WHERE board = ? AND col IS NOT NULL GROUP BY col ORDER BY n DESC LIMIT 200').all(board).map(r => ({ id: r.col, name: colName(b, r.col), n: r.n }));
       return send(res, 200, { people, cols });
     }
@@ -744,6 +770,25 @@ module.exports = function features(ctx) {
       mustSee(user, bid);
       const since = new Date(Date.now() - 3600e3).toISOString();
       const r = db.prepare("SELECT * FROM item_history WHERE board = ? AND by_id = ? AND at >= ? AND kind = 'change' AND undone = 0 AND source <> 'undo' AND col NOT IN ('__subitems') ORDER BY id DESC LIMIT 1").get(bid, user.id, since);
+      // the last thing they did was deleting an item (or several in one go): put it back from the recycle bin rather than reverting an older edit
+      const del = db.prepare("SELECT * FROM item_history WHERE board = ? AND by_id = ? AND at >= ? AND kind = 'deleted' AND undone = 0 AND item IS NOT NULL AND NOT EXISTS (SELECT 1 FROM docs WHERE docs.path = 'boards/' || item_history.board || '/items/' || item_history.item) ORDER BY id DESC LIMIT 1").get(bid, user.id, since);
+      if (del && (!r || del.id > r.id)) {
+        const dels = db.prepare("SELECT * FROM item_history WHERE board = ? AND by_id = ? AND at = ? AND kind = 'deleted' AND undone = 0 AND item IS NOT NULL AND NOT EXISTS (SELECT 1 FROM docs WHERE docs.path = 'boards/' || item_history.board || '/items/' || item_history.item)").all(bid, user.id, del.at);
+        let cells = 0; const skipped = [];
+        for (const x of dels) {
+          H.markUndone.run(x.id);
+          const e = db.prepare('SELECT * FROM recycle_bin WHERE kind = ? AND board = ? AND item = ? AND deleted_by = ? AND restored_at IS NULL AND deleted_at >= ? ORDER BY deleted_at DESC LIMIT 1').get('item', bid, x.item, user.id, since);
+          if (!e) {
+            // deleted with its whole group: the group comes back (once)
+            const g = db.prepare('SELECT * FROM recycle_bin WHERE kind = ? AND board = ? AND deleted_by = ? AND restored_at IS NULL AND deleted_at >= ? ORDER BY deleted_at DESC LIMIT 1').get('group', bid, user.id, since);
+            if (g && ((J(g.data) || {}).items || []).some(it => it && it[0] === x.item)) { try { restoreEntry(user, g); cells++; } catch (err) { skipped.push(err.message); } }
+            else if (!cells) skipped.push(`“${x.item_name}” isn’t in the recycle bin any more`);
+            continue;
+          }
+          try { restoreEntry(user, e); cells++; } catch (err) { skipped.push(err.message); }
+        }
+        return send(res, 200, { cells, skipped, what: dels.length > 1 ? `the delete of ${dels.length} items` : `the delete of “${del.item_name}”` });
+      }
       if (!r) return send(res, 200, { cells: 0, none: true });
       // everything that same save changed (an automation may have set more cells), undone together
       const same = db.prepare("SELECT * FROM item_history WHERE board = ? AND item = ? AND at = ? AND by_id = ? AND kind = 'change' AND undone = 0").all(bid, r.item, r.at, user.id);
@@ -872,9 +917,10 @@ module.exports = function features(ctx) {
       db.exec('BEGIN');
       try {
         q.upsertDoc.run('boards/' + nb.id, 'boards', nb.id, JSON.stringify(nb.data), now(), user.id);
-        if (withItems) for (const r of q.docsInCol.all(`boards/${bid}/items`)) {
-          const d = J(r.data); if (!d) continue;
+        // in the order the board shows them (by pos, then as listed), and numbered so the copy keeps that order
+        if (withItems) for (const [i, d] of q.docsInCol.all(`boards/${bid}/items`).map(r => J(r.data)).filter(Boolean).sort((a, c) => (Number(a.pos) || 0) - (Number(c.pos) || 0)).entries()) {
           const { mondayId, reminded, ...rest } = d;
+          rest.pos = i + 1;
           const iid = rid('i'); rest.activity = [{ at: now(), by: user.id, text: `Copied from “${b.name}”` }]; rest.createdAt = now();
           for (const c of nb.data.columns || []) if (c.type === 'time_tracking' && rest.values && rest.values[c.id]) rest.values[c.id] = { sessions: (rest.values[c.id].sessions || []).filter(s => s.end) };
           q.upsertDoc.run(`boards/${nb.id}/items/${iid}`, `boards/${nb.id}/items`, iid, JSON.stringify(rest), now(), user.id); n++;
@@ -902,7 +948,7 @@ module.exports = function features(ctx) {
       writer(user);
       const t = db.prepare('SELECT * FROM board_templates WHERE id = ?').get(String(body.id || '')); if (!t || !templateVisible(user, t)) throw bad(404, 'That template no longer exists.');
       const ws = body.workspace && typeof body.workspace === 'object' ? { id: String(body.workspace.id || 'main').slice(0, 60), name: String(body.workspace.name || 'Main workspace').slice(0, 120) } : undefined;
-      const nb = newBoard(user, { name: String(body.name || '').trim() || t.name, workspace: ws, structure: J(t.data) || {} });
+      const nb = newBoard(user, { name: String(body.name || '').trim() || t.name, workspace: ws, structure: J(t.data) || {}, access: workspaceAccess(user, ws) });
       for (const c of nb.data.columns || []) if (c.type === 'board_relation' && (c.boards || []).some(x => !boardInfo(x))) c.boards = c.boards.filter(x => boardInfo(x));
       saveBoard(nb.id, nb.data, user.id, null);
       return send(res, 201, { id: nb.id, name: nb.data.name });
@@ -1020,7 +1066,8 @@ module.exports = function features(ctx) {
     if (!f || !f.active) throw off();
     const b = boardDoc(f.board); if (!b) throw off();
     const data = J(f.data) || {};
-    if (method === 'GET') return send(res, 200, { title: data.title, desc: data.desc, fields: formFields(b, data) }, sec);
+    // t = the server's clock when the page loaded; the page sends it back, so the "too fast" check never depends on the visitor's clock
+    if (method === 'GET') return send(res, 200, { title: data.title, desc: data.desc, fields: formFields(b, data), t: Date.now() }, sec);
     if (method !== 'POST') throw bad(405, 'Send the answers with POST.');
     const ip = clientIp(req);
     if (limited('ip:' + ip, 10, 10 * 60e3) || limited('ipall:' + ip, 40, 3600e3) || limited('tok:' + f.token, 200, 3600e3)) throw bad(429, 'Too many answers from here. Try again a little later.');
@@ -1028,7 +1075,9 @@ module.exports = function features(ctx) {
     const raw = await readBody(req, 32 * 1024);
     // honeypot: a hidden field people never fill in; bots do. Pretend it worked.
     if (raw.website || raw.url || raw.homepage) return send(res, 200, { ok: true, thanks: data.thanks }, sec);
-    if (raw.t && Date.now() - Number(raw.t) < 1500) return send(res, 200, { ok: true, thanks: data.thanks }, sec); // filled in faster than a person can
+    const age = Date.now() - Number(raw.t);
+    if (!Number.isFinite(age) || !Number(raw.t) || age < 1500) return send(res, 200, { ok: true, thanks: data.thanks }, sec); // never loaded the form, or filled in faster than a person can
+    if (age > 7 * 864e5) throw bad(400, 'This page has been open too long. Reload it and send your answers again.');
     const a = formAnswers(b, data, raw.answers);
     if (a.errors.length) throw bad(400, a.errors.slice(0, 5).join(' '));
     const actorF = { id: 'form:' + f.id, name: `form “${data.title}”` };

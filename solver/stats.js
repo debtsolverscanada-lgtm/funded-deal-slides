@@ -8,7 +8,11 @@
 
 module.exports = function stats({ db, q, now, HttpError, send }) {
   const env = k => String(process.env[k] || '').trim();
-  const TZ = 'America/Toronto';
+  const TZ = (() => { const z = env('KS_TIMEZONE') || 'America/Toronto'; try { new Intl.DateTimeFormat('en-CA', { timeZone: z }); return z; } catch (e) { return 'America/Toronto'; } })(); // the workspace zone, same as server.js TIME_ZONE
+  const midnightUtc = day => { // 00:00 of that day in TZ, as a UTC ISO instant (Toronto Monday → …T05:00:00Z, Alberta → …T07:00:00Z)
+    const noon = Date.parse(day + 'T12:00:00Z'), local = Date.parse(new Date(noon).toLocaleString('sv-SE', { timeZone: TZ }).replace(' ', 'T') + 'Z');
+    return new Date(Date.parse(day + 'T00:00:00Z') - (local - noon)).toISOString().replace('.000Z', 'Z');
+  };
   const ymd = t => new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(t));
   const weekStart = () => { // Monday of this week, Toronto
     const today = ymd(Date.now()); const d = new Date(today + 'T12:00:00Z'); const wd = (d.getUTCDay() + 6) % 7; d.setUTCDate(d.getUTCDate() - wd); return d.toISOString().slice(0, 10);
@@ -35,7 +39,7 @@ module.exports = function stats({ db, q, now, HttpError, send }) {
     const ids = boards.map(x => x.mondayId).filter(Boolean); const moves = [];
     for (const id of ids) {
       for (let page = 1; page <= 15; page++) {
-        const qy = `query { boards(ids:[${id}]) { activity_logs(from: "${since}T05:00:00Z", limit: 1000, page: ${page}) { event created_at data } } }`;
+        const qy = `query { boards(ids:[${id}]) { activity_logs(from: "${midnightUtc(since)}", limit: 1000, page: ${page}) { event created_at data } } }`;
         let d; try { const r = await fetch('https://api.monday.com/v2', { method: 'POST', headers: { Authorization: token, 'Content-Type': 'application/json', 'API-Version': '2024-10' }, body: JSON.stringify({ query: qy }), signal: AbortSignal.timeout(30000) }); d = await r.json(); } catch (e) { break; }
         const logs = (((d.data || {}).boards || [])[0] || {}).activity_logs || []; if (!logs.length) break;
         for (const l of logs) {
@@ -54,31 +58,35 @@ module.exports = function stats({ db, q, now, HttpError, send }) {
     for (const lb of boards) {
       const gn = new Map((lb.b.groups || []).map(g => [g.id, kind(g.name)]));
       let rows = []; try { rows = db.prepare("SELECT at, item, before, after FROM item_history WHERE board = ? AND col = '__group' AND undone = 0 AND at >= ?").all(lb.id, since); } catch (e) { continue; }
-      for (const r of rows) out.push({ board: lb.id, item: String(r.item), to: gn.get(un(r.after)) || 'other', from: gn.get(un(r.before)) || 'other', day: ymd(Date.parse(r.at)) });
+      // key by the Monday id when the item has one, so a move also in Monday's log counts once
+      const mid = new Map(); if (rows.length) for (const d of q.docsInCol.all(`boards/${lb.id}/items`)) { try { const x = JSON.parse(d.data); if (x.mondayId) mid.set(String(d.id), String(x.mondayId)); } catch (e) {} }
+      for (const r of rows) out.push({ board: lb.id, item: mid.get(String(r.item)) || String(r.item), to: gn.get(un(r.after)) || 'other', from: gn.get(un(r.before)) || 'other', day: ymd(Date.parse(r.at)) });
     }
     return out;
   }
   async function dials(since) {
     const url = env('STATS_CALLS_HOOK_URL'); if (!url) return null;
-    try { const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ since: since + 'T05:00:00Z' }), signal: AbortSignal.timeout(90000) }); return (await r.json()).reps || null; } catch (e) { console.error('stats dials:', e.message); return null; }
+    try { const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ since: midnightUtc(since) }), signal: AbortSignal.timeout(90000) }); return (await r.json()).reps || null; } catch (e) { console.error('stats dials:', e.message); return null; }
   }
 
   let cache = null, building = null;
   async function build() {
     const ws = weekStart(), today = ymd(Date.now()), month = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
     const boards = leadBoards();
-    // boards whose moves happen in Monday (copied from Monday, or written back to it) count from Monday's log;
-    // boards that live only in Solver.ca count from Solver.ca's own history
+    // boards copied from Monday (or written back to it) also count moves made in Monday, from Monday's log
     const wb = new Set(env('MONDAY_WRITEBACK_BOARDS').split(/[\s,]+/).filter(Boolean)), inMonday = lb => lb.mondayId && (lb.b.source === 'monday' || wb.has(lb.id));
     const [mv, dl] = await Promise.all([mondayMoves(boards.filter(inMonday), ws), dials(ws)]);
-    mv.moves.push(...solverMoves(boards.filter(lb => !inMonday(lb)), ws));
+    // Solver.ca's own moves count on every board: Monday-copied boards without write-back never send them to Monday,
+    // and on write-back boards the same move in Monday's log is the same item, which cnt() counts once
+    mv.moves.push(...solverMoves(boards, ws));
     const reps = [], src = new Map();
     for (const lb of boards) {
       const b = lb.b, dcol = colBy(b, /date entered/i), adc = colBy(b, /^ad( name)?$/i), cpc = colBy(b, /^campaign( name)?$/i) || colBy(b, /campaign name/i), asc = colBy(b, /^ad\s*set( name)?$/i) || colBy(b, /ad\s*set name/i);
       const gk = new Map((b.groups || []).map(g => [g.id, kind(g.name)]));
       let leadsToday = 0, leadsWeek = 0, uncontacted = 0, reachedWeek = 0;
       for (const r of q.docsInCol.all(`boards/${lb.id}/items`)) {
-        const it = JSON.parse(r.data), v = it.values || {}; const ent = String((dcol && v[dcol.id]) || it.createdAt || '').slice(0, 10);
+        const it = JSON.parse(r.data), v = it.values || {}; const raw = String((dcol && v[dcol.id]) || it.createdAt || '');
+        const ent = /T\d\d:\d\d/.test(raw) && !isNaN(Date.parse(raw)) ? ymd(Date.parse(raw)) : raw.slice(0, 10); // a timestamp → its Toronto day, not the UTC one
         const k = gk.get(it.group) || 'other';
         if (ent === today) leadsToday++; if (ent >= ws) { leadsWeek++; if (['pitched', 'signed', 'flopped', 'callback'].includes(k)) reachedWeek++; }
         if (k === 'new' && ent >= month) uncontacted++;
@@ -103,7 +111,7 @@ module.exports = function stats({ db, q, now, HttpError, send }) {
     }
     const pct = (a, b) => b ? Math.round(1000 * a / b) / 10 : null;
     const sources = [...src.values()].filter(s => s.leads >= 3).map(s => ({ dim: s.dim, name: s.name, leads: s.leads, junkRate: pct(s.junk, s.leads), pitchRate: pct(s.pitched, s.leads), signRate: pct(s.signed, s.leads), signed: s.signed, reps: [...s.reps].sort(), cpl: null }))
-      .sort((a, b) => (b.signRate - a.signRate) || (b.leads - a.leads));
+      .sort((a, b) => ((a.name === '(no ad info)') - (b.name === '(no ad info)')) || (b.signRate - a.signRate) || (b.leads - a.leads));
     const active = reps.filter(r => r.leadsWeek || r.dialsWeek || r.pitchesWeek || r.signedWeek || r.uncontacted30);
     return { at: now(), weekStart: ws, today, reps: active.sort((a, b) => (b.signedWeek - a.signedWeek) || (b.pitchesWeek - a.pitchesWeek)), sources, dialsOn: !!dl, movesNote: mv.note || null, spendOn: false };
   }

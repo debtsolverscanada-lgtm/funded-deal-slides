@@ -24,6 +24,16 @@ table { border-collapse: collapse; width: 100%; font-size: 14px; }
 th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid rgba(255,255,255,0.06); vertical-align: top; }
 th { color: var(--muted); font-weight: 500; }
 tr:last-child td { border-bottom: 0; }
+/* phones: stack each row (request, then what it does) so nothing hides off to the right */
+@media (max-width: 600px) {
+  .tw table, .tw tbody, .tw tr, .tw td { display: block; width: 100%; }
+  .tw tr:first-child { display: none; }
+  .tw tr { border-bottom: 1px solid rgba(255,255,255,0.06); padding: 6px 0; }
+  .tw tr:last-child { border-bottom: 0; }
+  .tw td { border-bottom: 0; padding: 3px 14px; }
+  .tw td:empty { display: none; }
+  .tw td:first-child code { overflow-wrap: anywhere; }
+}
 .note { border: 1px solid var(--line); background: rgba(255,255,255,0.04); border-radius: 16px; padding: 14px 18px; }
 a { color: #fff; }
 </style>
@@ -50,8 +60,8 @@ a { color: #fff; }
 <tr><td><code>GET /api/v1/boards/{board}</code></td><td>One board. <code>{board}</code> can be the Solver.ca id, the Monday id, or the board name.</td></tr>
 <tr><td><code>GET /api/v1/boards/{board}/items</code></td><td>Items, newest change first. Filters: <code>?group=</code>, <code>?updated_since=2026-11-09T00:00:00Z</code>, <code>?limit=</code> (max 500), <code>?offset=</code>.</td></tr>
 <tr><td><code>GET /api/v1/boards/{board}/items/{id}</code></td><td>One item with its updates and subitems.</td></tr>
-<tr><td><code>POST /api/v1/boards/{board}/items</code></td><td>Create an item: <code>{"name", "group", "fields": {"Column title": value}, "update": "first note"}</code>. The board's automations run, as in the app.</td></tr>
-<tr><td><code>PATCH /api/v1/boards/{board}/items/{id}</code></td><td>Change <code>name</code>, <code>group</code> or <code>fields</code>. Status changes and group moves run the board's automations.</td></tr>
+<tr><td><code>POST /api/v1/boards/{board}/items</code></td><td>Create an item: <code>{"name", "group", "fields": {"Column title": value}, "update": "first note"}</code>. The board's automations run, as in the app, except rules that move, copy or duplicate the item to another board: those only run for changes made in the app, and the item's activity says they were skipped.</td></tr>
+<tr><td><code>PATCH /api/v1/boards/{board}/items/{id}</code></td><td>Change <code>name</code>, <code>group</code> or <code>fields</code>. Status changes and group moves run the board's automations (rules that move, copy or duplicate to another board are skipped, as for POST).</td></tr>
 <tr><td><code>POST /api/v1/boards/{board}/items/{id}/updates</code></td><td>Post an update: <code>{"text": "…", "author": "RingCentral"}</code>.</td></tr>
 <tr><td><code>DELETE /api/v1/boards/{board}/items/{id}</code></td><td>Delete an item (write keys only).</td></tr>
 <tr><td><code>GET /api/v1/search?phone=4035550101</code></td><td>Find leads on every board by phone (last 10 digits), <code>?email=</code>, or name <code>?q=</code>.</td></tr>
@@ -64,7 +74,7 @@ curl -X PATCH https://YOUR-SITE/api/v1/boards/Setter%20Desk%20(Jan)/items/ITEM_I
   -d '{"group":"Appointment Booked","fields":{"Status":"Contacted"}}'</code></pre>
 
 <h2>3. Outgoing webhooks</h2>
-<p>Add one under <b>Integrations → Outgoing webhooks</b>. Solver.ca sends a <code>POST</code> with JSON within a second of the change, and retries up to 3 times if your tool doesn't answer.</p>
+<p>Add one under <b>Integrations → Outgoing webhooks</b>. Solver.ca sends a <code>POST</code> with JSON within a second of the change, and retries up to 2 more times (after about 5 and 15 seconds) if your tool doesn't answer or answers with a 5xx error.</p>
 <div class="tw"><table>
 <tr><th>Event</th><th>When</th><th>Extra data</th></tr>
 <tr><td><code>item.created</code></td><td>A new item, from the app, the API, an automation or a lead link</td><td></td></tr>

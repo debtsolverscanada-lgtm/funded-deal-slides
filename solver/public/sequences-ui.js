@@ -12,11 +12,16 @@
 
   function shell(html) {
     if (!root) { root = document.createElement('div'); root.id = 'seqm'; document.body.appendChild(root); root.addEventListener('click', onClick); root.addEventListener('change', onChange); }
-    root.innerHTML = `<div class="sq-wrap"><div class="sq-modal" role="dialog" aria-modal="true"><button class="sq-x" data-sq="close" aria-label="Close" title="Close">✕</button>${html}</div></div>`;
+    const ae = document.activeElement; if (!root.firstChild && ae && ae !== document.body) back = ae; // focus goes back here on close
+    root.innerHTML = `<div class="sq-wrap"><div class="sq-modal" role="dialog" aria-modal="true" tabindex="-1" style="outline:none"><button class="sq-x" data-sq="close" aria-label="Close" title="Close">✕</button>${html}</div></div>`;
+    const m = root.querySelector('.sq-modal'), h = m.querySelector('h3'); if (h) m.setAttribute('aria-label', h.textContent.trim());
+    if (!m.contains(document.activeElement)) m.focus({ preventScroll: true }); // keyboard users land inside the window
     document.documentElement.classList.add('sq-open');
   }
-  const close = () => { if (root) { root.remove(); root = null; } state = {}; document.documentElement.classList.remove('sq-open'); };
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && root) close(); });
+  let back = null;
+  const close = () => { if (root) { root.remove(); root = null; } state = {}; document.documentElement.classList.remove('sq-open'); if (back && back.isConnected) back.focus({ preventScroll: true }); back = null; };
+  // capture phase + stopPropagation: Esc closes only this popup, not the lead drawer under it
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && root) { e.preventDefault(); e.stopPropagation(); askClose(); } }, true);
 
   const trig = s => { const t = s.trigger || {}; const b = fullBoard(s.boards[0]) || {};
     if (t.type === 'created') return 'When a new lead comes in' + (t.inGroup ? ` (in ${esc(((b.groups || []).find(g => g.id === t.inGroup) || {}).name || 'a group')})` : '');
@@ -54,7 +59,7 @@
   // ---------- editor ----------
   function openEdit(id) {
     const s = id ? JSON.parse(JSON.stringify(state.list.find(x => x.id === id))) : { id: 'seq_' + Math.random().toString(36).slice(2, 10), name: '', boards: [S().boardId].filter(Boolean), trigger: { type: 'created' }, from: '', footer: true, stopOnReply: true, steps: [{ waitDays: 0, waitHours: 0, subject: '', body: '' }], active: false, _new: true };
-    state.view = 'edit'; state.edit = s; drawEdit();
+    state.view = 'edit'; state.edit = s; drawEdit(); readForm(); state.orig = JSON.stringify(s);
   }
   function drawEdit() {
     const s = state.edit, b = fullBoard(s.boards[0]) || { columns: [], groups: [] };
@@ -68,7 +73,7 @@
         <label class="int-field"><span>Starts</span><select class="field-input" data-f="ttype">${opt('created', s.trigger.type, 'When a new lead comes in')}${opt('status', s.trigger.type, 'When a status changes to…')}${opt('group', s.trigger.type, 'When a lead is moved to a group…')}${opt('manual', s.trigger.type, 'Only when someone adds a lead by hand')}</select></label>
         ${s.trigger.type === 'status' ? `<div class="sq-2"><select class="field-input" data-f="tcol">${statusCols.map(c => opt(c.id, sc && sc.id, c.title)).join('')}</select><select class="field-input" data-f="tlabel">${((sc && sc.labels) || []).map(l => opt(l.label, s.trigger.label, l.label)).join('')}</select></div>` : ''}
         ${s.trigger.type === 'group' ? `<select class="field-input" data-f="tgroup">${(b.groups || []).map(g => opt(g.id, s.trigger.group, g.name)).join('')}</select>` : ''}
-        <label class="int-field"><span>Sent from</span><input class="field-input" data-f="from" value="${esc(s.from)}" placeholder="Leave empty: the board’s rep (Mariel on Mariel Leads)"></label>
+        <label class="int-field"><span>Sent from</span><input class="field-input" data-f="from" value="${esc(s.from)}" placeholder="Leave empty: each board’s own rep"></label>
         <label class="int-ev"><input type="checkbox" data-f="stopOnReply" ${s.stopOnReply ? 'checked' : ''}><span>Stop when the lead replies</span></label>
         <label class="int-ev"><input type="checkbox" data-f="footer" ${s.footer ? 'checked' : ''}><span>Add the “reply UNSUBSCRIBE” line (marketing emails)</span></label>
         <div class="int-field"><span>Emails</span>${s.steps.map((st, k) => `<div class="sq-step"><div class="sq-step-h"><b>Email ${k + 1}</b><span>Wait <input class="field-input sq-n" type="number" min="0" data-f="wd" data-k="${k}" value="${st.waitDays}"> days <input class="field-input sq-n" type="number" min="0" max="23" data-f="wh" data-k="${k}" value="${st.waitHours}"> h ${k ? 'after the last one' : 'after it starts'}</span>${s.steps.length > 1 ? `<button class="btn" data-sq="rmstep" data-k="${k}">Remove</button>` : ''}</div>
@@ -94,7 +99,12 @@
       else if (f === 'tgroup') s.trigger.group = el.value;
     });
     s.boards = [...root.querySelectorAll('[data-f="board"]:checked')].map(x => x.value);
+    s.steps.forEach(st => { const h = Math.max(0, Math.floor(st.waitDays)) * 24 + Math.max(0, Math.floor(st.waitHours)); st.waitDays = Math.floor(h / 24); st.waitHours = h % 24; }); // 48 h is kept as 2 days
   }
+  // redraw the editor without jumping back to the top
+  const redrawKeepScroll = () => { const els = () => root ? [root.querySelector('.sq-wrap'), root.querySelector('.sq-modal')] : []; const tops = els().map(x => x ? x.scrollTop : 0); drawEdit(); els().forEach((x, i) => { if (x) x.scrollTop = tops[i]; }); };
+  // closing by Esc or a click outside asks first when the editor has unsaved changes
+  const askClose = () => { if (state.view === 'edit' && root) { readForm(); if (JSON.stringify(state.edit) !== state.orig && !confirm('Discard your unsaved changes to this sequence?')) return; } close(); };
 
   // ---------- a lead's sequences ----------
   async function openLead(bid, iid) {
@@ -105,7 +115,7 @@
   function drawLead() {
     const d = state.data, item = (A().itemById || (() => null))(state.iid);
     const st = r => r.status === 'active' ? (r.active ? `<span class="app-st set">Email ${r.step + 1} of ${r.of} next</span>` : '<span class="app-st off">Sequence is off</span>') : r.status === 'done' ? '<span class="app-st on">Finished</span>' : `<span class="app-st off">Stopped</span> <small>${esc(r.reason || '')}</small>`;
-    const used = new Set(d.rows.map(r => r.seq)), avail = d.available.filter(s => !used.has(s.id));
+    const used = new Set(d.rows.filter(r => !(r.status === 'stopped' && !r.step && r.reason === 'no sending address for this board')).map(r => r.seq)), avail = d.available.filter(s => !used.has(s.id));
     shell(`<h3>Sequences · ${esc(item ? item.name : '')}</h3>
       ${d.rows.map(r => `<div class="sq-person"><b>${esc(r.name)}</b> ${st(r)}${r.status === 'active' ? ` <button class="btn" data-sq="stop" data-id="${esc(r.id)}">Stop</button>` : ''}</div>`).join('') || '<p class="rail-note">Not in any sequence.</p>'}
       ${avail.length ? `<div class="sq-2" style="margin-top:12px"><select class="field-input" id="sq-add">${avail.map(s => `<option value="${esc(s.id)}">${esc(s.name)}${s.active ? '' : ' (off)'}</option>`).join('')}</select><button class="btn primary" data-sq="enroll">Add to sequence</button></div>` : ''}
@@ -114,7 +124,7 @@
 
   // ---------- clicks ----------
   async function onClick(e) {
-    const t = e.target.closest('[data-sq]'); if (!t) { if (e.target.classList.contains('sq-wrap')) close(); return; }
+    const t = e.target.closest('[data-sq]'); if (!t) { if (e.target.classList.contains('sq-wrap')) askClose(); return; }
     const a = t.dataset.sq;
     try {
       if (a === 'close') close();
@@ -122,9 +132,10 @@
       else if (a === 'edit') openEdit(t.dataset.id);
       else if (a === 'people') openPeople(t.dataset.id);
       else if (a === 'back') { if (state.view === 'lead') close(); else openList(); }
-      else if (a === 'addstep') { readForm(); state.edit.steps.push({ waitDays: 1, waitHours: 0, subject: '', body: '' }); drawEdit(); }
-      else if (a === 'rmstep') { readForm(); state.edit.steps.splice(Number(t.dataset.k), 1); drawEdit(); }
+      else if (a === 'addstep') { readForm(); state.edit.steps.push({ waitDays: 1, waitHours: 0, subject: '', body: '' }); redrawKeepScroll(); const st = [...root.querySelectorAll('.sq-step')].pop(); if (st) { st.scrollIntoView({ block: 'nearest' }); const f = st.querySelector('[data-f="subject"]'); if (f) f.focus({ preventScroll: true }); } }
+      else if (a === 'rmstep') { readForm(); state.edit.steps.splice(Number(t.dataset.k), 1); redrawKeepScroll(); }
       else if (a === 'save') {
+        if ([...root.querySelectorAll('[data-f="wd"],[data-f="wh"]')].some(x => Number(x.value) < 0)) throw new Error('Waits can’t be negative.');
         readForm(); const s = state.edit, { id, _new, counts, updatedAt, ...body } = s;
         await api('PUT', `/api/seq/${encodeURIComponent(id)}`, body); toast('Sequence saved.'); openList();
       } else if (a === 'delete') { if (!confirm('Delete this sequence? Anyone in it stops getting its emails.')) return; await api('DELETE', `/api/seq/${encodeURIComponent(state.edit.id)}`); toast('Deleted.'); openList(); }

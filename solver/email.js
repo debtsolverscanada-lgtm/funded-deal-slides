@@ -53,7 +53,7 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
   // viewers never send; a guest sends only once an admin gave them their own address
   const sendFromFor = (user, bid) => !user || user.role === 'viewer' || (user.role === 'guest' && !fromOf(user)) ? '' : boardFrom(bid) || fromOf(user);
   const nameForFrom = from => (db.prepare('SELECT name FROM users WHERE lower(email_from) = ?').get(lc(from)) || {}).name || '';
-  const asNote = (user, from) => from && from !== fromOf(user) ? `\n(sent by ${user.name || user.email} as ${from})` : '';
+  const asNote = (user, from) => from && from !== fromOf(user) ? `\n(sent by ${user.name || user.email} as ${nameForFrom(from) || from})` : '';
   const emailLog = db.prepare('INSERT INTO email_log (id, at, user_id, from_email, to_email, board, item, subject, message_id, thread_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const textLog = db.prepare('INSERT INTO text_log (id, at, user_id, from_email, to_phone, board, item, message_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const rid = p => p + crypto.randomBytes(9).toString('base64url');
@@ -62,7 +62,7 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
   const emailReady = from => gmail.hasFor(from) || !!env('EMAIL_SEND_HOOK_URL');
 
   // ---------- opt-outs ----------
-  const phone10 = s => { const d = String(s || '').replace(/\D/g, ''); const t = d.length === 11 && d[0] === '1' ? d.slice(1) : d; return t.length === 10 ? t : ''; };
+  const phone10 = s => { const d = String(s || '').replace(/\s*(?:ext\.?|extension|x|#)\s*\d+\s*$/i, '').replace(/\D/g, ''); /* "(403) 555-7777 x5": the extension isn't part of the number */ const t = d.length === 11 && d[0] === '1' ? d.slice(1) : d; return t.length === 10 ? t : ''; };
   const optOut = (value, kind, source) => { if (value) db.prepare('INSERT OR IGNORE INTO outreach_optout (value, kind, at, source) VALUES (?, ?, ?, ?)').run(String(value).toLowerCase(), kind, now(), source || null); };
   const isOptedOut = value => !!(value && db.prepare('SELECT 1 FROM outreach_optout WHERE value = ?').get(String(value).toLowerCase()));
 
@@ -91,7 +91,7 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
       if (label && BAD.test(label)) return `${c.title} is “${label}”, so this lead is never messaged.`;
       if (label && /referr/i.test(label)) return 'This lead was referred, so it’s never messaged.';
     }
-    if ((item.activity || []).some(a => /junk|unqualified/i.test(String(a.text || '')))) return 'This lead was in Junk/Unqualified before, so it’s never messaged.';
+    if (item.wasJunk || (item.activity || []).some(a => /junk|unqualified/i.test(String(a.text || '')))) return 'This lead was in Junk/Unqualified before, so it’s never messaged.';
     if (leadEmails(board, item).some(isOptedOut) || leadPhones(board, item).some(isOptedOut)) return 'This lead opted out (STOP or unsubscribe), so it’s never messaged.';
     return null;
   }
@@ -142,7 +142,7 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
     if (p === '/api/email/check' && method === 'GET') {
       const { board, item } = loadItem(user, url.searchParams.get('board'), url.searchParams.get('item'));
       const sf = sendFromFor(user, url.searchParams.get('board'));
-      return send(res, 200, { configured: emailReady(sf), gmail: gmail.on() ? (gmail.mine(user.id) || false) : null, textConfigured: !!env('TEXT_SEND_HOOK_URL'), from: sf, canSend: !!sf, fromName: nameForFrom(sf), to: leadEmails(board, item), phones: leadPhones(board, item), blocked: blockedReason(board, item), name: item.name || '' }), true;
+      return send(res, 200, { configured: emailReady(sf), gmail: gmail.on() ? (gmail.mine(user.id) || false) : null, textConfigured: !!env('TEXT_SEND_HOOK_URL'), from: sf, canSend: !!sf, fromName: nameForFrom(sf), asRep: !!sf && sf !== fromOf(user), boardRep: !!boardFrom(url.searchParams.get('board')), to: leadEmails(board, item), phones: leadPhones(board, item), blocked: blockedReason(board, item), name: item.name || '' }), true;
     }
     if (p === '/api/email/send' && method === 'POST') {
       const b = await readBody(req, 256 * 1024);
@@ -155,6 +155,7 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
       if (!leadEmails(board, item).includes(to)) throw new HttpError(400, 'You can only email the address on this lead.');
       const subject = String(b.subject || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 300), text = String(b.text || '').replace(/\r\n/g, '\n').trim().slice(0, 20000);
       if (!subject) throw new HttpError(400, 'Add a subject.'); if (!text) throw new HttpError(400, 'Write a message.');
+      if (String(b.text || '').replace(/\r\n/g, '\n').trim().length > 20000) throw new HttpError(400, 'That email is too long: keep it under 20,000 characters.'); // never send a cut-off email
       if (db.prepare('SELECT COUNT(*) AS n FROM email_log WHERE user_id = ? AND at > ?').get(user.id, new Date(Date.now() - 3600e3).toISOString()).n >= 60) throw new HttpError(429, 'That’s 60 emails in the last hour. Wait a bit before sending more.');
       let out; try { out = await sendEmailNow({ user, from, bid, iid, to, subject, text }); }
       catch (e) { console.error('email send:', e.message); throw new HttpError(502, 'The email didn’t send: ' + e.message); }

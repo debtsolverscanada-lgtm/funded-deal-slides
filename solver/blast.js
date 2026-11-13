@@ -24,6 +24,11 @@ module.exports = function blast({ db, q, now, HttpError, readBody, send, mustSee
     );
     CREATE INDEX IF NOT EXISTS blast_rows_blast ON blast_rows(blast_id, status);
   `);
+  // a lead that was mid-send when the server stopped: it may have gone out, so it's never sent again
+  for (const r of db.prepare("SELECT id, blast_id FROM blast_rows WHERE status = 'sending'").all()) {
+    db.prepare("UPDATE blast_rows SET status = 'failed', err = 'Interrupted by a server restart while sending; it may have gone out, so it wasn’t sent again' WHERE id = ?").run(r.id);
+    db.prepare('UPDATE blasts SET failed = failed + 1 WHERE id = ?').run(r.blast_id);
+  }
   const MAX = 500, MEMBER_MAX = 50, SIX_MONTHS = 183 * 864e5;
   const gap = ch => ch === 'email' ? Math.max(2000, Number(process.env.BLAST_EMAIL_GAP_MS) || 10000) : Math.max(1000, Number(process.env.BLAST_TEXT_GAP_MS) || 4000);
   const off = () => String(process.env.BLASTS || '').toLowerCase() === 'off';
@@ -44,13 +49,18 @@ module.exports = function blast({ db, q, now, HttpError, readBody, send, mustSee
   };
   const firstName = n => { let s = String(n || '').trim().split(/\s+/)[0] || 'there'; s = s.replace(/[^\p{L}'-]/gu, '') || 'there'; return s === s.toLowerCase() || s === s.toUpperCase() ? s[0].toUpperCase() + s.slice(1).toLowerCase() : s; };
   const company = board => /mortgage\s*solver/i.test(((board.workspace || {}).name) || '') ? 'MortgageSolvers' : 'DebtSolvers Canada';
-  const fill = (tpl, item, user) => String(tpl || '').replace(/\{\s*first\s*name\s*\}/gi, firstName(item.name)).replace(/\{\s*name\s*\}/gi, String(item.name || '').trim() || 'there').replace(/\{\s*rep\s*\}/gi, firstName(user.name || user.email));
+  const fill = (tpl, item, user) => String(tpl || '').replace(/\{\s*first\s*name\s*\}/gi, firstName(item.name)).replace(/\{\s*(?:pulse\.)?name\s*\}/gi, String(item.name || '').trim() || 'there').replace(/\{\s*rep\s*\}/gi, firstName(user.name || user.email));
   const withFooter = (channel, text, board) => channel === 'email'
     ? `${text}\n\n--\n${company(board)}\nIf you’d rather not get these emails, reply UNSUBSCRIBE.`
-    : (/reply\s+stop/i.test(text) ? text : `${text} Reply STOP to opt out.`);
+    : (/reply\s+stop/i.test(text) ? text : `${text}${/[.!?…)]$/.test(text) ? '' : '.'} Reply STOP to opt out.`);
 
   // Who gets it and who's skipped (and why), for a list of item ids on one board
-  function plan(user, bid, ids, channel) {
+  // the same message already went (or is queued in a running blast) to this address in the last day: never twice
+  const gotSame = (channel, bid, to, msg) => !!msg && !!db.prepare(`SELECT 1 FROM blast_rows r JOIN blasts b ON b.id = r.blast_id
+    WHERE r.to_addr = ? AND b.channel = ? AND b.board = ? AND b.body = ? AND (? = 'text' OR COALESCE(b.subject, '') = ?) AND b.at > ?
+      AND (r.status IN ('sent', 'sending') OR (r.status = 'queued' AND b.status = 'sending')) LIMIT 1`)
+    .get(to, channel, bid, msg.body, channel, msg.subject || '', new Date(Date.now() - 864e5).toISOString());
+  function plan(user, bid, ids, channel, msg) {
     if (!boardInfo(bid)) throw new HttpError(404, 'No such board.');
     const info = mustSee(user, bid), br = q.doc.get('boards/' + bid), board = br ? JSON.parse(br.data) : {};
     const go = [], skip = [], seenTo = new Set();
@@ -59,9 +69,14 @@ module.exports = function blast({ db, q, now, HttpError, readBody, send, mustSee
       const item = JSON.parse(r.data); if (!itemVisible(user, info, item)) continue;
       const name = String(item.name || '').slice(0, 120);
       const why = mail.blockedReason(board, item);
-      if (why) { skip.push({ item: iid, name, why: why.replace(/, so .*$/, '').replace(/\.$/, '') }); continue; }
+      // reasons are shown as a heading over a list of leads, so drop the "This lead…" wording: In “Junk/Unqualified” (8)
+      if (why) { skip.push({ item: iid, name, why: why.replace(/, so .*$/, '').replace(/\.$/, '').replace(/\. Copies are never messaged$/, '').replace(/^This lead is in /, 'In ').replace(/^This lead (was|opted)/, (x, v) => v[0].toUpperCase() + v.slice(1)).replace(/^This is a /, '').replace(/, so this lead is never messaged$/, '') }); continue; }
       const to = channel === 'email' ? mail.leadEmails(board, item)[0] : mail.leadPhones(board, item)[0];
-      if (!to) { skip.push({ item: iid, name, why: channel === 'email' ? 'No email address' : 'No phone number' }); continue; }
+      if (!to) {
+        const has = (board.columns || []).filter(c => channel === 'email' ? c.type === 'email' : c.type === 'phone' || /phone|mobile|cell/i.test(c.title || '')).some(c => String((item.values || {})[c.id] || '').trim());
+        skip.push({ item: iid, name, why: channel === 'email' ? (has ? 'Email address isn’t valid' : 'No email address') : (!has ? 'No phone number' : (board.columns || []).some(c => (c.type === 'phone' || /phone|mobile|cell/i.test(c.title || '')) && String((item.values || {})[c.id] || '').replace(/\D/g, '').length >= 7) ? 'Not a Canadian/US mobile number' : 'Phone number isn’t valid') }); continue;
+      }
+      if (gotSame(channel, bid, to, msg)) { skip.push({ item: iid, name, why: 'Already got this same message in the last day' }); continue; }
       if (seenTo.has(to)) { skip.push({ item: iid, name, why: 'Same ' + (channel === 'email' ? 'email' : 'number') + ' as another selected lead' }); continue; }
       const at = inquiryAt(board, item);
       if (at && Date.now() - at > SIX_MONTHS) { skip.push({ item: iid, name, why: 'Inquiry older than 6 months' }); continue; }
@@ -106,9 +121,10 @@ module.exports = function blast({ db, q, now, HttpError, readBody, send, mustSee
         const rep = { ...user, name: mail.nameForFrom(bl.from_email) || user.name };
         const text = withFooter(bl.channel, fill(bl.body, item, rep), board);
         lastSent.set(key, Date.now());
+        db.prepare("UPDATE blast_rows SET status = 'sending', at = ? WHERE id = ?").run(now(), row.id); // claimed before the send, so a restart mid-send never sends it again
         try {
-          if (bl.channel === 'email') await mail.sendEmailNow({ user, from: bl.from_email, bid: bl.board, iid: row.item, to: row.to_addr, subject: fill(bl.subject, item, rep), text, blastId: bl.id });
-          else await mail.sendTextNow({ user, from: bl.from_email, bid: bl.board, iid: row.item, to10: row.to_addr, text, blastId: bl.id });
+          if (bl.channel === 'email') await mail.sendEmailNow({ user, from: bl.from_email, bid: bl.board, iid: row.item, to: row.to_addr, subject: fill(bl.subject, item, rep), text, blastId: bl.total > 1 ? bl.id : null }); // one lead: logged as a plain Email/Text
+          else await mail.sendTextNow({ user, from: bl.from_email, bid: bl.board, iid: row.item, to10: row.to_addr, text, blastId: bl.total > 1 ? bl.id : null });
           mark('sent');
         } catch (e) {
           mark('failed', e.message);
@@ -130,16 +146,17 @@ module.exports = function blast({ db, q, now, HttpError, readBody, send, mustSee
     if (p === '/api/blast/preview' && method === 'POST') {
       const b = await readBody(req, 256 * 1024), channel = String(b.channel || '');
       const from = checkReady(user, channel, b.board), msg = readMsg({ subject: b.subject || (channel === 'text' ? '-' : ''), text: b.text || ' ' }, channel);
-      const { board, go, skip } = plan(user, String(b.board || ''), Array.isArray(b.items) ? b.items : [], channel);
+      const { board, go, skip } = plan(user, String(b.board || ''), Array.isArray(b.items) ? b.items : [], channel, b.text ? { body: msg.body, subject: channel === 'email' ? msg.subject : '' } : null);
       const s = go[0], u = { id: user.id, name: mail.nameForFrom(from) || user.name, role: user.role };
-      return send(res, 200, { from, channel, count: go.length, skipped: skip, limit: user.role === 'admin' ? MAX : MEMBER_MAX,
+      return send(res, 200, { from, fromName: mail.nameForFrom(from) || '', channel, count: go.length, skipped: skip, limit: user.role === 'admin' ? MAX : MEMBER_MAX,
         sample: s ? { name: s.name, to: s.to, subject: channel === 'email' ? fill(msg.subject, s.lead, u) : '', text: withFooter(channel, fill(msg.body, s.lead, u), board) } : null,
+        unknown: [...new Set(((channel === 'email' ? msg.subject + ' ' : '') + msg.body).replace(/\{\s*(?:first\s*name|(?:pulse\.)?name|rep)\s*\}/gi, '').match(/\{[^{}\n]{1,40}\}/g) || [])].slice(0, 10),
         minutes: Math.ceil(go.length * gap(channel) / 60000) }), true;
     }
     if (p === '/api/blast/start' && method === 'POST') {
       const b = await readBody(req, 256 * 1024), channel = String(b.channel || '');
       const from = checkReady(user, channel, b.board), msg = readMsg(b, channel), bid = String(b.board || '');
-      const { go, skip } = plan(user, bid, Array.isArray(b.items) ? b.items : [], channel);
+      const { go, skip } = plan(user, bid, Array.isArray(b.items) ? b.items : [], channel, msg);
       if (!go.length) throw new HttpError(400, 'None of the selected leads can get this.');
       if (user.role !== 'admin' && go.length > MEMBER_MAX) throw new HttpError(403, `That’s ${go.length} leads. Blasts over ${MEMBER_MAX} need an admin to send them.`);
       if (Number(b.expect) && Number(b.expect) !== go.length) throw new HttpError(409, 'The list changed since the preview. Check it again.');

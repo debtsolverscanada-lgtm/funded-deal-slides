@@ -156,6 +156,14 @@ function parseXlsx(buf) {
     const target = rid && (new RegExp(`<Relationship\\b[^>]*Id="${rid}"[^>]*Target="([^"]+)"`).exec(rels) || new RegExp(`<Relationship\\b[^>]*Target="([^"]+)"[^>]*Id="${rid}"`).exec(rels) || [])[1];
     if (target) sheetPath = target.startsWith('/') ? target.slice(1) : 'xl/' + target.replace(/^\.\//, '');
   }
+  // which cell styles show a date/time: built-in formats 14-22 and 45-47, or a custom format with d/m/y/h/s outside quotes and [colour]
+  const dateStyles = new Set(); const st = get('xl/styles.xml');
+  if (st) {
+    const custom = new Map(); for (const m of st.matchAll(/<(?:\w+:)?numFmt\b[^>]*?numFmtId="(\d+)"[^>]*?formatCode="([^"]*)"/g)) custom.set(Number(m[1]), unXml(m[2]));
+    const isDate = id => (id >= 14 && id <= 22) || (id >= 45 && id <= 47) || (custom.has(id) && /[dmyhs]/i.test(custom.get(id).replace(/"[^"]*"|\[[^\]]*\]|\\./g, '')));
+    const xfs = (/<(?:\w+:)?cellXfs\b[^>]*>([\s\S]*?)<\/(?:\w+:)?cellXfs>/.exec(st) || [])[1] || '';
+    let i = 0; for (const m of xfs.matchAll(/<(?:\w+:)?xf\b([^>]*?)\/?>/g)) { if (isDate(Number((/\bnumFmtId="(\d+)"/.exec(m[1]) || [])[1] || 0))) dateStyles.add(i); i++; }
+  }
   const sheet = get(sheetPath) || (n => n ? get(n) : null)(files.names().find(n => /^xl\/worksheets\/[^/]+\.xml$/.test(n)));
   if (!sheet) throw new Error('This .xlsx file has no sheet.');
   const rows = [];
@@ -171,6 +179,8 @@ function parseXlsx(buf) {
       else if (type === 'inlineStr') val = textOf(inner);
       else if (type === 'b') val = v === '1' ? 'TRUE' : 'FALSE';
       else if (v !== undefined) val = unXml(v);
+      // a number cell shown as a date: the date as Excel shows it (2026-03-15, or 2026-03-15 09:00 with a time)
+      if (type === 'n' && val !== '' && dateStyles.has(Number((/\bs="(\d+)"/.exec(attrs) || [])[1])) && Number.isFinite(Number(val)) && Number(val) >= 0 && Number(val) < 2958466) val = excelSerialToText(val);
       let idx = row.length;
       if (ref) { idx = 0; for (const ch of ref) idx = idx * 26 + (ch.charCodeAt(0) - 64); idx--; }
       while (row.length < idx) row.push('');
@@ -182,5 +192,11 @@ function parseXlsx(buf) {
 }
 // Excel stores dates as days since 1899-12-30.
 function excelSerialToYmd(n) { const d = new Date(Date.UTC(1899, 11, 30) + Math.round(Number(n) * 864e5)); return d.toISOString().slice(0, 10); }
+// with the time when there is one; a time alone (under one day) is just HH:MM
+function excelSerialToText(n) {
+  const x = Number(n), mins = Math.round(x * 1440), iso = new Date(Date.UTC(1899, 11, 30) + mins * 6e4).toISOString();
+  if (x < 1) return iso.slice(11, 16);
+  return mins % 1440 === 0 ? iso.slice(0, 10) : iso.slice(0, 10) + ' ' + iso.slice(11, 16);
+}
 
 module.exports = { toCsv, parseCsv, toXlsx, parseXlsx, zip, unzip, openZip, crc32, excelSerialToYmd };

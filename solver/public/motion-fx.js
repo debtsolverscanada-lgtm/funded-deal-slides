@@ -54,7 +54,7 @@
     size();
     const P = Array.from({ length: Math.round(Math.min(70, w / 14)) }, () => ({ x: Math.random() * w, y: Math.random() * h, r: .4 + Math.random() * 1.6, vy: -.08 - Math.random() * .25, vx: (Math.random() - .5) * .12, a: Math.random() * Math.PI * 2, gold: Math.random() < .6 }));
     const tick = () => {
-      if (!alive || !hero.isConnected) return stop();
+      if (!alive || !hero.isConnected || !full()) return stop(); // Motion switched down (or reduced motion turned on): stop at once
       if (document.hidden) { raf = requestAnimationFrame(tick); return; }
       g.clearRect(0, 0, w, h);
       for (const p of P) {
@@ -115,6 +115,7 @@
     if (!act) { if (el) el.remove(); return; }
     if (!el) { el = document.createElement('span'); el.className = 'fx-ink'; bar.appendChild(el); if (lastInk && on()) { el.style.transition = 'none'; el.style.left = lastInk.left + 'px'; el.style.width = lastInk.width + 'px'; el.getBoundingClientRect(); el.style.transition = ''; } }
     const left = act.offsetLeft, width = act.offsetWidth; el.style.left = left + 'px'; el.style.width = width + 'px'; lastInk = { left, width };
+    el.style.bottom = 'auto'; el.style.top = (act.offsetTop + act.offsetHeight - 1) + 'px'; // under the active tab, also when the tabs wrap to a 2nd row
   }
 
   // ---------- click ripple ----------

@@ -43,6 +43,7 @@
   .fx-hint { color: var(--muted); font-size: 12px; padding: 8px 14px; border-top: 1px solid var(--line); display: flex; gap: 14px; flex-wrap: wrap; }
   .fx-toast { display: flex; align-items: center; gap: 12px; padding-right: 8px; }
   .fx-toast button { border: 0; background: #000; color: #fff; border-radius: 999px; padding: 4px 12px; font-weight: 600; font-size: 12.5px; }
+  @media (max-width: 780px), (pointer: coarse) { .fx-toast button { min-height: 44px; min-width: 64px; padding: 4px 16px; font-size: 14px; } }
   .fx-hist { display: flex; flex-direction: column; gap: 8px; }
   .fx-h { border: 1px solid var(--line); background: rgba(255,255,255,0.035); border-radius: var(--r-md); padding: 9px 12px; display: flex; gap: 10px; align-items: flex-start; }
   .fx-h-main { flex: 1; min-width: 0; line-height: 1.45; overflow-wrap: anywhere; }
@@ -191,7 +192,7 @@
     const parts = [g.name];
     const gid = (it && it.group) || i.group, grp = b && gid && (b.groups || []).find(x => x.id === gid); if (grp) parts.push(grp.name); else if (i.groupName) parts.push(i.groupName);
     if (it && b) {
-      const v = it.values || {}, st = (b.columns || []).find(c => c.type === 'status' && v[c.id]); if (st) { const l = (st.labels || []).find(x => x.id === v[st.id]); if (l) parts.push(l.label); }
+      const v = it.values || {}, st = (b.columns || []).find(c => c.type === 'status' && v[c.id]); if (st) { const l = (st.labels || []).find(x => x.id === v[st.id]); if (l && l.label !== '(blank)') parts.push(l.label); }
       const ct = (b.columns || []).find(c => (c.type === 'phone' || c.type === 'email') && v[c.id]); if (ct) parts.push(String(v[ct.id]));
     } else { if (i.status) parts.push(i.status); if (i.contact) parts.push(i.contact); }
     return parts.filter(Boolean).join(' · ');
@@ -202,9 +203,17 @@
     if (!SR.res.total && !(SR.res.boardHits || []).length) return `<div class="fx-empty">Nothing matches “${esc(SR.q)}”.</div>`;
     let k = -1; const q = SR.res.q;
     const bh = (SR.res.boardHits || []).length ? `<div class="fx-res-board">Boards</div>` + SR.res.boardHits.map(b => { k++; return `<button class="fx-res" role="option" data-fx="open-res" data-k="${k}" aria-selected="${k === SR.sel}"><b>${mark(b.name, q)}</b><span>Open board</span></button>`; }).join('') : '';
-    return bh + SR.res.boards.map(g => `<div class="fx-res-board"><span>${esc(g.name)}</span><span>${g.count > g.items.length ? `${g.items.length} of ${g.count}` : g.count}</span></div>` + g.items.map(i => { k++; return `<button class="fx-res" role="option" data-fx="open-res" data-k="${k}" aria-selected="${k === SR.sel}"><b>${mark(i.name, q)}</b>${i.where ? `<span>${esc(i.where)}: ${mark(i.snip, q)}</span>` : ''}<span>${esc(resMeta(g, i))}</span></button>`; }).join('')).join('');
+    return bh + SR.res.boards.map(g => `<div class="fx-res-board"><span>${esc(g.name)}</span><span>${g.count > g.items.length ? `${g.items.length} of ${g.count} <button class="icon-btn" data-fx="res-all" data-b="${esc(g.id)}" style="padding:0;font:inherit;color:inherit;text-decoration:underline">Show all</button>` : g.count}</span></div>` + g.items.map(i => { k++; return `<button class="fx-res" role="option" data-fx="open-res" data-k="${k}" aria-selected="${k === SR.sel}"><b>${mark(i.name, q)}</b>${i.where ? `<span>${esc(i.where)}: ${mark(i.snip, q)}</span>` : ''}<span>${esc(resMeta(g, i))}</span></button>`; }).join('')).join('');
   }
-  function paintResults() { const el = document.getElementById('fx-results'); if (el) { el.innerHTML = resultsHtml(); const s = el.querySelector('[aria-selected="true"]'); if (s) s.scrollIntoView({ block: 'nearest' }); } }
+  function paintResults() {
+    const el = document.getElementById('fx-results'); if (!el) return;
+    const inList = el.contains(document.activeElement); // focus was on a result: keep it on the highlighted one
+    el.innerHTML = resultsHtml(); const s = el.querySelector('[aria-selected="true"]'); if (s) { s.scrollIntoView({ block: 'nearest' }); if (inList) s.focus(); }
+  }
+  function showAll(bid) {
+    const q = SR.q.trim(), n = ++SR.seq;
+    api('GET', '/api/x/search?q=' + encodeURIComponent(q) + '&all=' + encodeURIComponent(bid)).then(r => { if (n !== SR.seq) return; SR.res = r; paintResults(); }).catch(e => toast(e.message || 'Search failed.'));
+  }
   function runSearch() {
     clearTimeout(SR.timer); const q = SR.q.trim(); SR.sel = 0;
     if (q.length < 2) { SR.res = null; paintResults(); return; }
@@ -234,13 +243,17 @@
     if (!c || c.sig !== sig || c.stale) loadItemHistory(b, i, sig);
     return `<div id="fx-hist" data-item="${esc(i.id)}"><p class="rail-note" style="margin:0 0 10px">Every change to this item, newest first, kept for good. ${canWrite() ? 'Undo puts a cell back the way it was.' : ''}</p>${c ? c.html : '<p class="rail-note">Loading the history…</p>'}</div>`;
   }
-  function loadItemHistory(b, i, sig) {
+  function loadItemHistory(b, i, sig, again = 0) {
     const key = i.id; if ((HC.get(key) || {}).loading) return;
+    // a refresh after a change made here: the page changes the item before the server has saved (and logged) it,
+    // so look again shortly, or the new row would be missing until a reload
+    const changed = again || !!(HC.get(key) || {}).html;
     HC.set(key, { ...(HC.get(key) || {}), loading: true, sig: (HC.get(key) || {}).sig });
     api('GET', `/api/x/history?board=${encodeURIComponent(b.id)}&item=${encodeURIComponent(i.id)}&limit=150`).then(r => {
       const html = `<div class="fx-hist">${r.rows.map(x => histRow(x)).join('') || '<p class="rail-note">No changes recorded yet. Changes made from now on show up here.</p>'}</div>${r.more ? '<p class="rail-note">Older changes: see Board activity.</p>' : ''}`;
       HC.set(key, { sig, html, loading: false });
       const el = document.getElementById('fx-hist'); if (el && el.dataset.item === key) el.innerHTML = el.firstElementChild.outerHTML + html;
+      if (changed && again < 2) setTimeout(() => { const c = HC.get(key); if (c && !c.loading && c.sig === sig) loadItemHistory(b, i, sig, again + 1); }, again ? 4000 : 1500);
     }).catch(() => HC.set(key, { sig, html: '<p class="rail-note">The history couldn’t be loaded.</p>', loading: false }));
   }
   function revert(id) {
@@ -255,9 +268,14 @@
   function loadActivity(reset) {
     const m = M; if (!m || m.type !== 'activity') return;
     const qs = new URLSearchParams({ board: m.board, limit: '80' }); for (const [k, v] of Object.entries(m.f)) if (v) qs.set(k, v);
+    // From/To are days in this person's own time zone: send the exact start/end of that local day
+    const day = (v, end) => { const p = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v || ''); return p ? (end ? new Date(+p[1], p[2] - 1, +p[3], 23, 59, 59, 999) : new Date(+p[1], p[2] - 1, +p[3])).toISOString() : v; };
+    if (m.f.from) qs.set('from', day(m.f.from, false)); if (m.f.to) qs.set('to', day(m.f.to, true));
+    const sc = !reset && layer.querySelector('.modal'), keepTop = sc ? sc.scrollTop : 0;
     if (!reset && m.next) qs.set('before', m.next);
-    m.busy = true; renderModal();
-    api('GET', '/api/x/history?' + qs).then(r => { if (M !== m) return; m.busy = false; m.rows = reset ? r.rows : [...(m.rows || []), ...r.rows]; m.next = r.next; m.more = r.more; renderModal(); }).catch(e => { m.busy = false; m.err = e.message; renderModal(); });
+    const keep = () => { if (keepTop) { const el = layer.querySelector('.modal'); if (el) el.scrollTop = keepTop; } }; // 'Load older changes' stays where you were
+    m.busy = true; renderModal(); keep();
+    api('GET', '/api/x/history?' + qs).then(r => { if (M !== m) return; m.busy = false; m.rows = reset ? r.rows : [...(m.rows || []), ...r.rows]; m.next = r.next; m.more = r.more; renderModal(); keep(); }).catch(e => { m.busy = false; m.err = e.message; renderModal(); keep(); });
   }
 
   // ---------- undo after deletes and bulk edits ----------
@@ -284,6 +302,11 @@
     api('POST', '/api/x/group/delete', { board: b.id, group: gid }).then(r => {
       toastAction(`Deleted “${g ? g.name : 'group'}”${r.items ? ` and ${r.items} item${r.items === 1 ? '' : 's'}` : ''}`, 'Undo', () => api('POST', '/api/x/bin/restore', { id: r.bin }).then(() => toast('Group restored')).catch(e => toast(e.message)));
     }).catch(e => toast(e.message));
+    return true;
+  }
+  // the server put the column (and its automations) in the recycle bin when the board saved; Undo restores that entry
+  function columnDeleted(b, c) {
+    toastAction(`Deleted column “${c.title || 'Column'}”`, 'Undo', () => api('GET', '/api/x/bin').then(r => { const x = r.items.find(y => y.kind === 'column' && y.board === b.id && y.mine && y.name === String(c.title || 'Column').slice(0, 200)); if (!x) throw new Error('It’s no longer in the recycle bin.'); return api('POST', '/api/x/bin/restore', { id: x.id }); }).then(() => toast('Column restored')).catch(e => toast(e.message)), 12000);
     return true;
   }
   function undoLast() {
@@ -319,7 +342,7 @@
       const rows = (m.items || []).map(x => `<div class="rule"><div class="rule-text"><b>${esc(x.name)}</b> <span class="pill">${x.kind === 'board' ? 'Board' : x.kind === 'group' ? 'Group' : x.kind === 'column' ? 'Column' : 'Item'}</span>${x.count != null ? ` <span class="fx-mute">${x.count} item${x.count === 1 ? '' : 's'}</span>` : ''}
           <div class="card-meta"><span>${x.kind === 'board' ? '' : esc(x.boardName) + (x.boardGone ? ' (deleted)' : '')}</span><span>Deleted ${esc(fmtWhen(x.at))} by ${esc(x.mine ? 'you' : x.by || 'someone')}</span><span>Gone for good in ${days(x.expires)} day${days(x.expires) === 1 ? '' : 's'}</span></div></div>
           <button class="btn primary" data-fx="restore" data-id="${esc(x.id)}">Restore</button>${isAdmin() ? `<button class="icon-btn" data-fx="forget" data-id="${esc(x.id)}">${m.confirm === x.id ? 'Click again to delete forever' : 'Delete forever'}</button>` : ''}</div>`).join('');
-      return `<h3>Recycle bin</h3><p>Deleted items, groups and boards stay here for ${m.days || 30} days, then they’re removed for good. Restore puts them back exactly as they were.${isAdmin() ? ' As an admin you see everything.' : ' You see what you deleted and what was deleted on boards you can open.'}</p>
+      return `<h3>Recycle bin</h3><p>Deleted items, groups, columns and boards stay here for ${m.days || 30} days, then they’re removed for good. Restore puts them back exactly as they were.${isAdmin() ? ' As an admin you see everything.' : ' You see what you deleted and what was deleted on boards you can open.'}</p>
         ${m.err ? `<div class="rule"><div class="rule-text">${esc(m.err)}</div></div>` : ''}
         ${m.items ? rows || '<p class="rail-note">The recycle bin is empty.</p>' : '<p class="rail-note">Loading…</p>'}
         <div><button class="btn" data-fx="close">Close</button></div>`;
@@ -343,7 +366,7 @@
       const b = S().boards.find(x => x.id === m.board) || { columns: [], groups: [] };
       if (m.edit) return formEditor(b, m);
       const rows = (m.list || []).map(f => { const link = location.origin + '/f/' + f.token; return `<div class="rule ${f.active ? '' : 'off'}"><div class="rule-text"><b>${esc(f.title)}</b><div class="card-meta"><span>${f.questions.length} questions</span><span>${f.submissions} answer${f.submissions === 1 ? '' : 's'}${f.lastAt ? ', last ' + esc(fmtWhen(f.lastAt)) : ''}</span><span>Into ${esc(((b.groups || []).find(g => g.id === f.group) || {}).name || 'first group')}</span></div><div class="fx-link-out">${esc(link)}</div></div>
-        <button class="icon-btn" data-fx="form-copy" data-link="${esc(link)}">Copy link</button><a class="icon-btn" href="${esc(link)}" target="_blank" rel="noopener" style="text-decoration:none">Open</a><button class="toggle" data-fx="form-toggle" data-id="${esc(f.id)}" aria-pressed="${f.active}">${f.active ? 'On' : 'Off'}</button><button class="icon-btn" data-fx="form-edit" data-id="${esc(f.id)}">Edit</button><button class="icon-btn" data-fx="form-del" data-id="${esc(f.id)}">${m.confirm === f.id ? 'Click again' : 'Delete'}</button></div>`; }).join('');
+        <button class="icon-btn" data-fx="form-copy" data-link="${esc(link)}">Copy link</button><a class="icon-btn" href="${esc(link)}" target="_blank" rel="noopener" style="text-decoration:none;display:inline-flex;align-items:center">Open</a><button class="toggle" data-fx="form-toggle" data-id="${esc(f.id)}" aria-pressed="${f.active}">${f.active ? 'On' : 'Off'}</button><button class="icon-btn" data-fx="form-edit" data-id="${esc(f.id)}">Edit</button><button class="icon-btn" data-fx="form-del" data-id="${esc(f.id)}">${m.confirm === f.id ? 'Click again' : 'Delete'}</button></div>`; }).join('');
       return `<h3>Forms · ${esc(b.name)}</h3><p>A public page anyone with the link can fill in, no sign-in. Each answer becomes an item on this board and runs the board’s automations and webhooks. Turn a form off to close it.</p>
         ${m.err ? `<div class="rule"><div class="rule-text">${esc(m.err)}</div></div>` : ''}
         ${m.list ? rows || '<p class="rail-note">No forms yet.</p>' : '<p class="rail-note">Loading…</p>'}
@@ -426,16 +449,17 @@
       case 'close': case 'close-bg': closeModal(); break;
       case 'search': SR.q = SR.q || ''; openSearch(); break;
       case 'open-res': openResult(Number(t.dataset.k)); break;
+      case 'res-all': showAll(t.dataset.b); break;
       case 'open-link': closeModal(); if (window.SolverOpen) window.SolverOpen(t.dataset.b, t.dataset.i); break;
       case 'activity': if (b) openActivity(b); break;
       case 'act-more': loadActivity(false); break;
       case 'revert': revert(t.dataset.id); break;
       case 'board-menu': {
-        if (!b) return; const items = [];
+        if (!b) return; const items = []; S().confirmBoard = null; // reopening More (after Esc, or coming back to the board) needs two fresh clicks to delete
         if (canWrite()) items.push(['dup', 'Duplicate board…'], ['save-tp', 'Save as template…'], ['templates', 'New board from template…'], ['links', 'Connect boards…']);
         if (isAdmin()) items.push(['forms', 'Forms…']);
         if (canWrite()) items.push(['bin', 'Recycle bin']);
-        if (isAdmin()) items.push(['del-board', S().confirmBoard === b.id ? 'Click again to delete this board' : 'Delete board', true]);
+        if (isAdmin()) items.push(['del-board', 'Delete board', true]);
         if (!items.length) return;
         showMenu(t, items); break;
       }
@@ -560,6 +584,12 @@
     if (menu && e.key === 'Escape') { e.stopPropagation(); closeMenu(); return; }
     if (M && M.type === 'search') {
       const n = flatResults().length;
+      if (e.key === 'Tab') { // keep focus inside the dialog (aria-modal)
+        const box = document.querySelector('.fx-search'), f = box ? [...box.querySelectorAll('input, button:not([disabled])')] : [];
+        if (f.length) { const i = f.indexOf(document.activeElement); if (i < 0 || (e.shiftKey && i === 0) || (!e.shiftKey && i === f.length - 1)) { e.preventDefault(); f[i < 0 ? 0 : e.shiftKey ? f.length - 1 : 0].focus(); } }
+        return;
+      }
+      if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && e.target.dataset && e.target.dataset.k != null) SR.sel = Number(e.target.dataset.k);
       if (e.key === 'ArrowDown') { e.preventDefault(); SR.sel = Math.min(n - 1, SR.sel + 1); paintResults(); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); SR.sel = Math.max(0, SR.sel - 1); paintResults(); }
       else if (e.key === 'Enter' && e.target.id === 'fx-q') { e.preventDefault(); e.stopPropagation(); openResult(SR.sel); }
@@ -589,7 +619,7 @@
   function addTypes() { const T = A() && A().TYPES; if (!T) return setTimeout(addTypes, 200); T.board_relation = 'Connect boards'; T.mirror = 'Mirror'; T.time_tracking = 'Time tracking'; }
   addTypes();
 
-  window.SolverFeatures = { cell, describe, head, railTop, railBottom, homeTop, historyTab, deleted, bulkEdited, deleteGroup, openSearch, subDeleted };
+  window.SolverFeatures = { cell, describe, head, railTop, railBottom, homeTop, historyTab, deleted, bulkEdited, deleteGroup, columnDeleted, openSearch, subDeleted };
   // the page rendered before this file loaded: render again so the hooks show up
   setTimeout(() => { try { A() && A().render(); } catch (e) {} }, 0);
 })();

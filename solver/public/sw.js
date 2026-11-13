@@ -1,7 +1,7 @@
 // Solver.ca service worker: makes the site installable and shows a friendly page when there is no connection.
 // It never stores lead data: /api/* and live updates always go straight to the server, and pages are always
 // fetched fresh, so nobody sees an old copy of a board. Only the app's own files are kept for offline start-up.
-const CACHE = 'solver-shell-v2';
+const CACHE = 'solver-shell-v4';
 const SHELL = ['/offline.html', '/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png', '/manifest.webmanifest'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });

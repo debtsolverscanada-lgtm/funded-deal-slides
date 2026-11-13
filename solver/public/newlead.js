@@ -49,7 +49,8 @@
     seen([l.id]); shown = null; draw();
     if (open && window.SolverOpen) window.SolverOpen(l.board, l.item);
   }
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && queue.length && document.getElementById('newlead') && !document.querySelector('.modal-wrap')) next(false); });
+  // capture phase + stop: one Escape closes only the banner (the top layer), not the drawer/window underneath too
+  window.addEventListener('keydown', e => { if (e.key === 'Escape' && queue.length && document.getElementById('newlead') && !document.querySelector('.modal-wrap')) { e.preventDefault(); e.stopImmediatePropagation(); next(false); } }, true);
   const start = () => { poll(); setInterval(poll, 20000); document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); }); };
   if (document.readyState === 'complete') setTimeout(start, 1500); else addEventListener('load', () => setTimeout(start, 1500));
   window.SolverNewLeads = { poll, _queue: () => queue };

@@ -102,6 +102,7 @@
     pet.querySelectorAll('.pet-news').forEach(b => b.remove());
     const b = document.createElement('div'); b.className = 'pet-news'; b.setAttribute('role', 'status');
     const t = document.createElement('div'); t.textContent = text; b.appendChild(t);
+    if (sub && matchMedia('(hover: hover) and (pointer: fine)').matches) sub = sub.replace(/\bTap to\b/, 'Click to'); // a mouse clicks, a finger taps
     if (sub) { const s2 = document.createElement('small'); s2.textContent = sub; b.appendChild(s2); }
     const x = document.createElement('button'); x.className = 'pn-x'; x.textContent = '×'; x.setAttribute('aria-label', 'Dismiss'); b.appendChild(x);
     b.addEventListener('click', e => { e.stopPropagation(); if (e.target === x) { b.classList.add('out'); setTimeout(() => b.remove(), 300); return; } b.remove(); if (open) open(); });
@@ -223,14 +224,25 @@
       <div class="fx-row"><div class="pop-section">Penny wanders</div>${seg('roam', [['on', 'Walks and hides'], ['off', 'Stays put']])}</div>
       <div class="fx-row"><div class="pop-section">Penny’s heads-ups</div>${seg('news', [['mine', 'My boards'], ['all', 'All boards'], ['off', 'Off']])}<p style="margin-top:8px">New leads, texts, calls, notes and mentions, as little bubbles. Tap one to open the lead.</p></div>
       <div class="form-row" style="margin-top:8px"><button class="btn primary" data-fx-close>Done</button><button class="btn" data-fx-party>Test confetti</button></div></div>`;
+    const back = document.activeElement;
     document.body.appendChild(wrap);
+    // it's aria-modal: focus moves in, Tab stays inside, and closing hands focus back to the Flair button
+    const focusables = () => [...wrap.querySelectorAll('button:not([disabled])')];
+    const close = () => { if (!wrap.isConnected) return; wrap.remove(); if (back && back.isConnected && back.focus) back.focus(); };
+    const first = wrap.querySelector('.fx-sw[aria-pressed="true"]') || focusables()[0]; if (first) first.focus();
+    wrap.addEventListener('keydown', e => {
+      if (e.key !== 'Tab') return; const f = focusables(); if (!f.length) return;
+      const i = f.indexOf(document.activeElement);
+      if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); } else if (!e.shiftKey && (i === -1 || i === f.length - 1)) { e.preventDefault(); f[0].focus(); }
+    });
+    wrap.addEventListener('focusout', e => { if (wrap.isConnected && e.relatedTarget && !wrap.contains(e.relatedTarget)) { const f = focusables(); if (f[0]) f[0].focus(); } });
     wrap.addEventListener('click', e => {
       const b = e.target.closest('[data-fx-set]');
       if (b) { set(b.dataset.fxSet, b.dataset.v); wrap.querySelectorAll(`[data-fx-set="${b.dataset.fxSet}"]`).forEach(x => x.setAttribute('aria-pressed', x === b)); if (b.dataset.fxSet === 'pet' && b.dataset.v === 'on') { mood('pet-jump', 1900); say('Hi! I’m Penny'); } return; }
       if (e.target.closest('[data-fx-party]')) { window.SolverMotion && window.SolverMotion.celebrate('Funded', 'Just a test'); return; }
-      if (e.target.closest('[data-fx-close]') || e.target === wrap) wrap.remove();
+      if (e.target.closest('[data-fx-close]') || e.target === wrap) close();
     });
-    document.addEventListener('keydown', function esc(e) { if (e.key === 'Escape') { wrap.remove(); document.removeEventListener('keydown', esc); } });
+    document.addEventListener('keydown', function esc(e) { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esc); } });
   }
   function addFlairButton(root) {
     if (!root || root.querySelector('[data-fx-open]')) return;
@@ -247,10 +259,13 @@
     const r = spot && spot.offsetParent !== null ? spot.getBoundingClientRect() : null;
     const on = !!(r && r.width && innerWidth > 780 && html.getAttribute('data-flair-pet') !== 'off');
     html.classList.toggle('pet-docked', on);
+    html.classList.toggle('pet-nodesk', !on && innerWidth > 780); // computer with no desk showing (short screen): no floating over the leads
+    // phones: on a board she floats over the rows, so taps go through her to the cell underneath (her heads-ups stay tappable)
+    html.classList.toggle('pet-thru', innerWidth <= 780 && !!(window.SolverApp && window.SolverApp.S && window.SolverApp.S.page === 'board'));
     if (on) { html.style.setProperty('--pd-left', Math.round(r.left) + 'px'); html.style.setProperty('--pd-bottom', Math.round(innerHeight - r.bottom) + 'px'); if (pos.x || pos.y) place(0, 0, 0); }
   }
   if (rail) new MutationObserver(() => requestAnimationFrame(dock)).observe(rail, { childList: true, subtree: true });
   addEventListener('resize', () => requestAnimationFrame(dock));
-  setTimeout(dock, 300); setInterval(dock, 4000);
+  setTimeout(dock, 300); setInterval(dock, 4000); addEventListener('click', () => setTimeout(dock, 60)); // a tap can change the page
   window.SolverFlair = { openFlair, say, set, roam };
 })();

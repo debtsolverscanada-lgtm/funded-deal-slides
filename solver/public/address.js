@@ -17,7 +17,8 @@
     close(); if (!items.length || document.activeElement !== el) return;
     field = el; list = items; pop = document.createElement('div'); pop.className = 'addr-pop'; pop.setAttribute('role', 'listbox');
     pop.innerHTML = items.map((t, k) => `<button type="button" role="option" data-k="${k}">${t.main.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])}<small>${t.sub.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])}</small></button>`).join('') + '<div class="addr-note">Address suggestions · OpenStreetMap</div>';
-    const r = el.getBoundingClientRect(); pop.style.left = Math.round(r.left) + 'px'; pop.style.width = Math.max(280, Math.round(r.width)) + 'px';
+    const r = el.getBoundingClientRect(), vw = document.documentElement.clientWidth || innerWidth, w = Math.min(Math.max(280, Math.round(r.width)), vw - 32);
+    pop.style.left = Math.max(16, Math.min(Math.round(r.left), vw - 16 - w)) + 'px'; pop.style.width = w + 'px';
     const below = innerHeight - r.bottom > 240; pop.style.top = below ? Math.round(r.bottom + 4) + 'px' : ''; pop.style.bottom = below ? '' : Math.round(innerHeight - r.top + 4) + 'px';
     pop.addEventListener('mousedown', e => e.preventDefault());
     pop.addEventListener('click', e => { const b = e.target.closest('[data-k]'); if (b) pick(+b.dataset.k); });
@@ -49,7 +50,7 @@
     const btns = [...pop.querySelectorAll('[data-k]')];
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); on = (on + (e.key === 'ArrowDown' ? 1 : -1) + btns.length) % btns.length; btns.forEach((b, k) => b.classList.toggle('on', k === on)); }
     else if (e.key === 'Enter' && on >= 0) { e.preventDefault(); e.stopPropagation(); pick(on); }
-    else if (e.key === 'Escape') { close(); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } // first Esc only closes the list (not the drawer, not the edit)
   }, true);
   document.addEventListener('focusout', e => { if (e.target === field) setTimeout(close, 150); });
   addEventListener('scroll', () => close(), true); addEventListener('resize', close);

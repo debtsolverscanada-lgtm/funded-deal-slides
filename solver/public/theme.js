@@ -10,7 +10,7 @@
     ['maroon', 'Maroon', '#4a1020'], ['blue', 'Blue', '#102a5c'], ['beige', 'Beige', '#efe3cf'],
   ];
   const get = () => { try { const t = localStorage.getItem('ks-theme'); return THEMES.some(x => x[0] === t) ? t : 'dark'; } catch (e) { return 'dark'; } };
-  const KEEP = '.home-hero, video, img, picture, canvas#coins, .pet, .penny, .penny-desk, .fx-avatar img, .mx-confetti, iframe, #newlead, .qr-box';
+  const KEEP = '.home-hero, video, img, picture, canvas#coins, .pet, .penny, .penny-desk, .fx-avatar img, .mx-confetti, iframe, #newlead, .qr-box, .emo, .chip[style*="--c"], .pill[style*="--c"]';
   const css = `
   html[data-theme="light"], html[data-theme="beige"] { filter: invert(1) hue-rotate(180deg); }
   html[data-theme="light"] :is(${KEEP}):not(.home-hero *):not(.penny-desk *):not(#newlead *):not(.qr-box *), html[data-theme="beige"] :is(${KEEP}):not(.home-hero *):not(.penny-desk *):not(#newlead *):not(.qr-box *) { filter: invert(1) hue-rotate(180deg); }
@@ -38,17 +38,30 @@
   }
   apply(get());
 
+  // the swatches sit under the page-wide invert / screen tint like everything else, so each one is painted with the colour
+  // that comes out as its real colour after them (a colour darker than the tint cannot come out darker; it stays the tint)
+  const TINT = { grey: '#34353a', maroon: '#3d0c19', blue: '#0b1d44', beige: '#302410' };
+  const rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255);
+  const flip = ([r, g, b]) => { r = 1 - r; g = 1 - g; b = 1 - b; return [-0.574 * r + 1.43 * g + 0.144 * b, 0.426 * r + 0.43 * g + 0.144 * b, 0.426 * r + 1.43 * g - 0.856 * b]; }; // invert(1) hue-rotate(180deg)
+  function swatch(c) {
+    const t = get(); let s = rgb(c);
+    if (t === 'light' || t === 'beige') s = flip(s);
+    if (TINT[t]) { const o = rgb(TINT[t]); s = s.map((v, i) => 1 - (1 - v) / (1 - o[i])); }
+    return 'rgb(' + s.map(v => Math.round(Math.max(0, Math.min(1, v)) * 255)).join(',') + ')';
+  }
+
   // a "Theme" row with six swatches wherever the app has a settings slot (the Profile sheet)
   function addPicker(root) {
     root.querySelectorAll('[data-slot="settings"]').forEach(slot => { if (!slot.hidden && !slot.querySelector('.th-row')) addTo(slot); });
   }
   function addTo(slot) {
     const row = document.createElement('div'); row.className = 'th-row';
-    row.innerHTML = '<b>Theme</b><div class="th-swatches" role="group" aria-label="Theme colour">' + THEMES.map(([k, l, c]) => `<button type="button" class="th-sw" data-theme-pick="${k}" aria-pressed="${get() === k}"><i style="background:${c}"></i><span>${l}</span></button>`).join('') + '</div>';
+    row.innerHTML = '<b>Theme</b><div class="th-swatches" role="group" aria-label="Theme colour">' + THEMES.map(([k, l, c]) => `<button type="button" class="th-sw" data-theme-pick="${k}" aria-pressed="${get() === k}"><i data-c="${c}" style="background:${swatch(c)}"></i><span>${l}</span></button>`).join('') + '</div>';
     row.addEventListener('click', e => {
       const b = e.target.closest('[data-theme-pick]'); if (!b) return; e.stopPropagation();
       const t = b.dataset.themePick; try { localStorage.setItem('ks-theme', t); } catch (x) {}
       apply(t); row.querySelectorAll('[data-theme-pick]').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.themePick === t)));
+      row.querySelectorAll('.th-sw i[data-c]').forEach(i => { i.style.background = swatch(i.dataset.c); });
     });
     slot.prepend(row);
   }

@@ -84,7 +84,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
   }
   const YES = new Set(['true', '1', 'yes', 'y', 'x', '✓', '✔', '☑', 'checked', 'on', 'done']);
   // Accepts values keyed by column id OR title; status by label name or id.
-  // opts.lenient (spreadsheet import): an unknown status label leaves that cell empty and is reported in `warnings`, the row stays.
+  // opts.lenient (spreadsheet import): an unknown status label, a bad number or a bad date leaves that cell empty and is reported in `warnings`, the row stays.
   function toValues(b, input, errors, opts = {}) {
     const out = {};
     for (const [k, raw] of Object.entries(input || {})) {
@@ -98,8 +98,8 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
         if (!l) { const msg = `“${v}” isn’t a label in ${c.title}.`; if (opts.lenient && opts.warnings) { opts.warnings.push({ col: c.id, title: c.title, value: String(v), msg }); continue; } errors.push(msg); continue; }
         v = l.id;
       }
-      else if (c.type === 'number') { v = typeof v === 'number' ? v : parseNum(v); if (!Number.isFinite(v)) { errors.push(`${c.title} needs a number.`); continue; } }
-      else if (c.type === 'date') { const d = parseDay(v); if (!d) { errors.push(`${c.title} needs a date like 2026-11-20.`); continue; } v = d; }
+      else if (c.type === 'number') { const n = typeof v === 'number' ? v : parseNum(v); if (!Number.isFinite(n)) { const msg = `${c.title} needs a number.`; if (opts.lenient && opts.warnings) { opts.warnings.push({ col: c.id, title: c.title, value: String(v), msg, why: 'isn’t a number' }); continue; } errors.push(msg); continue; } v = n; }
+      else if (c.type === 'date') { const d = parseDay(v); if (!d) { const msg = `${c.title} needs a date like 2026-11-20.`; if (opts.lenient && opts.warnings) { opts.warnings.push({ col: c.id, title: c.title, value: String(v), msg, why: 'isn’t a date' }); continue; } errors.push(msg); continue; } v = d; }
       else if (c.type === 'checkbox') v = v === true || v === 1 || YES.has(String(v).trim().toLowerCase());
       else if (c.type === 'file' || c.source === 'file') { v = Array.isArray(v) ? v.filter(f => f && f.url).map(f => ({ name: String(f.name || f.url), url: String(f.url) })) : String(v); if (Array.isArray(v) && v.some(f => !netguard.urlOk(f.url))) { errors.push(`${c.title}: files must be https:// links.`); continue; } }
       else if (c.type === 'link' && netguard.badLink(null, { values: { l: String(v) } }, ['l'])) { errors.push(`${c.title} needs an https:// link.`); continue; }
@@ -153,7 +153,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     const rules = (b.automations || []).filter(r => r.on !== false && r.trigger && (
       (ev.type === 'created' && r.trigger === 'created' && (!r.group || r.group === ev.group)) ||
       (ev.type === 'moved_group' && r.trigger === 'moved_group' && (!r.group || r.group === ev.group || (r.group === '__top__' && (b.groups[0] || {}).id === ev.group))) ||
-      (ev.type === 'value' && (r.trigger === 'status' || r.trigger === 'column') && r.col === ev.col && (r.value == null || r.value === '' || String(r.value) === String(ev.value))))
+      (ev.type === 'value' && (r.trigger === 'status' || r.trigger === 'column') && r.col === ev.col && (r.value == null || r.value === '' || (typeof r.value === 'boolean' ? r.value === !!(ev.value && ev.value !== 'false') : String(r.value) === String(ev.value)))))
     ).filter(r => (r.conditions || []).every(c => condOk(b, item, c)));
     if (!rules.length) return;
     const today = new Intl.DateTimeFormat('en-CA', { timeZone: process.env.KS_TIMEZONE || 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()), log = [];
@@ -181,7 +181,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
         else if (a.type === 'move_board' || a.type === 'copy_to_board' || a.type === 'duplicate') { const what = a.type === 'move_board' ? 'moving it to another board' : a.type === 'copy_to_board' ? 'copying it to another board' : 'duplicating it'; skipped.push(guest ? `skipped: ${what} (${actorName} is a guest)` : `skipped: ${what} only runs for changes made in the app, not through ${actorName}`); }
         else skipped.push(`skipped: ${a.label || String(a.type || 'this action').replace(/_/g, ' ')} isn’t run in Solver.ca`);
       }
-      log.push({ at: now(), by: 'automation', text: `${name} ran (via ${actorName})` });
+      if (did.length || !skipped.length) log.push({ at: now(), by: 'automation', text: `${name} ran (via ${actorName})` }); // every action skipped: only the "skipped" lines, not a contradictory "ran"
       skipped.forEach(s => log.push({ at: now(), by: 'automation', text: `${name} ${s}` }));
       // a rule that only sends to a connected tool gets its line in the run log from the send itself
       const hookOnly = !did.length && !skipped.length && (r.actions || []).some(a => a.type === 'webhook');
@@ -213,6 +213,8 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
   const outHooks = () => db.prepare("SELECT * FROM hooks WHERE kind = 'out' AND active = 1").all();
   const setHookResult = db.prepare('UPDATE hooks SET last_at = ?, last_status = ?, last_error = ? WHERE id = ?');
   async function deliver(h, payload, attempt = 1) {
+    // a retry: the webhook may have been deleted or turned off since the first try
+    if (attempt > 1) { h = db.prepare("SELECT * FROM hooks WHERE id = ? AND kind = 'out' AND active = 1").get(h.id); if (!h) return 0; }
     const body = JSON.stringify(payload);
     const sig = 'sha256=' + crypto.createHmac('sha256', h.secret).update(body).digest('hex');
     try {
@@ -282,11 +284,11 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     broadcast({ op: 'set', col: `boards/${bid}/items`, id: iid, data });
     itemChanged(path, before, data, actor.id);
     if (!opts.quiet) buzz(bid, iid, before, data, actor.id);
-    if (!before && hooks.newItem) { try { hooks.newItem(bid, iid, data); } catch (e) { /* banner only */ } }
+    if (!before && !opts.quiet && hooks.newItem) { try { hooks.newItem(bid, iid, data); } catch (e) { /* banner only */ } }
     if (hooks.itemSaved) { try { hooks.itemSaved(bid, iid, before, data); } catch (e) { /* sequences only */ } }
     try { itemNotifications(path, before, data, actor); } catch (e) { console.error('notifications:', e.message); }
   }
-  // opts.quiet: no pet heads-up per item (used by spreadsheet imports, which can add thousands of rows)
+  // opts.quiet: no pet heads-up and no NEW LEAD banner per item (used by spreadsheet imports, which can add thousands of rows)
   // Columns the writer may not set: API keys and lead links get the board's locks, people their own; forms (made by an admin) none.
   const lockedFor = (b, actor) => { const id = String((actor && actor.id) || ''); if (id.startsWith('form:')) return new Set(); return lockedCols(id.startsWith('key:') || id.startsWith('link:') || !actor || !actor.role ? null : actor, b); };
   function createItem(b, body, actor, opts = {}) {
@@ -299,9 +301,9 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     const iid = rid('i'); const item = { name, group: grp, pos: Date.now(), values, updates: [], subitems: [], createdAt: now(),
       activity: [{ at: now(), by: actor.id, text: `Created by ${actor.name}` }] };
     // a cell the import couldn't fill is flagged on the item itself
-    for (const w of warnings) item.activity.unshift({ at: now(), by: actor.id, text: `Import: ${w.title} left empty, “${w.value.slice(0, 80)}” isn’t one of its labels` });
+    for (const w of warnings) item.activity.unshift({ at: now(), by: actor.id, text: `Import: ${w.title} left empty, “${w.value.slice(0, 80)}” ${w.why || 'isn’t one of its labels'}` });
     // and the value itself is kept whole, as a comment on the item, so nothing in the sheet is lost
-    if (warnings.length) item.updates.push({ at: now(), by: '', byName: actor.name, text: ('Import: these values weren’t one of their column’s labels, so the cells were left empty:\n' + warnings.map(w => `${w.title}: ${w.value}`).join('\n')).slice(0, 20000) });    if (body.update) item.updates.push({ at: now(), by: '', byName: actor.name, text: String(body.update).slice(0, 4000) });
+    if (warnings.length) item.updates.push({ at: now(), by: '', byName: actor.name, text: ('Import: these values didn’t fit their column (not one of its labels, not a number or not a date), so the cells were left empty:\n' + warnings.map(w => `${w.title}: ${w.value}`).join('\n')).slice(0, 20000) });    if (body.update) item.updates.push({ at: now(), by: '', byName: actor.name, text: String(body.update).slice(0, 4000) });
     const notes = [];
     runRules(b, item, { type: 'created', group: grp }, actor, notes, iid);
     saveItem(b.id, iid, item, actor, opts);
@@ -343,7 +345,9 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
       const actor = { id: 'link:' + h.id, name: 'lead link “' + h.name + '”' };
       if (h.dedupe) {
         const col = (b.columns || []).find(c => c.id === h.dedupe); const v = col && known[col.id];
-        if (v) { const norm = s => String(s).replace(/\D/g, '').slice(-10) || String(s).toLowerCase();
+        // only real numbers are compared: a placeholder like "N/A", "none" or "-" has no digits and never makes a lead a duplicate
+        const norm = s => String(s).replace(/\D/g, '').slice(-10);
+        if (v && norm(v).length >= 7) {
           for (const r of q.docsInCol.all(`boards/${b.id}/items`)) { const d = JSON.parse(r.data); if (norm((d.values || {})[col.id] || '') === norm(v)) { setHookResult.run(now(), 'duplicate', null, h.id); return send(res, 200, { ok: true, duplicate: true, id: r.id }); } } }
       }
       // a group sent with the lead must exist; otherwise the link's own group (then the first group) is used, so no lead is lost
@@ -400,6 +404,8 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     if (!iid) {
       if (method === 'GET') {
         const g = url.searchParams.get('group'), since = url.searchParams.get('updated_since'), limit = Math.min(500, Number(url.searchParams.get('limit') || 100)), offset = Number(url.searchParams.get('offset') || 0);
+        if (!Number.isInteger(limit) || limit < 1) throw new HttpError(400, '?limit= must be a whole number from 1 to 500.');
+        if (!Number.isInteger(offset) || offset < 0) throw new HttpError(400, '?offset= must be a whole number, 0 or more.');
         const gid = g ? groupId(b, g) : null;
         let rows = db.prepare('SELECT id, data, updated_at FROM docs WHERE col = ? ORDER BY updated_at DESC').all(`boards/${b.id}/items`);
         if (since) rows = rows.filter(r => r.updated_at > since);

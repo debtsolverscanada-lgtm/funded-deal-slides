@@ -5,15 +5,17 @@
   if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
   const standalone = () => matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: window-controls-overlay)').matches || navigator.standalone === true;
   const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  let prompt = null;
-  addEventListener('beforeinstallprompt', e => { e.preventDefault(); prompt = e; addButtons(); });
-  addEventListener('appinstalled', () => { prompt = null; document.querySelectorAll('[data-install]').forEach(b => b.remove()); toast('Solver.ca is installed. Open it from your apps.'); });
+  const android = /android/i.test(navigator.userAgent);
+  let prompt = null, installed = false;
+  addEventListener('beforeinstallprompt', e => { e.preventDefault(); prompt = e; installed = false; addButtons(); });
+  addEventListener('appinstalled', () => { prompt = null; installed = true; document.querySelectorAll('[data-install]').forEach(b => b.remove()); toast('Solver.ca is installed. Open it from your apps.'); });
   function toast(text, ms = 6000) {
     const box = document.querySelector('.toasts') || document.body;
     const t = document.createElement('div'); t.className = 'toast'; t.setAttribute('role', 'status'); t.textContent = text; box.appendChild(t); setTimeout(() => t.remove(), ms);
   }
   function howTo() {
     if (ios) return toast('On iPhone or iPad, in Safari: tap the Share button, or the ≡ menu in the address bar and then Share. Choose "Add to Home Screen" (under "View More" if you don\'t see it), leave "Open as Web App" on, and tap Add.', 12000);
+    if (android) return toast('On Android, in Chrome: tap the ⋮ menu at the top right and choose "Add to Home screen" or "Install app", then tap Install.', 10000);
     toast('In Chrome or Edge: click the install icon at the right of the address bar, or open the browser menu and choose "Install Solver.ca" (in Chrome: "Cast, save and share" > "Install page as app").', 10000);
   }
   async function install() {
@@ -21,7 +23,7 @@
     howTo();
   }
   function addButtons() {
-    if (standalone()) return;
+    if (standalone() || installed) return;
     // only the sidebar and the Profile sheet have the settings slot (Motion, Flair, Install app)
     for (const root of [document.getElementById('rail'), document.querySelector('#layer .modal')]) {
       if (!root || root.querySelector('[data-install]')) continue;

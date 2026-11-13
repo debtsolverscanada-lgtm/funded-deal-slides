@@ -51,6 +51,9 @@ html[data-flair-name="shimmer"] .whoami b { background: linear-gradient(90deg, #
 /* Penny the money pet */
 .pet { position: fixed; z-index: 30; left: calc(250px + max(16px, env(safe-area-inset-left, 0px))); bottom: calc(18px + env(safe-area-inset-bottom, 0px)); width: 74px; height: 86px; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; }
 html[data-flair-pet="off"] .pet { display: none; }
+html.pet-nodesk .pet { display: none; }
+html.pet-thru .pet { pointer-events: none; }
+html.pet-thru .pet .pet-news { pointer-events: auto; }
 .pet svg { width: 100%; height: 100%; overflow: visible; filter: drop-shadow(0 0 14px var(--neon-glow)); animation: pet-bob 3.2s ease-in-out infinite; transform-origin: 50% 90%; }
 @keyframes pet-bob { 50% { transform: translateY(-5px) rotate(-1.5deg); } }
 .pet.pet-jump svg { animation: pet-jump .9s cubic-bezier(.2,.9,.25,1.15) 2; }
@@ -91,6 +94,7 @@ html.mx-off .btn.primary::after, html.mx-off .bnav-plus::after, html.mx-off .her
 @keyframes pet-news-in { from { opacity: 0; transform: translateY(8px) scale(.92); } to { opacity: 1; transform: none; } }
 @keyframes pet-news-out { to { opacity: 0; transform: translateY(6px) scale(.96); } }
 @media (max-width: 780px) { .pet-news { left: auto; right: 0; } .pet-news::after { left: auto; right: 22px; } }
+@media (max-width: 780px), (pointer: coarse) { .pet-news { padding-right: 40px; min-height: 44px; } .pet-news .pn-x { top: 0; right: 0; min-width: 44px; min-height: 44px; font-size: 18px; } }
 /* phones: Penny sits at the right edge, so her short sayings open to the left and wrap instead of running off screen */
 @media (max-width: 780px) {
   .pet-bubble { left: auto; right: 0; transform: none; white-space: normal; width: max-content; max-width: min(260px, calc(100vw - 32px)); text-align: left; animation-name: pet-say-m; }

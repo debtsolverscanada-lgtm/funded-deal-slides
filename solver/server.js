@@ -276,7 +276,7 @@ function broadcast(evt) {
   // evt.prevAccess (not sent): the board's access before this change, so only people who just lost it are told it's gone
   const prevAccess = evt.prevAccess; if ('prevAccess' in evt) { evt = { ...evt }; delete evt.prevAccess; }
   const line = `data: ${JSON.stringify(evt)}\n\n`;
-  if (evt.op === 'notify') { for (const [res, u] of clients) if (u.id === evt.user) sseWrite(res, line); return; }
+  if (evt.op === 'notify' || evt.op === 'notifs-read') { for (const [res, u] of clients) if (u.id === evt.user) sseWrite(res, line); return; }
   if (evt.op === 'reload') { for (const res of clients.keys()) sseWrite(res, line); return; }
   const bid = evt.col === 'boards' ? evt.id : boardOfPath(evt.col);
   if (evt.col === 'boards') boardCache.delete(evt.id);
@@ -304,6 +304,17 @@ function refreshClients(userId) {
 function closeStreams(match) { for (const [res, u] of [...clients]) if (match(u)) { clients.delete(res); try { res.end(); } catch (e) {} } }
 setInterval(() => { for (const [res, u] of [...clients]) { if (u.token && !q.session.get(u.token)) { clients.delete(res); try { res.end(); } catch (e) {} continue; } sseWrite(res, ': ping\n\n'); } }, 25000).unref();
 
+// A lead that was ever in a Junk/Unqualified group keeps a wasJunk mark when it's moved out (by hand or from Monday),
+// so email.js never messages it, even when nothing in its activity says so.
+function markWasJunk(bid, before, after) {
+  try {
+    if (!before || !after || typeof after !== 'object') return;
+    if (before.wasJunk) { after.wasJunk = true; return; }
+    if (!before.group || before.group === after.group) return;
+    const r = q.doc.get('boards/' + bid); const g = r && (JSON.parse(r.data).groups || []).find(x => x.id === before.group);
+    if (g && /junk|unqualified/i.test(String(g.name || ''))) after.wasJunk = true;
+  } catch (e) { /* never breaks a save */ }
+}
 // ---------- Penny's heads-ups ("buzz"): small, friendly updates shown by the pet ----------
 // Sent like other live updates, so private boards only reach people who can see them. Nothing is stored or sent outside.
 function buzz(bid, iid, before, after, by, extra) {
@@ -590,7 +601,7 @@ const ext = require('./ext.js')({ db, q, now, broadcast, HttpError, readBody, se
 module.exports.integ = integ;
 // ---- history, undo, recycle bin, search, templates, public forms, connected columns, time tracking (features.js) ----
 const features = require('./features.js')({ db, q, now, broadcast, HttpError, readBody, send, canSee, mustSee, boardInfo, boardCache, itemVisible, restricted, lockedCols, lockError,
-  canWrite, integ, ext, cleanAccess, itemNotifications, publicDir: PUBLIC_DIR, clearSummary: () => summaryCache.clear(), startIndex: require.main === module, clientIp,
+  canWrite, integ, ext, cleanAccess, workspaceAccess, itemNotifications, publicDir: PUBLIC_DIR, clearSummary: () => summaryCache.clear(), startIndex: require.main === module, clientIp,
   formulaText: (b, c, item) => { const r = formulaResult(b, item, c); return r.error ? '' : KSFormula.format(r.value); } });
 module.exports.features = features;
 // ---- a board's items as sent to everyone who sees all of them: built and gzipped once, kept until the next write ----
@@ -645,7 +656,7 @@ async function api(req, res, url) {
       loginFailed(ipKey, acctKey);
       throw new HttpError(401, 'That email and password don’t match.');
     }
-    loginFails.delete(ipKey); loginFails.delete(acctKey);
+    loginFails.delete(acctKey); // the address count stays: signing in to your own account mustn't reset guessing at others
     // two-factor on: the password alone doesn't sign in; the next step asks for a code
     if (u.totp_on) return send(res, 200, { twofa: true, ticket: newTicket(u.id, 'pw') });
     try { knownAddr.add.run(em, ip, now()); } catch (e) {} // a full sign-in: this address is now known for the account
@@ -753,6 +764,8 @@ async function api(req, res, url) {
     if (method === 'PUT' || method === 'PATCH') {
       const b = await readBody(req), cur = secSettings();
       const v = { require2fa: typeof b.require2fa === 'boolean' ? b.require2fa : cur.require2fa, googleCounts2fa: typeof b.googleCounts2fa === 'boolean' ? b.googleCounts2fa : cur.googleCounts2fa };
+      // don't let the admin lock themselves out: the setting would send them straight to setup with no way back
+      if (v.require2fa && !q.userById.get(user.id).totp_on && !(user.method === 'google' && v.googleCounts2fa)) throw new HttpError(400, 'Set up two-factor for yourself first (your menu > Security), then turn this on.');
       q.upsertDoc.run('meta/security', 'meta', 'security', JSON.stringify(v), now(), user.id); secCache = { at: 0, v: null };
       console.log(`Sign-in settings changed by ${user.email}:`, JSON.stringify(v));
       return send(res, 200, v);
@@ -780,7 +793,10 @@ async function api(req, res, url) {
   }
   if (p === '/api/users' && method === 'POST') {
     if (user.role !== 'admin') throw new HttpError(403, 'Only admins can add people.');
-    const b = await readBody(req), made = createUser(b);
+    const b = await readBody(req);
+    if (!/^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[^\s@<>(),;:"]+$/.test(String(b.email || '').trim().toLowerCase())) throw new HttpError(400, 'That isn’t an email address.');
+    if (String(b.name || '').trim().length > 80) throw new HttpError(400, 'Keep the name to 80 characters or fewer.');
+    const made = createUser(b);
     if (made.role === 'guest' && Array.isArray(b.boards)) setGuestBoards(made.email, b.boards, user.id);
     return send(res, 201, made);
   }
@@ -869,7 +885,10 @@ async function api(req, res, url) {
   if (p === '/api/notifications/read' && method === 'POST') {
     const b = await readBody(req);
     if (b.all) nq.readAll.run(user.id); else for (const id of (Array.isArray(b.ids) ? b.ids : []).slice(0, 200)) nq.readOne.run(user.id, String(id));
-    return send(res, 200, { ok: true, unread: nq.unread.get(user.id).n });
+    const unread = nq.unread.get(user.id).n;
+    // the person's other open sessions (their phone) clear the same badge
+    broadcast({ op: 'notifs-read', user: user.id, all: !!b.all, ids: b.all ? [] : (Array.isArray(b.ids) ? b.ids : []).slice(0, 200).map(String), unread });
+    return send(res, 200, { ok: true, unread });
   }
   // The page's automations ("notify someone") ask for in-app notifications for named people. Unknown names are skipped.
   if (p === '/api/notify' && method === 'POST') {
@@ -960,8 +979,10 @@ async function api(req, res, url) {
   // ---- home summary for one workspace ----
   if (p === '/api/summary' && method === 'GET') {
     const ws = url.searchParams.get('ws') || 'main';
-    let hit = summaryCache.get(ws);
-    if (!hit || Date.now() - hit.at > 60000) { hit = { at: Date.now(), boards: buildSummary(ws) }; summaryCache.set(ws, hit); }
+    // a guest has no workspace picker: their home counts every board shared with them, whatever its workspace
+    const wkey = user.role === 'guest' ? '*' : ws;
+    let hit = summaryCache.get(wkey);
+    if (!hit || Date.now() - hit.at > 60000) { hit = { at: Date.now(), boards: buildSummary(wkey) }; summaryCache.set(wkey, hit); }
     // boards where this person only sees items assigned to them are counted for them alone
     const mine = hit.boards.filter(x => canSee(user, x.access)).map(x => {
       const info = boardInfo(x.id); if (!restricted(user, info)) return x;
@@ -989,7 +1010,7 @@ async function api(req, res, url) {
     const want = Array.isArray(body.columns) ? body.columns.map(String) : (url.searchParams.get('cols') ? url.searchParams.get('cols').split(',') : null);
     const cols = (want ? want.map(id => (b.columns || []).find(c => c.id === id)).filter(Boolean) : (b.columns || [])).filter(c => c.type !== 'button');
     const rows = [['Name', 'Group', ...cols.map(c => c.title)], ...items.map(it => [it.name || '', ((b.groups || []).find(g => g.id === it.group) || {}).name || '', ...cols.map(c => exportCell(b, c, it))])];
-    const day = new Date().toISOString().slice(0, 10), base = `${String(b.name || 'Board').replace(/[\\/:*?"<>|\r\n]+/g, ' ').trim() || 'Board'} ${day}`;
+    const day = new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()), base = `${String(b.name || 'Board').replace(/[\\/:*?"<>|\r\n]+/g, ' ').trim() || 'Board'} ${day}`;
     const out = format === 'xlsx' ? sheets.toXlsx(rows, b.name || 'Board') : Buffer.from(sheets.toCsv(rows), 'utf8');
     res.writeHead(200, { 'Content-Type': format === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv; charset=utf-8',
       'Content-Length': out.length, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'X-Row-Count': String(items.length),
@@ -1006,7 +1027,7 @@ async function api(req, res, url) {
     let name = 'file'; try { name = decodeURIComponent(String(req.headers['x-filename'] || 'file')); } catch (e) {}
     const buf = await readRaw(req, 10 * 1024 * 1024);
     let table;
-    try { table = /\.xlsx$/i.test(name) || (buf[0] === 0x50 && buf[1] === 0x4b) ? sheets.parseXlsx(buf) : sheets.parseCsv(buf.toString('utf8')); }
+    try { table = /\.xlsx$/i.test(name) || (buf[0] === 0x50 && buf[1] === 0x4b) ? sheets.parseXlsx(buf) : sheets.parseCsv(csvText(buf)); }
     catch (e) { throw new HttpError(400, e.message || 'That file couldn’t be read. Save it as CSV and try again.'); }
     if (table.length < 2) throw new HttpError(400, 'The file needs a header row and at least one row of data.');
     if (table.length > 5001) throw new HttpError(400, 'Import up to 5,000 rows at a time.');
@@ -1100,18 +1121,31 @@ async function api(req, res, url) {
     if (method === 'PUT' || method === 'PATCH') {
       const body = await readBody(req);
       let data = body;
+      if (isItem && body && typeof body.name === 'string' && body.name.length > 500) body.name = body.name.slice(0, 500); // item names are capped, like subitem names
       if (method === 'PUT') { delete body.$append; delete body.$remove; delete body.$set; } // list operations only work on PATCH
       // Only admins decide who can see a board and who can change which columns.
       if (isBoard && user.role !== 'admin') {
         // where a board comes from (the Monday copy switch, which Monday board, which workspace) is admin-only too
         for (const k of ['access', 'perms', 'source', 'mondayId', 'workspace']) {
           const was = before ? before[k] : undefined;
+          if (k === 'workspace' && method === 'PUT' && !before && body.workspace && typeof body.workspace === 'object') { // a new board stays in the workspace it was made in
+            data.workspace = { id: String(body.workspace.id || 'main').slice(0, 60), name: String(body.workspace.name || 'Main workspace').slice(0, 120) }; continue;
+          }
           if (method === 'PATCH' && k in body && JSON.stringify(body[k]) !== JSON.stringify(was)) throw new HttpError(403, k === 'access' ? 'Only admins can change who sees a board.' : k === 'perms' ? 'Only admins can change a board’s permissions.' : 'Only admins can change where a board is copied from.');
           delete body[k];
           if (method === 'PUT' && was !== undefined) data[k] = was;
         }
+        // a shared board's name is the admin's (or whoever made it) to change, like who sees it
+        if (before && before.createdBy !== user.id && typeof body.name === 'string' && body.name !== before.name) {
+          if (method === 'PATCH') throw new HttpError(403, 'Only an admin or the person who made this board can rename it.');
+          data.name = before.name;
+        }
       }
+      if (isBoard && !before && method === 'PUT') data.createdBy = user.id; // who made it, so they can rename it
+      else if (isBoard && method === 'PUT' && before) { if (before.createdBy) data.createdBy = before.createdBy; else delete data.createdBy; }
+      else if (isBoard && method === 'PATCH') delete body.createdBy;
       if (isBoard && user.role === 'admin' && data.access) data.access = cleanAccess(data.access, method === 'PATCH' && before ? before.access : null);
+      if (isBoard && method === 'PUT' && !before && !data.access) { const wa = workspaceAccess(user, data.workspace); if (wa) data.access = wa; }
       const newPerms = isBoard && user.role === 'admin' && body.perms && typeof body.perms === 'object' ? body.perms : null;
       if (method === 'PATCH') {
         if (!prev) throw new HttpError(404, 'That record no longer exists.');
@@ -1125,6 +1159,8 @@ async function api(req, res, url) {
           const autoPost = u => u && typeof u === 'object' && u.by === 'automation' && user.role !== 'guest';
           if (Array.isArray(add.updates)) add.updates = add.updates.map(u => autoPost(u) ? { at: now(), by: 'automation', byName: 'Automation', text: String(u.text || '').slice(0, 4000) }
             : ({ ...stamp(u), replies: Array.isArray(u && u.replies) ? u.replies.map(stamp) : u && u.replies }));
+          // every new update gets an id, so the Monday write-back can stamp the Monday id on it (no duplicate on the next copy)
+          if (Array.isArray(add.updates)) add.updates = add.updates.map(u => u && typeof u === 'object' && !u.id && !u.mid ? { ...u, id: newId('u') } : u);
           if (Array.isArray(add.activity)) add.activity = add.activity.map(a2 => a2 && a2.by === 'automation' && user.role !== 'guest' ? { ...a2, at: now() } : stamp(a2));
         }
         const rem = isItem && body.$remove && typeof body.$remove === 'object' ? body.$remove : null; delete body.$remove;
@@ -1160,6 +1196,7 @@ async function api(req, res, url) {
           else for (const k of Object.keys(data.values || {})) if (locked.has(baseCol(k)) && data.values[k] !== '' && data.values[k] != null) { delete data.values[k]; if (!stripped.includes(baseCol(k))) stripped.push(baseCol(k)); }
         }
       }
+      if (isItem) { const m = /^boards\/([^/]+)\/items\//.exec(dp); if (m) markWasJunk(m[1], before, data); }
       const json = JSON.stringify(data);
       if (json.length > 1024 * 1024) throw new HttpError(413, 'That record is too large.');
       q.upsertDoc.run(dp, col, id, json, now(), user.id);
@@ -1192,10 +1229,11 @@ const userSummary = new Map(); // 'userId|boardId' -> { at, v }: boards where so
 class SummaryCache extends Map { clear() { super.clear(); userSummary.clear(); } }
 const summaryCache = new SummaryCache();
 function boardStats(id, b, keep) {
-  const day = d => d.toISOString().slice(0, 10);
+  const day = d => new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d); // the workspace's date, not UTC's (evenings would count today's follow-ups as overdue)
   const today = day(new Date()), weekAgo = Date.now() - 7 * 864e5, inWeek = day(new Date(Date.now() + 7 * 864e5));
   const sparkStart = new Date(Date.now() - 13 * 864e5); sparkStart.setUTCHours(0, 0, 0, 0);
   const followCols = (b.columns || []).filter(c => c.type === 'date' && /follow|next|callback|due/i.test(c.title)).map(c => c.id);
+  const junkGroups = new Set((b.groups || []).filter(g => /junk|unqualif|signed|funded|closed|\blost\b|dead/i.test(g.name || '')).map(g => g.id)); // dead or already-won leads aren't follow-ups
   const x = { id, name: b.name, folder: b.folder || '', access: b.access || null, count: 0, newWeek: 0, spark: Array(14).fill(0), overdue: 0, dueToday: 0, upcoming: 0 };
   for (const it of q.docsInCol.all(`boards/${id}/items`)) {
     let d; try { d = JSON.parse(it.data); } catch (e) { continue; }
@@ -1204,7 +1242,7 @@ function boardStats(id, b, keep) {
     const c = d.createdAt ? Date.parse(d.createdAt) : NaN;
     if (c >= weekAgo) x.newWeek++;
     if (c >= sparkStart.getTime()) { const k = Math.floor((c - sparkStart.getTime()) / 864e5); if (k >= 0 && k < 14) x.spark[k]++; }
-    if (junkGroups.has(d.group)) continue; // Junk/Unqualified leads are never followed up
+    if (junkGroups.has(d.group)) continue; // Junk/Unqualified, Signed and other closed leads are never followed up
     for (const fc of followCols) {
       const v = (d.values || {})[fc]; if (!v) continue;
       if (v < today) x.overdue++; else if (v === today) x.dueToday++; else if (v <= inWeek) x.upcoming++;
@@ -1217,7 +1255,7 @@ function buildSummary(ws) {
   const boards = [];
   for (const r of q.docsInCol.all('boards')) {
     let b; try { b = JSON.parse(r.data); } catch (e) { continue; }
-    const w = (b.workspace && b.workspace.id) || 'main'; if (w !== ws) continue;
+    const w = (b.workspace && b.workspace.id) || 'main'; if (ws !== '*' && w !== ws) continue;
     boards.push(boardStats(r.id, b));
   }
   return boards;
@@ -1246,6 +1284,21 @@ function setGuestBoards(email, boardIds, by) {
 function cleanAccess(a) {
   const members = [...new Set((Array.isArray(a.members) ? a.members : []).map(e => String(e || '').trim().toLowerCase()).filter(e => /^[^@\s]+@[^@\s]+$/.test(e)))].sort();
   return { private: !!a.private, members, ...(a.kind ? { kind: String(a.kind) } : {}) };
+}
+// A new board takes the visibility of the workspace it is made in: open if any board there (that its maker sees) is open,
+// otherwise private to the people on those boards plus its maker (never a guest). A workspace with no boards stays open.
+function workspaceAccess(user, ws) {
+  const wid = String((ws && ws.id) || 'main'); let open = false, any = false; const members = new Set();
+  for (const r of q.docsInCol.all('boards')) {
+    let d; try { d = JSON.parse(r.data); } catch (e) { continue; }
+    if (String((d.workspace && d.workspace.id) || 'main') !== wid || !canSee(user, d.access)) continue;
+    any = true; if (!d.access || !d.access.private) { open = true; break; }
+    for (const e of d.access.members || []) members.add(String(e).toLowerCase());
+  }
+  if (!any || open) return null;
+  const guests = new Set(db.prepare("SELECT email FROM users WHERE role = 'guest'").all().map(r => String(r.email).toLowerCase()));
+  if (user.role !== 'admin' && user.email) members.add(String(user.email).toLowerCase());
+  return cleanAccess({ private: true, members: [...members].filter(e => !guests.has(e)) });
 }
 // A member may not add (or change) an automation that sets a column locked for them: the rule would change it for them.
 const RULE_SETTERS = new Set(['set_status', 'set_value', 'set_date', 'clear', 'assign']);
@@ -1335,7 +1388,7 @@ KSFormula.setTimeZone(TIME_ZONE);
 function fileNames(v) { if (Array.isArray(v)) return v.filter(f => f && f.url).map(f => f.name || f.url).join(', '); return String(v || ''); }
 function refValue(b, item, id, depth) {
   if (id === 'name') return item.name || '';
-  const c = KSFormula.findCol(b.columns, id); if (!c) return ''; // by column id, or by title
+  const c = KSFormula.findCol(b.columns, id); if (!c) throw new Error('Unknown column ' + id); // by column id, or by title; a missing one is an error, not 0
   id = c.id;
   const v = (item.values || {})[id];
   switch (c.type) {
@@ -1397,10 +1450,19 @@ function appendToItem(data, add, rem, put = {}) {
   if (add.activity !== undefined) data.activity = [...objs(add.activity), ...(Array.isArray(data.activity) ? data.activity : [])].slice(0, 40);
 }
 const importUploads = new Map(); // token -> { uid, bid, rows, headers, exp }
+// A CSV's text: UTF-8 (with or without BOM, or UTF-16 with BOM); a file that isn't valid UTF-8 is what Excel on Windows saves
+// ("CSV (Comma delimited)"), so it is read as Windows-1252 and José stays José.
+function csvText(buf) {
+  if (buf[0] === 0xff && buf[1] === 0xfe) return new TextDecoder('utf-16le').decode(buf);
+  if (buf[0] === 0xfe && buf[1] === 0xff) return new TextDecoder('utf-16be').decode(buf);
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch (e) { return new TextDecoder('windows-1252').decode(buf); }
+}
 function readRaw(req, limit) {
   return new Promise((resolve, reject) => {
-    let size = 0; const chunks = [];
-    req.on('data', c => { size += c.length; if (size > limit) { reject(new HttpError(413, 'That file is too large (10 MB at most).')); req.destroy(); } else chunks.push(c); });
+    let size = 0, over = false; const chunks = [];
+    // too large: answer 413 right away but keep reading (and dropping) the rest, so the browser gets the message instead
+    // of a reset connection; a sender that keeps going far past the limit is cut off
+    req.on('data', c => { size += c.length; if (over) { if (size > limit * 4) req.destroy(); return; } if (size > limit) { over = true; chunks.length = 0; reject(new HttpError(413, 'That file is too large (10 MB at most).')); } else chunks.push(c); });
     req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
@@ -1485,7 +1547,7 @@ async function runMondayPull() {
     const itemPath = (bid, iid) => `boards/${bid}/items/${iid}`;
     const store = {
       getItem: (bid, iid) => { const r = q.doc.get(itemPath(bid, iid)); return r ? JSON.parse(r.data) : null; },
-      saveItem: (bid, iid, doc) => { const prev = q.doc.get(itemPath(bid, iid)); q.upsertDoc.run(itemPath(bid, iid), `boards/${bid}/items`, String(iid), JSON.stringify(doc), now(), 'monday-sync'); broadcast({ op: 'set', col: `boards/${bid}/items`, id: String(iid), data: doc }); buzz(bid, iid, prev ? JSON.parse(prev.data) : null, doc, 'monday'); if (!prev) ext.newleads.noteItem(bid, iid, doc); ext.sequences.onItem(bid, iid, prev ? JSON.parse(prev.data) : null, doc); },
+      saveItem: (bid, iid, doc) => { const prev = q.doc.get(itemPath(bid, iid)); if (prev) markWasJunk(bid, JSON.parse(prev.data), doc); q.upsertDoc.run(itemPath(bid, iid), `boards/${bid}/items`, String(iid), JSON.stringify(doc), now(), 'monday-sync'); broadcast({ op: 'set', col: `boards/${bid}/items`, id: String(iid), data: doc }); buzz(bid, iid, prev ? JSON.parse(prev.data) : null, doc, 'monday'); if (!prev) ext.newleads.noteItem(bid, iid, doc); ext.sequences.onItem(bid, iid, prev ? JSON.parse(prev.data) : null, doc); },
       removeItem: (bid, iid) => {
         const r = q.doc.get(itemPath(bid, iid)); if (!r) return false;
         let d = {}; try { d = JSON.parse(r.data); } catch (e) {}
@@ -1549,7 +1611,12 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith('/api/')) return await features.run(() => api(req, res, url), url);
     if (url.pathname === '/healthz') return send(res, 200, 'ok');
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Method not allowed');
-    if (url.pathname === '/login') return serveStatic(req, res, 'login.html');
+    if (url.pathname === '/login') {
+      // already signed in (and not owing two-factor setup): go to the app, not a second sign-in
+      const u = currentUser(req);
+      if (u && !u.needs2fa && !url.searchParams.has('setup')) { res.writeHead(302, { Location: '/' }); return res.end(); }
+      return serveStatic(req, res, 'login.html');
+    }
     if (url.pathname === '/developers') return serveStatic(req, res, 'developers.html');
     if (url.pathname === '/' ) {
       const u = currentUser(req);

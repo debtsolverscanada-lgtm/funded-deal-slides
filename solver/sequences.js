@@ -38,10 +38,12 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
       trigger: { type: ['created', 'status', 'group', 'manual'].includes(d.trigger && d.trigger.type) ? d.trigger.type : 'manual', col: s((d.trigger || {}).col || '').slice(0, 100), label: s((d.trigger || {}).label || '').slice(0, 120), group: s((d.trigger || {}).group || '').slice(0, 100), inGroup: s((d.trigger || {}).inGroup || '').slice(0, 100) },
       from: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s(d.from || '').trim()) ? s(d.from).trim().toLowerCase() : '',
       footer: d.footer !== false, stopOnReply: d.stopOnReply !== false,
-      steps: (Array.isArray(d.steps) ? d.steps : []).slice(0, 20).map(x => ({ waitDays: Math.max(0, Math.min(365, Number(x.waitDays) || 0)), waitHours: Math.max(0, Math.min(23, Number(x.waitHours) || 0)), subject: s(x.subject || '').replace(/[\r\n]+/g, ' ').slice(0, 300), body: s(x.body || '').replace(/\r\n/g, '\n').slice(0, 20000) })),
+      steps: (Array.isArray(d.steps) ? d.steps : []).slice(0, 20).map(x => { const h = Math.max(0, Math.floor(Number(x.waitDays) || 0)) * 24 + Math.max(0, Math.floor(Number(x.waitHours) || 0)); return { waitDays: Math.min(365, Math.floor(h / 24)), waitHours: Math.floor(h / 24) > 365 ? 0 : h % 24, subject: s(x.subject || '').replace(/[\r\n]+/g, ' ').slice(0, 300), body: s(x.body || '').replace(/\r\n/g, '\n').slice(0, 20000) }; }),
       source: d.source && typeof d.source === 'object' ? { monday: s(d.source.monday || '').slice(0, 100), kind: s(d.source.kind || '').slice(0, 40), board: s(d.source.board || '').slice(0, 40) } : null,
       note: s(d.note || '').slice(0, 500) };
     if (!out.name) throw new HttpError(400, 'Give the sequence a name.');
+    if (s(d.from || '').trim() && !out.from) throw new HttpError(400, '“Sent from” must be an email address (or leave it empty to use the board’s rep).');
+    if ((Array.isArray(d.steps) ? d.steps : []).some(x => Number(x && x.waitDays) < 0 || Number(x && x.waitHours) < 0)) throw new HttpError(400, 'Waits can’t be negative.');
     if (!out.boards.length) throw new HttpError(400, 'Pick at least one board.');
     if (!out.steps.length) throw new HttpError(400, 'Add at least one email.');
     out.steps.forEach((x, k) => { if (!x.subject.trim() || !x.body.trim()) throw new HttpError(400, `Email ${k + 1} needs a subject and a message.`); });
@@ -72,6 +74,8 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
 
   // ---------- enrolling ----------
   function enroll(seq, bid, iid, by) {
+    // a run that stopped before its first email for lack of a sender never reached the lead: it doesn't count as "been in" the sequence
+    db.prepare("DELETE FROM seq_enroll WHERE seq = ? AND board = ? AND item = ? AND status = 'stopped' AND step = 0 AND reason = 'no sending address for this board'").run(seq.id, bid, iid);
     if (db.prepare("SELECT 1 FROM seq_enroll WHERE seq = ? AND board = ? AND item = ?").get(seq.id, bid, iid)) return null; // never twice
     const id = rid('se_'), first = seq.steps[0];
     db.prepare('INSERT INTO seq_enroll (id, seq, board, item, step, next_at, status, started_at, by) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)')
@@ -109,26 +113,28 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
   async function tick() {
     if (busy || off()) return; busy = true;
     try {
-      const due = db.prepare("SELECT * FROM seq_enroll WHERE status = 'active' AND next_at <= ? ORDER BY next_at LIMIT 25").all(new Date().toISOString());
+      const due = db.prepare("SELECT * FROM seq_enroll WHERE status = 'active' AND next_at <= ? AND seq NOT IN (SELECT id FROM sequences WHERE active = 0) ORDER BY next_at LIMIT 25").all(new Date().toISOString());
       for (const e of due) {
         const seq = getSeq(e.seq); if (!seq) { stop(e.id, 'sequence deleted'); continue; }
         if (!seq.active) continue; // paused: keeps its place
         const b = boardDoc(e.board), item = itemDoc(e.board, e.item);
         if (!b || !item) { stop(e.id, 'lead deleted'); continue; }
         const why = mail.blockedReason(b, item); if (why) { stop(e.id, why.replace(/, so .*$/, '').replace(/\.$/, '')); continue; }
-        if (seq.stopOnReply && (item.updates || []).some(u => (u.by === 'email' || u.by === 'sms' || /^Incoming Email/i.test(String(u.text || ''))) && String(u.at || '') > e.started_at)) { stop(e.id, 'the lead replied'); continue; }
+        if (seq.stopOnReply && (item.updates || []).some(u => (u.by === 'email' || u.by === 'sms' || u.by === 'text' || /^Incoming Email/i.test(String(u.text || ''))) && String(u.at || '') > e.started_at)) { stop(e.id, 'the lead replied'); continue; }
         const prov = provOf(b, item);
         if (!okToSend(prov)) { db.prepare('UPDATE seq_enroll SET next_at = ? WHERE id = ?').run(new Date(Date.now() + 30 * 60e3).toISOString(), e.id); continue; }
         const st = seq.steps[e.step]; if (!st) { db.prepare("UPDATE seq_enroll SET status = 'done', next_at = NULL WHERE id = ?").run(e.id); continue; }
         const to = mail.leadEmails(b, item)[0]; if (!to) { stop(e.id, 'no email address'); continue; }
         const from = seq.from || mail.sendFromFor({ id: '-' }, e.board); if (!from) { stop(e.id, 'no sending address for this board'); continue; }
         const text = fill(st.body, b, item, from) + (seq.footer ? `\n\n--\n${company(b)}\nIf you’d rather not get these emails, reply UNSUBSCRIBE.` : '');
+        // move the lead past this step BEFORE sending, so a restart mid-send can't send the same email twice; put it back if the send fails
+        const nx = seq.steps[e.step + 1];
+        if (nx) db.prepare('UPDATE seq_enroll SET step = step + 1, next_at = ?, tries = 0 WHERE id = ?').run(new Date(Date.now() + Math.max(waitMs(nx), 60e3)).toISOString(), e.id);
+        else db.prepare("UPDATE seq_enroll SET step = step + 1, status = 'done', next_at = NULL WHERE id = ?").run(e.id);
         try {
           await mail.sendEmailNow({ user: { id: 'sequence', name: `“${seq.name}” step ${e.step + 1}`, email: '' }, from, bid: e.board, iid: e.item, to, subject: fill(st.subject, b, item, from), text });
-          const nx = seq.steps[e.step + 1];
-          if (nx) db.prepare('UPDATE seq_enroll SET step = step + 1, next_at = ?, tries = 0 WHERE id = ?').run(new Date(Date.now() + Math.max(waitMs(nx), 60e3)).toISOString(), e.id);
-          else db.prepare("UPDATE seq_enroll SET step = step + 1, status = 'done', next_at = NULL WHERE id = ?").run(e.id);
         } catch (err) {
+          if (!db.prepare("UPDATE seq_enroll SET step = ?, status = 'active', next_at = ? WHERE id = ? AND step = ? AND status IN ('active', 'done')").run(e.step, new Date(Date.now() + 20 * 60e3).toISOString(), e.id, e.step + 1).changes) continue; // stopped meanwhile
           const tries = e.tries + 1;
           if (tries >= 3) stop(e.id, 'email failed 3 times: ' + String(err.message).slice(0, 120));
           else db.prepare('UPDATE seq_enroll SET tries = ?, next_at = ? WHERE id = ?').run(tries, new Date(Date.now() + 20 * 60e3).toISOString(), e.id);
@@ -152,6 +158,8 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
       if (!isAdmin(user)) throw new HttpError(403, 'Only admins change sequences.');
       if (method === 'DELETE') { db.prepare('DELETE FROM sequences WHERE id = ?').run(m[1]); db.prepare("UPDATE seq_enroll SET status = 'stopped', reason = 'sequence deleted', next_at = NULL WHERE seq = ? AND status = 'active'").run(m[1]); return send(res, 200, { ok: true }), true; }
       const b = await readBody(req, 512 * 1024), d = clean(b), was = getSeq(m[1]);
+      const noSender = d.from ? [] : d.boards.filter(bid => !mail.boardFrom(bid));
+      if (noSender.length) throw new HttpError(400, `${noSender.map(bid => (boardDoc(bid) || {}).name || bid).join(', ')} ${noSender.length > 1 ? 'have' : 'has'} no rep with a sending address. Fill in “Sent from”, or untick ${noSender.length > 1 ? 'those boards' : 'that board'}.`);
       const active = b.active === undefined ? (was ? was.active : false) : !!b.active;
       db.prepare('INSERT INTO sequences (id, data, active, updated_at, updated_by) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data, active = excluded.active, updated_at = excluded.updated_at, updated_by = excluded.updated_by')
         .run(m[1], JSON.stringify(d), active ? 1 : 0, now(), user.id);
@@ -184,6 +192,7 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
       if (!s.boards.includes(bid)) throw new HttpError(400, 'That sequence isn’t set up for this board.');
       const why = mail.blockedReason(board, item); if (why) throw new HttpError(400, why);
       if (!mail.leadEmails(board, item).length) throw new HttpError(400, 'This lead has no email address.');
+      if (!s.from && !mail.sendFromFor({ id: '-' }, bid)) throw new HttpError(400, 'This board has no rep with a sending address, so that sequence can’t send here. An admin can fill in “Sent from” on the sequence.');
       const id = enroll(s, bid, iid, user.name || user.email); if (!id) throw new HttpError(400, 'This lead has already been in that sequence.');
       return send(res, 200, { ok: true, id, active: s.active }), true;
     }

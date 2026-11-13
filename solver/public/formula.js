@@ -195,7 +195,8 @@
     if (typeof v === 'boolean') return v ? 'true' : '';
     if (typeof v === 'number') {
       if (Number.isInteger(v)) return v.toLocaleString('en-CA');
-      return Math.abs(v) < 10 ? String(Math.round(v * 1000) / 1000) : v.toLocaleString('en-CA', { maximumFractionDigits: 2 });
+      if (Math.abs(v) < 0.005) return String(Math.round(v * 1000) / 1000); // keep a tiny non-zero result visible
+      return v.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); // consistent cents: -8.33, 1,776.70, 1,822.47
     }
     return String(v);
   }

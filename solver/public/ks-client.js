@@ -14,7 +14,7 @@
       if (data && data.code === 'twofa_setup') { location.href = '/login?setup=1'; throw { code: 'revoked', message: data.error }; }
       // 'locked': a column only admins (or listed people) can change. The rest keep their old meaning.
       const code = data && data.code === 'locked' ? 'locked' : r.status === 403 ? 'invalid_argument' : r.status === 413 ? 'quota_exceeded' : r.status === 400 ? 'invalid_argument' : 'unavailable';
-      throw { code, message: (data && data.error) || 'Request failed.' };
+      throw { code, status: r.status, message: (data && data.error) || 'Request failed.' };
     }
     return data;
   }
@@ -57,6 +57,7 @@
     es.onmessage = e => {
       let ev; try { ev = JSON.parse(e.data); } catch (x) { return; }
       if (ev.op === 'notify') { emit('notify', ev.n); return; }
+      if (ev.op === 'notifs-read') { emit('notifs-read', ev); return; } // read on another of this person's sessions
       if (ev.op === 'buzz') { emit('buzz', ev.ev); return; }
       if (ev.op === 'doc') { emit('doc', ev); return; } // a rich-text doc changed (editor.js)
       if (ev.op === 'reload') { cols.forEach((entry, path) => load(path, entry).catch(() => {})); return; }
@@ -149,7 +150,8 @@
     },
     updateUser: (id, body) => call('PATCH', '/api/users/' + encodeURIComponent(id), body).then(r => { team = null; return r; }),
     // Fetches a collection again from the server (e.g. after the server refused a change) and tells its listeners.
-    reload: path => { const e = cols.get(path); return e ? load(path, e) : Promise.resolve(); },
+    // If the server can't be reached, the last saved values held here are handed back instead, so an unsaved edit doesn't stay on screen.
+    reload: path => { const e = cols.get(path); return e ? load(path, e).catch(err => { notify(e); throw err; }) : Promise.resolve(); },
     // Downloads what the server sends back as a file (exports).
     async download(url, body, fallbackName) {
       let r;

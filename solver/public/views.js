@@ -75,7 +75,8 @@
     .vx-opts .vx-optrow { display:flex; flex-wrap:wrap; gap:8px; }
   }
   .vx-optrow { display:contents; }
-  .vx-note { white-space:nowrap; }
+  .vx-optrow .vx-note { white-space:nowrap; }
+  @media (max-width: 780px) { .main:not(.head-up) .head.compact:has(.vx-opts[open]) { max-height:none; } }
   /* desktop up to very wide screens: the view's options open as a panel under "View options", so the toolbar stays
      two rows (tabs and search, then filters and board buttons) on Timeline, Workload, Chart and Map */
   @media (min-width: 781px) and (max-width: 1699px) {
@@ -108,7 +109,7 @@
   .tl-grp { height:32px; align-items:center; }
   .tl-grp .tl-label { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; line-height:32px; font-weight:600; color:#fff; box-shadow:inset 3px 0 0 var(--gc); }
   .tl-grp .tl-track { height:32px; background:rgba(255,255,255,.02); }
-  .tl-bar { --c:#8a8f98; position:absolute; top:6px; height:22px; border-radius:7px; background:color-mix(in srgb, var(--c) 55%, #111); border:1px solid color-mix(in srgb, var(--c) 80%, #fff 0%); color:#fff; font-size:11.5px; line-height:20px; padding:0 8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; touch-action:pan-y; user-select:none; box-shadow:0 2px 10px rgba(0,0,0,.35); }
+  .tl-bar { --c:#8a8f98; position:absolute; top:6px; box-sizing:border-box; height:22px; border-radius:7px; background:color-mix(in srgb, var(--c) 55%, #111); border:1px solid color-mix(in srgb, var(--c) 80%, #fff 0%); color:#fff; font-size:11.5px; line-height:20px; padding:0 8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; touch-action:pan-y; user-select:none; box-shadow:0 2px 10px rgba(0,0,0,.35); }
   .tl-bar[data-edit="1"] { cursor:grab; touch-action:none; }
   .tl-bar.dragging { cursor:grabbing; outline:2px solid #fff; z-index:5; }
   .tl-h { position:absolute; top:0; bottom:0; width:8px; cursor:ew-resize; }
@@ -153,6 +154,8 @@
   .vx-map .clu.sel text { fill:#fff; }
   .vx-side { padding:12px; display:flex; flex-direction:column; gap:8px; max-height:calc(100vh - 250px); overflow:auto; }
   .vx-side h4 { margin:0; font-size:15px; font-weight:600; }
+  .vx-side .vx-note { white-space:normal; }
+  .vx-map .clu circle.hit { fill:transparent; stroke:none; }
   @media (max-width: 780px) { .vx-map { grid-template-columns:minmax(0, 1fr); } .vx-side { max-height:none; } .tl { max-height:none; } }
   /* files */
   .vx-files { display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:12px; }
@@ -163,6 +166,7 @@
   .vx-fmeta { padding:10px 12px 12px; display:flex; flex-direction:column; gap:4px; min-width:0; }
   .vx-fmeta b { font-weight:600; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .vx-fmeta .vx-note { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .vx-fmeta .vx-note + .vx-note { white-space:normal; }
   .vx-fact { display:flex; gap:6px; margin-top:6px; flex-wrap:wrap; }
   .vx-fact a, .vx-fact button { font-size:12px; padding:4px 10px; text-decoration:none; }
   /* dashboards */
@@ -174,6 +178,9 @@
   .vx-w.wide { grid-column:span 2; }
   @media (max-width: 760px) { .vx-w.wide { grid-column:auto; } }
   .vx-wh { display:flex; align-items:center; gap:6px; }
+  @media (pointer: coarse) { .vx-wh .icon-btn { min-height:40px; min-width:40px; font-size:14px; } }
+  @media (max-width: 760px) { .vx-wh { gap:8px; } .vx-wh .icon-btn { min-height:44px; min-width:44px; font-size:14px; } .vx-wh .vx-wmove { transform:rotate(90deg); } } /* widgets stack on a phone, so the arrows point up/down */
+  .vx-wh .icon-btn:disabled { opacity:.35; cursor:default; }
   .vx-wh h3 { margin:0; font-size:15px; font-weight:600; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .vx-big { font-family:var(--f-display); font-weight:300; font-size:46px; letter-spacing:-.035em; line-height:1; font-variant-numeric:tabular-nums; }
   .vx-batt { display:flex; height:16px; border-radius:99px; overflow:hidden; gap:2px; background:rgba(255,255,255,.05); }
@@ -207,7 +214,7 @@
       const c = by.col === '__created' ? null : findCol(b, by.col, ['date']); const d = c ? dn(v[c.id]) : by.col === '__created' ? dn(String(item.createdAt || '').slice(0, 10)) : null;
       if (d == null) return [];
       if (by.unit === 'week') { const w = weekStart(d); return [{ key: ds(w), label: short(w), order: w }]; }
-      const x = new Date(d * 864e5); return [{ key: ds(d).slice(0, 7), label: MON[x.getUTCMonth()] + ' ' + String(x.getUTCFullYear()).slice(2), order: x.getUTCFullYear() * 12 + x.getUTCMonth() }];
+      const x = new Date(d * 864e5); return [{ key: ds(d).slice(0, 7), label: MON[x.getUTCMonth()] + ' ' + x.getUTCFullYear(), order: x.getUTCFullYear() * 12 + x.getUTCMonth() }];
     }
     return [{ key: 'all', label: 'All' }];
   }
@@ -258,12 +265,13 @@
     const legend = stacked ? `<div class="vx-legend">${agg.stacks.map(s => `<span><i style="background:${esc(s.color)}"></i>${esc(trunc(s.label, 26))}</span>`).join('')}</div>` : '';
     if (kind === 'line' || timeAxis) {
       // columns or a line along the x axis (dates read left to right)
-      const H = opts.height || 240, pl = 44, pr = 10, pt = 16, pb = 30, iw = W - pl - pr, ih = H - pt - pb;
       const max = Math.max(...cats.map(c => c.value), 0), step = tick(max), top = Math.ceil(max / step) * step || 1;
+      // left padding fits the widest y-axis label (e.g. $1,500,000)
+      const H = opts.height || 240, pl = Math.max(44, Math.ceil(String(f(top)).length * 6.6) + 14), pr = 10, pt = 16, pb = 30, iw = W - pl - pr, ih = H - pt - pb;
       const y = v => pt + ih - (v / top) * ih, bw = iw / cats.length;
       let grid = ''; for (let v = 0; v <= top + 1e-9; v += step) grid += `<line class="grid" x1="${pl}" x2="${W - pr}" y1="${y(v)}" y2="${y(v)}"/><text x="${pl - 6}" y="${y(v) + 4}" text-anchor="end">${esc(f(v))}</text>`;
       const every = Math.max(1, Math.ceil(cats.length / Math.max(1, Math.floor(iw / 58))));
-      const xl = cats.map((c, i) => i % every ? '' : `<text x="${pl + bw * i + bw / 2}" y="${H - 10}" text-anchor="middle">${esc(trunc(c.label, 10))}</text>`).join('');
+      const xl = cats.map((c, i) => i % every ? '' : `<text x="${pl + bw * i + bw / 2}" y="${H - 10}" text-anchor="middle">${esc(trunc(c.label, Math.max(10, Math.floor(bw * every / 6.6) - 1)))}</text>`).join('');
       let marks = '';
       if (kind === 'line') {
         const pts = cats.map((c, i) => [pl + bw * i + bw / 2, y(c.value)]);
@@ -341,6 +349,7 @@
     if (A.S.canWrite && !v) h += `<button class="btn" data-act="save-view">Save as view</button>`;
     if (A.S.canWrite && v && v.type === t && dirty(t)) h += `<button class="btn primary" data-vx="update-view">Update view</button>`;
     if (h) h = `<details class="vx-opts" ${optsOpen || wideOpts() ? 'open' : ''}><summary class="btn">View options</summary><div class="vx-optrow">${h}</div></details>`;
+    if (h && optsOpen) requestAnimationFrame(fitOpts);
     return h;
   }
   let optsOpen = false;
@@ -349,7 +358,14 @@
   const panelMode = () => window.matchMedia('(min-width: 781px) and (max-width: 1699px)').matches;
   document.addEventListener('click', e => { const d = document.querySelector('.vx-opts[open]'); if (d && panelMode() && !d.contains(e.target)) { d.open = false; optsOpen = false; } }, true);
   document.addEventListener('keydown', e => { const d = document.querySelector('.vx-opts[open]'); if (e.key === 'Escape' && d && panelMode()) { d.open = false; optsOpen = false; e.stopPropagation(); } }, true);
-  document.addEventListener('toggle', e => { if (e.target.classList && e.target.classList.contains('vx-opts')) optsOpen = e.target.open; }, true);
+  document.addEventListener('toggle', e => { if (e.target.classList && e.target.classList.contains('vx-opts')) { optsOpen = e.target.open; fitOpts(); } }, true);
+  // the panel opens under its button; slide it left when it would run past the right edge of the window
+  function fitOpts() {
+    const r = document.querySelector('.vx-opts[open] > .vx-optrow'); if (!r) return;
+    r.style.left = ''; if (!panelMode()) return;
+    const rc = r.getBoundingClientRect(), over = rc.right - (document.documentElement.clientWidth - 12);
+    if (over > 0) r.style.left = -Math.min(over, Math.max(0, rc.left - 12)) + 'px';
+  }
   function byOptions(b) {
     return [...statusCols(b).map(x => ['status:' + x.id, 'By ' + x.title]), ['group', 'By group'], ...personCols(b).map(x => ['person:' + x.id, 'By ' + x.title]),
       ...dateCols(b).flatMap(x => [['date:' + x.id + ':month', `By ${x.title} (month)`], ['date:' + x.id + ':week', `By ${x.title} (week)`]]), ['date:__created:month', 'By created (month)']];
@@ -377,11 +393,16 @@
     const cols = sp.mode === 'timeline' ? [sp.tl] : [sp.start, sp.end].filter(Boolean);
     return cols.length && cols.every(c => c && !c.readonly && A.colEditable(c, b));
   }
+  let tlJump = false;
   function renderTimeline(b) {
     const sp = tlSpec(b), c = cfg('timeline');
     if (sp.mode === 'timeline' ? !sp.tl : !sp.start) return `<div class="empty"><h3>Timeline needs dates</h3>Add a Date column (or a timeline column) with “+ Column”, then items show as bars across the calendar.</div>`;
     const z = ZOOM[c.zoom || 'week'], ppd = z.ppd, today = todayDn();
     const from = today + (c.off || 0) - Math.floor(z.days * 0.25), to = from + z.days, W = Math.round(z.days * ppd), LW = narrow() ? 132 : 230;
+    // keep the scroll position on a re-render of the same range; otherwise (first open, ‹ Today ›, zoom) bring the focus day (today + offset) into view
+    const tlKey = `${A.S.boardId}:${from}:${c.zoom || 'week'}`, prevTl = document.getElementById('vx-tl'), keepTl = !tlJump && prevTl && prevTl.dataset.k === tlKey ? [prevTl.scrollLeft, prevTl.scrollTop] : null;
+    tlJump = false;
+    pending.push(() => { const p = document.getElementById('vx-tl'); if (!p) return; p.dataset.k = tlKey; if (keepTl) { p.scrollLeft = keepTl[0]; p.scrollTop = keepTl[1]; } else p.scrollLeft = Math.max(0, (today + (c.off || 0) - from) * ppd - (p.clientWidth - LW) / 2); });
     const editable = tlEditable(b, sp), colorCol = colById(b, c.color === undefined ? (statusCols(b)[0] || {}).id : c.color);
     const items = A.visibleItems(); let outside = 0, undated = 0;
     const rowsBy = new Map();
@@ -390,9 +411,12 @@
     let top = '', ticks = '', bg = '';
     for (let d = from; d <= to; d++) {
       const x = (d - from) * ppd, dt = new Date(d * 864e5), dom = dt.getUTCDate(), mo = dt.getUTCMonth(), dow = dt.getUTCDay();
+      // the range's first month only gets a label when there's room before the next month's label
+      // …and a month starting right at the end of the range is left out rather than cut off ("Jan 202")
+      const lead = (dom === 1 || (d === from && (new Date(Date.UTC(dt.getUTCFullYear(), mo + 1, 0)).getUTCDate() - dom + 1) * ppd >= 100)) && (to - d + 1) * ppd >= 70;
       if (c.zoom === 'month') { if (dom === 1) { ticks += `<span class="tl-tick" style="left:${x}px">${MON[mo]}</span>`; if (mo === 0) top += `<span class="tl-top" style="left:${x}px">${dt.getUTCFullYear()}</span>`; } }
-      else if (c.zoom === 'day') { ticks += `<span class="tl-tick" style="left:${x}px;width:${ppd}px">${dom}</span>`; if (dom === 1 || d === from) top += `<span class="tl-top" style="left:${x}px">${MON[mo]} ${dt.getUTCFullYear()}</span>`; if (dow === 0 || dow === 6) bg += `<div class="tl-weekend" style="left:${LW + x}px;width:${ppd}px"></div>`; }
-      else { if (dow === 1) ticks += `<span class="tl-tick" style="left:${x}px">${dom}</span>`; if (dom === 1 || d === from) top += `<span class="tl-top" style="left:${x}px">${MON[mo]}${mo === 0 || d === from ? ' ' + dt.getUTCFullYear() : ''}</span>`; }
+      else if (c.zoom === 'day') { ticks += `<span class="tl-tick" style="left:${x}px;width:${ppd}px">${dom}</span>`; if (lead) top += `<span class="tl-top" style="left:${x}px">${MON[mo]} ${dt.getUTCFullYear()}</span>`; if (dow === 0 || dow === 6) bg += `<div class="tl-weekend" style="left:${LW + x}px;width:${ppd}px"></div>`; }
+      else { if (dow === 1) ticks += `<span class="tl-tick" style="left:${x}px">${dom}</span>`; if (lead) top += `<span class="tl-top" style="left:${x}px">${MON[mo]}${mo === 0 || !top ? ' ' + dt.getUTCFullYear() : ''}</span>`; }
     }
     const lim = c.lim || {};
     const groups = [...b.groups, { id: '__none', name: 'No group', color: '#6b7280' }].map(g => {
@@ -404,7 +428,7 @@
         const l = colorCol && colorCol.type === 'status' ? A.labelOf(colorCol, (it.values || {})[colorCol.id]) : null, col = l ? l.color : g.color;
         const tip = `${it.name}: ${ds(r.s)}${r.e !== r.s ? ' → ' + ds(r.e) : ''}${l ? ' · ' + l.label : ''}`;
         return `<div class="tl-row"><div class="tl-label" style="width:${LW}px"><button data-act="open" data-item="${esc(it.id)}" title="${esc(it.name)}">${esc(it.name)}</button></div>
-          <div class="tl-track" style="width:${W}px"><div class="tl-bar" ${editable ? `data-edit="1"` : `data-act="open" data-item="${esc(it.id)}"`} data-tlbar="${esc(it.id)}" data-s="${r.s}" data-e="${r.e}" data-ppd="${ppd}" style="left:${x}px;width:${w}px;--c:${esc(col)}" title="${esc(tip)}">${hd ? '<span class="tl-h l" data-h="l"></span>' : ''}${w > 36 ? esc(it.name) : ''}${hd ? '<span class="tl-h r" data-h="r"></span>' : ''}</div></div></div>`;
+          <div class="tl-track" style="width:${W}px"><div class="tl-bar" ${editable ? `data-edit="1"` : `data-act="open" data-item="${esc(it.id)}"`} data-tlbar="${esc(it.id)}" data-s="${r.s}" data-e="${r.e}" data-ppd="${ppd}" style="left:${x}px;width:${w}px${col ? `;--c:${esc(col)}` : ''}${w > 36 ? '' : ';padding:0'}" title="${esc(tip)}">${hd ? '<span class="tl-h l" data-h="l"></span>' : ''}${w > 36 ? esc(it.name) : ''}${hd ? '<span class="tl-h r" data-h="r"></span>' : ''}</div></div></div>`;
       }).join('');
       const more = list.length > n ? `<div class="tl-row tl-more"><div class="tl-label" style="width:${LW}px"><button data-vx="tl-more" data-g="${esc(g.id)}">Show ${Math.min(60, list.length - n)} more · ${list.length - n} hidden</button></div><div class="tl-track" style="width:${W}px"></div></div>` : '';
       return `<div class="tl-grp" style="--gc:${esc(g.color)}"><div class="tl-label" style="width:${LW}px">${esc(g.name)} <span class="group-count">${list.length}</span></div><div class="tl-track" style="width:${W}px"></div></div>${rows}${more}`;
@@ -602,6 +626,7 @@
     const prov = lc.find(x => x !== loc && /province|region|state/i.test(x.title)) || lc.find(x => x !== loc);
     return { loc, prov };
   }
+  const mapUpp = {};
   function renderMap(b) {
     const sp = mapSpec(b), c = cfg('map');
     if (!sp.loc) return `<div class="empty"><h3>Map needs a location</h3>Add a text column with an address, city or province (for example “Property Address” or “Province”). Items are placed by the Canadian city or province in it.</div>`;
@@ -612,7 +637,10 @@
       if (!g) { none++; continue; }
       placed.push({ it, g }); provCount[g.p] = (provCount[g.p] || 0) + 1;
     }
-    const vb = viewBox(c.region || 'all'), scale = vb[2] / 900;
+    // scale = map units per on-screen pixel, measured after the map is drawn so markers keep their size on phones and zoomed regions
+    const vb = viewBox(c.region || 'all'), scale = mapUpp[c.region || 'all'] || vb[2] / 900;
+    pending.push(() => { const svg = document.querySelector('.vx-map svg'); if (!svg) return; const r = svg.getBoundingClientRect(); if (!r.width || !r.height) return;
+      const u = Math.max(vb[2] / r.width, vb[3] / r.height), k = c.region || 'all'; if (Math.abs(u - scale) / scale > 0.05) { mapUpp[k] = u; A.renderContent(); } });
     const maxP = Math.max(1, ...Object.values(provCount));
     const shapes = Object.entries(PROV).map(([k, P]) => { const n = provCount[k] || 0, a = n ? 0.08 + 0.32 * (n / maxP) : 0.03;
       return `<path class="prov" d="${P.p.map(poly => 'M' + poly.map(([x, y]) => proj(x, y).map(z => z.toFixed(1)).join(' ')).join('L') + 'Z').join('')}" fill="rgba(57,135,229,${a.toFixed(3)})"><title>${esc(P.n)}: ${n} item${n === 1 ? '' : 's'}</title></path>`; }).join('');
@@ -623,7 +651,7 @@
     [...spots.values()].sort((a, b2) => b2.list.length - a.list.length).forEach(s => { const [x, y] = proj(s.g.lng, s.g.lat); const near = clusters.find(cl => Math.hypot(cl.x - x, cl.y - y) < R); if (near) { near.items.push(...s.list); near.places.add(s.g.city || PROV[s.g.p].n); } else clusters.push({ x, y, items: [...s.list], places: new Set([s.g.city || PROV[s.g.p].n]), key: s.g.lat + ',' + s.g.lng }); });
     const selC = clusters.find(cl => cl.key === c.sel);
     const dots = clusters.map(cl => { const n = cl.items.length, r = (7 + Math.min(18, Math.sqrt(n) * 2.4)) * scale;
-      return `<g class="clu ${cl === selC ? 'sel' : ''}" data-vx="map-clu" data-k="${esc(cl.key)}" tabindex="0" role="button" aria-label="${esc([...cl.places].join(', '))}: ${n} items"><circle cx="${cl.x.toFixed(1)}" cy="${cl.y.toFixed(1)}" r="${r.toFixed(1)}"/><text x="${cl.x.toFixed(1)}" y="${(cl.y + 4 * scale).toFixed(1)}" text-anchor="middle" style="font-size:${(11 * scale).toFixed(2)}px">${n}</text><title>${esc([...cl.places].slice(0, 6).join(', '))}: ${n}</title></g>`; }).join('');
+      return `<g class="clu ${cl === selC ? 'sel' : ''}" data-vx="map-clu" data-k="${esc(cl.key)}" tabindex="0" role="button" aria-label="${esc([...cl.places].join(', '))}: ${n} items"><circle class="hit" cx="${cl.x.toFixed(1)}" cy="${cl.y.toFixed(1)}" r="${Math.max(r, 22 * scale).toFixed(1)}"/><circle cx="${cl.x.toFixed(1)}" cy="${cl.y.toFixed(1)}" r="${r.toFixed(1)}"/><text x="${cl.x.toFixed(1)}" y="${(cl.y + 4 * scale).toFixed(1)}" text-anchor="middle" style="font-size:${(11 * scale).toFixed(2)}px">${n}</text><title>${esc([...cl.places].slice(0, 6).join(', '))}: ${n}</title></g>`; }).join('');
     const top = Object.entries(provCount).sort((a, b2) => b2[1] - a[1]);
     const side = selC ? `<h4>${esc([...selC.places].slice(0, 3).join(', '))}${selC.places.size > 3 ? ' and more' : ''}</h4><span class="vx-note">${selC.items.length} item${selC.items.length === 1 ? '' : 's'}</span>${selC.items.slice(0, 150).map(it => itemCard(b, it, [sp.loc])).join('')}`
       : `<h4>By province</h4><span class="vx-note">${placed.length} placed${none ? ` · ${none} without a place we recognise` : ''}. Click a circle to list its items.</span>${top.map(([k, n]) => `<div class="ov-rows"><span><span>${esc(PROV[k].n)}</span><b>${n}</b></span></div>`).join('')}`;
@@ -777,7 +805,7 @@
       <button class="btn danger" data-vx="dash-del">${D.confirm === 'd:' + d.id ? 'Click again to delete' : 'Delete dashboard'}</button>`
       : `<b>${esc(d.name)}</b><span class="vx-note">by ${esc(d.ownerName || 'a teammate')} · shared</span><button class="btn" data-vx="dash-refresh">Refresh</button>`;
     const ws = (d.widgets || []).map((w, i) => `<section class="vx-w glass ${w.size === 'wide' ? 'wide' : ''}" aria-label="${esc(w.title || 'Widget')}"><div class="vx-wh"><h3 title="${esc(w.title)}">${esc(w.title || WT.find(t => t[0] === w.type)[1])}</h3>
-        ${own ? `<button class="icon-btn" data-vx="w-move" data-i="${i}" data-d="-1" aria-label="Move left">‹</button><button class="icon-btn" data-vx="w-move" data-i="${i}" data-d="1" aria-label="Move right">›</button><button class="icon-btn" data-vx="w-edit" data-i="${i}">Edit</button><button class="icon-btn" data-vx="w-del" data-i="${i}">${D.confirm === 'w:' + w.id ? 'Sure?' : 'Remove'}</button>` : ''}</div>
+        ${own ? `<button class="icon-btn vx-wmove" data-vx="w-move" data-i="${i}" data-d="-1" aria-label="Move earlier" title="Move earlier" ${i === 0 ? 'disabled' : ''}>‹</button><button class="icon-btn vx-wmove" data-vx="w-move" data-i="${i}" data-d="1" aria-label="Move later" title="Move later" ${i === (d.widgets || []).length - 1 ? 'disabled' : ''}>›</button><button class="icon-btn" data-vx="w-edit" data-i="${i}">Edit</button><button class="icon-btn" data-vx="w-del" data-i="${i}">${D.confirm === 'w:' + w.id ? 'Sure?' : 'Remove'}</button>` : ''}</div>
         <div class="vx-chart" data-wbody="${esc(w.id)}"><p class="vx-note">Loading…</p></div>
         <span class="vx-note">${esc((w.boards || []).map(id => (A.S.boards.find(x => x.id === id) || {}).name).filter(Boolean).slice(0, 3).join(', '))}${(w.boards || []).length > 3 ? ' and more' : ''}</span></section>`).join('');
     return `<div class="vx-dash">${top}<div class="form-row">${tools}</div>
@@ -796,6 +824,8 @@
       ...colTitles(boards, ['date']).flatMap(c => [['date:' + c.title + ':month', `By ${c.title} (month)`], ['date:' + c.title + ':week', `By ${c.title} (week)`]]), ['date:__created:month', 'By created (month)']];
     const flabels = w.filter && w.filter.col ? [...new Set(boards.flatMap(b => { const c = findCol(b, w.filter.col, ['status']); return c ? (c.labels || []).map(l => l.label) : []; }))] : [];
     const q = (m.q || '').toLowerCase();
+    const fa = layer.contains(document.activeElement) ? document.activeElement : null, fsel = fa && fa.dataset && fa.dataset.wf ? `[data-wf="${fa.dataset.wf}"]${fa.value && fa.type === 'checkbox' ? `[value="${window.CSS.escape(fa.value)}"]` : ''}` : '';
+    queueMicrotask(() => { if (!D.modal || layer.contains(document.activeElement)) return; const el = (fsel && layer.querySelector(fsel)) || layer.querySelector('.modal select, .modal input'); if (el) el.focus(); });
     layer.innerHTML = `<div class="modal-wrap" data-vx="m-close-bg"><div class="modal" role="dialog" aria-modal="true" aria-label="Widget">
       <h3>${m.i == null ? 'Add a widget' : 'Edit widget'}</h3>
       <div class="vx-wf">
@@ -845,17 +875,17 @@
   document.addEventListener('click', e => {
     if (!A) return;
     const t = e.target.closest('[data-vx], [data-open], [data-vxcat], [data-act="go-dash"]'); if (!t) return;
-    if (t.dataset.act === 'go-dash') { A.S.page = 'dash'; A.S.modal = null; A.S.openItem = null; A.savePage(); D.list = null; A.render(); return; }
+    if (t.dataset.act === 'go-dash') { A.S.page = 'dash'; A.S.modal = null; A.S.openItem = null; A.savePage(); D.list = null; D.cache = {}; A.render(); return; }
     if (t.dataset.open) { const [bid, iid] = t.dataset.open.split('|'); if (window.SolverOpen) window.SolverOpen(bid, iid); return; }
     if (t.dataset.vxcat !== undefined && t.closest('#vx-chart')) { const c = cfg('chart'); setCfg('chart', { sel: c.sel === t.dataset.vxcat ? '' : t.dataset.vxcat }); return; }
     const a = t.dataset.vx, b = A.board();
     switch (a) {
       case 'set': setCfg(A.S.view, { [t.dataset.k]: t.dataset.v }); break;
-      case 'tl-nav': { const c = cfg('timeline'), z = ZOOM[c.zoom || 'week'], d = Number(t.dataset.d); setCfg('timeline', { off: d === 0 ? 0 : (c.off || 0) + d * Math.round(z.days / 2) }); break; }
+      case 'tl-nav': { const c = cfg('timeline'), z = ZOOM[c.zoom || 'week'], d = Number(t.dataset.d); tlJump = true; setCfg('timeline', { off: d === 0 ? 0 : (c.off || 0) + d * Math.round(z.days / 2) }); break; }
       case 'tl-more': { const c = cfg('timeline'); setCfg('timeline', { lim: { ...(c.lim || {}), [t.dataset.g]: ((c.lim || {})[t.dataset.g] || 60) + 60 } }); break; }
       case 'wl-nav': { const c = cfg('workload'), d = Number(t.dataset.d); setCfg('workload', { off: d === 0 ? 0 : (c.off || 0) + d * (wlSpec(b).weeks), sel: '' }); break; }
       case 'wl-cell': { const c = cfg('workload'); setCfg('workload', { sel: c.sel === t.dataset.k ? '' : t.dataset.k }); break; }
-      case 'map-clu': { const c = cfg('map'); setCfg('map', { sel: c.sel === t.dataset.k ? '' : t.dataset.k }); break; }
+      case 'map-clu': { const c = cfg('map'); setCfg('map', { sel: c.sel === t.dataset.k ? '' : t.dataset.k }); const k = t.dataset.k; if (e.detail === 0) setTimeout(() => { const g = [...document.querySelectorAll('.vx-map .clu')].find(x => x.dataset.k === k); if (g) g.focus(); }); break; }
       case 'update-view': { const v = savedView(); if (!v || !b) return; const views = (b.views || []).map(x => x.id === v.id ? { ...x, settings: stripLocal(cfg(A.S.view)) } : x); A.patchBoard({ views }); A.localBoard({ views }); A.toast(`Updated view “${v.name}”`); break; }
       // dashboards
       case 'dash-pick': D.cur = t.dataset.id; try { localStorage.setItem('ks-dash', D.cur); } catch (x) {} D.confirm = null; A.renderContent(); break;
@@ -876,7 +906,7 @@
     if (!A) return; const t = e.target;
     if (t.dataset && t.dataset.vxset !== undefined) { const k = t.dataset.vxset, v = t.value; const patch = { [k]: k === 'cap' ? (v.trim() === '' ? '' : Number(String(v).replace(/[^0-9.]/g, '')) || '') : v }; if (A.S.view === 'files') { Object.assign(cfg('files'), patch); A.renderContent(); return; } setCfg(A.S.view, patch); return; }
     if (t.dataset && t.dataset.wf !== undefined && D.modal) { readWf(t); if (t.dataset.wf !== 'title') { defaults(D.modal.w); renderModal(); } return; }
-    if (t.matches && t.matches('[data-vx-dname]')) { const d = curDash(); const v = t.value.trim(); if (d && v && v !== d.name) { d.name = v; saveDash(d); } }
+    if (t.matches && t.matches('[data-vx-dname]')) { const d = curDash(); const v = t.value.trim(); if (d && v && v !== d.name) { d.name = v; saveDash(d); } else if (d && !v) { t.value = d.name; A.toast('A dashboard needs a name.'); } }
   });
   document.addEventListener('input', e => {
     const t = e.target;
@@ -886,10 +916,11 @@
   });
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && D.modal) { D.modal = null; renderModal(); e.stopPropagation(); }
+    if (e.key === 'Tab' && D.modal) { const fs = [...layer.querySelectorAll('.modal button, .modal input, .modal select, .modal textarea')].filter(x => !x.disabled && x.offsetParent); if (!fs.length) return; const i = fs.indexOf(document.activeElement); if (i < 0 || (e.shiftKey && i === 0) || (!e.shiftKey && i === fs.length - 1)) { e.preventDefault(); fs[e.shiftKey ? fs.length - 1 : 0].focus(); } }
     if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('.clu')) { e.preventDefault(); e.target.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
   }, true);
   let rz = null;
-  window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { if (!A) return; if (A.S.page === 'dash') mountWidgets(); else if (A.S.page === 'board' && A.S.view === 'chart') A.renderContent(); }, 150); });
+  window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { if (!A) return; if (A.S.page === 'dash') mountWidgets(); else if (A.S.page === 'board' && (A.S.view === 'chart' || A.S.view === 'map')) A.renderContent(); }, 150); });
 
   window.KSViews = {
     init(api) { A = api; },

@@ -15,7 +15,7 @@ main { max-width: 620px; margin: 0 auto; }
 .card { background: linear-gradient(160deg, rgba(255,255,255,.09), rgba(255,255,255,.025)); border: 1px solid rgba(255,255,255,.10); border-radius: 26px; padding: 28px 24px;
   backdrop-filter: blur(26px) saturate(150%); -webkit-backdrop-filter: blur(26px) saturate(150%); box-shadow: 0 1px 0 rgba(255,255,255,.08) inset, 0 30px 80px rgba(0,0,0,.55); }
 h1 { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif; font-weight: 600; letter-spacing: -.02em; font-size: 26px; margin: 0 0 6px; }
-.desc { color: var(--muted); margin: 0 0 20px; white-space: pre-wrap; }
+.desc { color: var(--muted); margin: 0 0 20px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .q { display: flex; flex-direction: column; gap: 6px; margin: 0 0 18px; }
 .q label.t { font-weight: 500; }
 .q .req { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 4px; }
@@ -27,6 +27,7 @@ input:focus, textarea:focus, select:focus { outline: 2px solid #fff; outline-off
 .choices { display: flex; flex-wrap: wrap; gap: 8px; }
 .choice { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--field); border-radius: 999px; padding: 8px 14px; cursor: pointer; min-height: 40px; }
 .choice input { accent-color: #fff; margin: 0; }
+.q > .choice { align-self: flex-start; }
 .err { color: var(--danger); font-size: 13px; min-height: 0; }
 .bad input, .bad textarea { border-color: var(--danger); }
 button { font: inherit; font-weight: 600; background: #fff; color: #000; border: 0; border-radius: 999px; padding: 12px 22px; min-height: 46px; cursor: pointer; }
@@ -91,7 +92,7 @@ input, textarea, select { font-size: 16px !important; }
       const box = card.querySelector(`[data-q="${CSS.escape(f.key)}"]`), v = answers[f.key]; let msg = '';
       if (f.required && (v === '' || v === false)) msg = 'Please answer this.';
       else if (v && f.type === 'email' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) msg = 'Enter an email like name@example.com.';
-      else if (v && f.type === 'phone' && String(v).replace(/\D/g, '').length < 7) msg = 'Enter a phone number.';
+      else if (v && f.type === 'phone' && (String(v).replace(/\D/g, '').length < 7 || /[^0-9+().\-\s ext]/i.test(v))) msg = 'Enter a phone number, using only digits, spaces, + ( ) - and x for an extension (780-555-1234 x2).';
       else if (v && f.type === 'number' && !Number.isFinite(Number(String(v).replace(/[$,\s%]/g, '')))) msg = 'Enter a number.';
       box.classList.toggle('bad', !!msg); box.querySelector('.err').textContent = msg;
       if (msg && !first) first = box;
@@ -106,7 +107,7 @@ input, textarea, select { font-size: 16px !important; }
     go.disabled = true; go.textContent = 'Sending…'; err.textContent = '';
     try {
       const r = await fetch('/api/public/form/' + encodeURIComponent(token), { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ answers, website: document.querySelector('input[name=website]').value, t: started }) });
+        body: JSON.stringify({ answers, website: document.querySelector('input[name=website]').value, t: def.t || started }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.error || 'That didn’t send. Try again.');
       card.classList.add('done');

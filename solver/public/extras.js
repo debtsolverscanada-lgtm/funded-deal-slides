@@ -66,8 +66,8 @@
     const dur = s => s == null ? '' : s >= 60 ? `${Math.floor(s / 60)} min ${s % 60 ? (s % 60) + ' s' : ''}` : `${s} s`;
     const rows = d.events.map(e => `<li class="cm-row ${esc(e.direction || '')}"><span class="cm-ic" aria-hidden="true">${ICON[e.type] || '•'}</span><div class="cm-main"><div class="cm-top"><b>${esc(LABEL[e.type] || e.type)}${e.direction === 'outbound' ? ' out' : e.direction === 'inbound' ? ' in' : ''}</b><time>${esc(fmt(e.at))}</time></div>${e.note ? `<div class="cm-note">${esc(e.note)}</div>` : ''}<div class="cm-src">${esc(e.source || '')}${e.duration ? ' · ' + esc(dur(e.duration)) : ''}</div></div></li>`).join('');
     const rc = d.ringcentral || {};
-    return `<div class="comms"><div class="cm-head"><h4 class="sec-title">Calls and texts</h4><button class="icon-btn" data-act="comms-refresh">Refresh</button></div>
-      <p class="rail-note">${d.phones ? 'Matched by this lead’s phone number.' : 'This item has no phone number yet, so only events sent for this item show here.'} Read-only: Solver.ca never calls or texts anyone.</p>
+    return `<div class="comms"><div class="cm-head"><h4 class="sec-title">Calls and texts</h4><button class="btn" data-act="comms-refresh">Refresh</button></div>
+      <p class="rail-note">${d.phones ? 'Matched by this lead’s phone number.' : 'This item has no phone number yet, so only events sent for this item show here.'} Texts and emails sent from Solver.ca show here too; calls are read-only.</p>
       <div class="cm-rc ${rc.on ? 'on' : ''}">${rc.on ? (rc.error ? 'RingCentral: ' + esc(rc.error) : 'RingCentral call log and texts: connected (read-only)') : 'RingCentral: not connected. Events your phone tools post to Solver.ca show here.'}</div>
       ${rows ? `<ul class="cm-list">${rows}</ul>` : '<p class="rail-note">No calls or texts recorded yet.</p>'}</div>`;
   }

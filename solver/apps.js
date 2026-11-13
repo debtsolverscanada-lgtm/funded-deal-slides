@@ -76,7 +76,7 @@ module.exports = function apps({ db, now, broadcast, q, HttpError, readBody, sen
         return { id: 'gmail', name: 'Gmail', what: 'Each rep sends lead emails and Mass email from their own Gmail; replies land on the lead.', state: viaN8n || g.on() ? 'on' : 'setup',
           detail: viaN8n ? `Through n8n: ${names || 'nobody yet'}${gm.length ? ` · in-app: ${gm.map(x => x.email).join(', ')}` : ''}` : g.on() ? `${gm.length} connected: ${gm.map(x => x.email).join(', ') || 'nobody yet'}` : 'Not set up yet.' }; })(),
       { id: 'stripe', name: 'Stripe', what: 'Request any amount from a lead. They pay on Stripe’s page and the lead shows ✅ Paid.', state: stripeKey() ? (stripeOn() ? 'on' : 'paused') : 'off', detail: env('STRIPE_SECRET_KEY') ? 'Key set on the server' : st ? `Key …${st.last4}${st.info.account ? ' · ' + st.info.account : ''}${st.info.test ? ' · TEST mode' : ''}` : 'Paste a Stripe secret key to turn it on.', canKey: !env('STRIPE_SECRET_KEY') },
-      { id: 'ringcentral', name: 'RingCentral', what: 'Texts and Mass text from each rep’s own line, with replies and STOP on the lead.', state: mail.env('TEXT_SEND_HOOK_URL') ? 'on' : 'off', detail: 'Through n8n: Jerico, Mariel, Adrian, Carl, Cath, and Brandon on the main line.' },
+      { id: 'ringcentral', name: 'RingCentral', what: 'Texts and Mass text from each rep’s own line, with replies and STOP on the lead.', state: mail.env('TEXT_SEND_HOOK_URL') ? 'on' : 'off', detail: (() => { const names = db.prepare("SELECT name, email_from FROM users WHERE email_from IS NOT NULL AND email_from != '' ORDER BY name").all().map(x => String(x.name || x.email_from).split(/\s+/)[0]).join(', '); return mail.env('TEXT_SEND_HOOK_URL') ? `Through n8n: ${names || 'nobody yet'}` : 'Not set up yet.'; })() },
       { id: 'gcal', name: 'Google Calendar', what: 'Book a callback from a lead; it lands in the rep’s calendar and on the lead.', state: 'soon', detail: 'Uses the same Google key as Gmail. Next up.' },
       { id: 'docusign', name: 'DocuSign', what: 'Send the agreement from a lead and see when it’s signed.', state: 'soon', detail: 'Coming next.' },
       { id: 'quickbooks', name: 'QuickBooks', what: 'Invoices and payments on the client’s lead.', state: 'soon', detail: 'Coming next.' },
@@ -103,7 +103,7 @@ module.exports = function apps({ db, now, broadcast, q, HttpError, readBody, sen
     if (p === '/api/pay/list' && method === 'GET') {
       const bid = url.searchParams.get('board') || '', iid = url.searchParams.get('item') || '';
       mail.loadItem(user, bid, iid);
-      const rows = db.prepare('SELECT * FROM pay_requests WHERE board = ? AND item = ? ORDER BY at DESC LIMIT 50').all(bid, iid).map(outRow);
+      const rows = db.prepare('SELECT * FROM pay_requests WHERE board = ? AND item = ? ORDER BY at DESC LIMIT 50').all(bid, iid).map(r => ({ ...outRow(r), canCancel: r.user_id === user.id || isAdmin(user) }));
       return send(res, 200, { on: stripeOn(), canRequest: stripeOn() && mail.canSendRole(user), rows, test: /_test_/.test(stripeKey()) }), true;
     }
     if (p === '/api/pay/request' && method === 'POST') {
@@ -111,7 +111,12 @@ module.exports = function apps({ db, now, broadcast, q, HttpError, readBody, sen
       if (!mail.canSendRole(user)) throw new HttpError(403, 'Ask an admin to let you send from your own address first (Team & settings).');
       const b = await readBody(req, 16 * 1024);
       const bid = String(b.board || ''), iid = String(b.item || ''); const { item } = mail.loadItem(user, bid, iid);
-      const amount = Math.round(Number(String(b.amount || '').replace(/[$,\s]/g, '')) * 100);
+      // Plain money only: 150, 150.5, 1,250.00, or a French-style decimal comma (250,50). Nothing else (1e3, 0x10, 12.345, 1.000,50).
+      let amtS = (typeof b.amount === 'string' || typeof b.amount === 'number') ? String(b.amount).replace(/[$\s ]/g, '') : '';
+      if (/^\d+,\d{1,2}$/.test(amtS)) amtS = amtS.replace(',', '.');
+      else if (/^\d{1,3}(,\d{3})+(\.\d{1,2})?$/.test(amtS)) amtS = amtS.replace(/,/g, '');
+      if (!/^\d+(\.\d{1,2})?$/.test(amtS)) throw new HttpError(400, 'Enter an amount like 150.00.');
+      const amount = Math.round(Number(amtS) * 100);
       if (!Number.isFinite(amount) || amount < 100) throw new HttpError(400, 'Enter an amount of at least $1.00.');
       if (amount > 5000000) throw new HttpError(400, 'That’s over $50,000. Split it or use Stripe directly.');
       const descr = String(b.descr || '').replace(/\s+/g, ' ').trim().slice(0, 200); if (!descr) throw new HttpError(400, 'Say what the payment is for (the client sees it).');

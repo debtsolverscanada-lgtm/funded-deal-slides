@@ -88,7 +88,7 @@
       const prev = chips.get(k);
       if (!firstScan && prev !== undefined && prev !== text && on()) {
         ch.classList.add('mx-changed'); setTimeout(() => ch.classList.remove('mx-changed'), 700);
-        if (CELEBRATE.test(text)) { const row = ch.closest('tr'); const nm = row && (row.querySelector('[data-edit="name"]') || row.querySelector('.name-open')); celebrate(text, nm ? (nm.value || nm.textContent) : '', getComputedStyle(ch).getPropertyValue('--c').trim()); }
+        if (CELEBRATE.test(text)) { const row = ch.closest('tr'); const nm = row && (row.querySelector('[data-edit="name"]') || row.querySelector('.name-open .nm') || row.querySelector('.name-open')); celebrate(text, nm ? (nm.value || nm.textContent) : '', getComputedStyle(ch).getPropertyValue('--c').trim()); }
       }
     });
     chips = now;
@@ -105,7 +105,7 @@
         tr.classList.add('mx-flash'); setTimeout(() => tr.classList.remove('mx-flash'), 1300);
         // moved into a winning group (e.g. DebtSolvers "Signed"): confetti + Penny cheers
         const gEl = document.querySelector(`.group-name[data-group="${CSS.escape(tr.dataset.group)}"]`), gName = gEl ? String(gEl.value || gEl.textContent || '').trim() : '';
-        if (CELEBRATE.test(gName)) { const nm = tr.querySelector('[data-edit="name"]') || tr.querySelector('.name-open'); celebrate(gName, nm ? (nm.value || nm.textContent) : ''); }
+        if (CELEBRATE.test(gName)) { const nm = tr.querySelector('[data-edit="name"]') || tr.querySelector('.name-open .nm') || tr.querySelector('.name-open'); celebrate(gName, nm ? (nm.value || nm.textContent) : ''); }
       }
     });
     groups = nowGroups;

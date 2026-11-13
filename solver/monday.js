@@ -238,13 +238,18 @@ function mergeUpdates(oldU, freshU, limit = UPDATES_LIMIT) {
   // an export made without Monday ids can't say what was deleted in Monday: then nothing stored is dropped
   const noIds = freshU.some(u => !u.mid), full = freshU.full === true || freshU.length >= limit, oldest = freshU.length ? Math.min(...freshU.map(u => tms(u.at))) : Infinity;
   const used = new Set(), out = [];
+  // a note written in Solver.ca and written back to Monday comes back as "<text>\n\n— Name (in Solver.ca)"; before its Monday id is stamped it's matched by that text
+  const norm = s => String(s || '').replace(/\s+/g, ' ').trim(), oldMids = new Set(oldU.filter(u => u && u.mid).map(u => u.mid));
+  const echoOf = u => { const t = norm(u.text); if (!t) return null; return freshU.find(f => f.mid && !oldMids.has(f.mid) && !used.has(f) && /\(in Solver\.ca\)$/.test(norm(f.text)) && norm(f.text).startsWith(t)) || null; };
   for (const u of oldU) {
     if (!u || typeof u !== 'object') continue;
     let f = u.mid ? byMid.get(u.mid) : null;
     if (!f && !u.by) { const x = byTime.get(u.at); if (x && (!x.mid || !u.mid)) f = x; } // a copy without ids: same Monday time
+    if (!f && !u.mid && u.by) f = echoOf(u);
     if (f && !used.has(f)) {
       used.add(f);
-      const x = { ...u, ...f }; const r = mergeReplies(u.replies, f.replies); if (r.length) x.replies = r; else delete x.replies;
+      // a note written in Solver.ca keeps its author, text and time; Monday adds only its id and replies
+      const x = u.by ? { ...f, ...u, mid: f.mid } : { ...u, ...f }; const r = mergeReplies(u.replies, f.replies); if (r.length) x.replies = r; else delete x.replies;
       out.push(x); continue;
     }
     if (u.mid) { if (noIds || (full && tms(u.at) <= oldest)) out.push(u); continue; } // same second as the oldest returned: may be just past the limit // deleted in Monday, unless older than what Monday returned

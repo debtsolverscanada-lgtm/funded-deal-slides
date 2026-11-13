@@ -80,6 +80,10 @@ module.exports = function comms({ db, q, now, HttpError, send, boardInfo, mustSe
     const admin = user && user.role === 'admin', byPhone = admin ? phones : [];
     const rows = db.prepare(`SELECT * FROM comm_events WHERE (board = ? AND item = ?) ${byPhone.length ? `OR (board IS NULL AND phone IN (${byPhone.map(() => '?').join(',')}))` : ''} ORDER BY at DESC LIMIT 200`).all(bid, iid, ...byPhone);
     let events = rows.map(e => ({ id: e.id, at: e.at, type: TYPE[e.type] || e.type, direction: e.direction, note: e.note || '', duration: e.duration, source: e.source || 'API' }));
+    // texts sent from Solver.ca itself (single texts and blasts) for this item
+    try { for (const t of db.prepare("SELECT id, at, to_phone FROM text_log WHERE board = ? AND item = ? AND status = 'sent' ORDER BY at DESC LIMIT 100").all(bid, iid)) events.push({ id: t.id, at: t.at, type: 'text', direction: 'outbound', note: 'Sent to ' + String(t.to_phone || '').replace(/(\d{3})(\d{3})(\d{4})/, '($1) $2-$3'), duration: null, source: 'Solver.ca' }); } catch {}
+    // emails sent from Solver.ca itself for this item
+    try { for (const m of db.prepare("SELECT id, at, to_email, subject FROM email_log WHERE board = ? AND item = ? AND status = 'sent' ORDER BY at DESC LIMIT 100").all(bid, iid)) events.push({ id: m.id, at: m.at, type: 'email', direction: 'outbound', note: (m.subject ? String(m.subject).slice(0, 200) + ' · ' : '') + 'Sent to ' + String(m.to_email || ''), duration: null, source: 'Solver.ca' }); } catch {}
     const rc = { on: rcOn(), error: null, ...(rcOn() && !admin ? { adminsOnly: true } : {}) };
     if (rc.on && admin && phones.length) {
       try { for (const ph of phones.slice(0, 2)) events.push(...await rcFetch(ph)); }

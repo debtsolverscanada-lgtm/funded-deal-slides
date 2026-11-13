@@ -32,7 +32,7 @@
   const boardName = id => ((A().S.boards || []).find(x => x.id === id) || {}).name || 'a board that isn’t here';
   const condKind = c => c.col === '__group' ? 'group' : (c.op || 'is') === 'is' ? 'status_is_or_is' : c.op;
   const tok = s => `<span class="tok">${esc(s)}</span>`;
-  const valText = (c, v) => Array.isArray(v) ? v.map(x => labelName(c, x)).join(' or ') : c && c.type === 'status' ? labelName(c, v) : v === true ? 'checked' : String(v ?? '');
+  const valText = (c, v) => Array.isArray(v) ? v.map(x => labelName(c, x)).join(' or ') : c && c.type === 'status' ? labelName(c, v) : v === true ? 'checked' : v === false && c && c.type === 'checkbox' ? 'unchecked' : String(v ?? '');
   function parseWhen(w) {
     const s = String(w || ''), m = /^(\d+) day\(s\) (before|after) the date/.exec(s), t = /at (\d{1,2}:\d{2})\s*(.*)$/.exec(s);
     return { n: m ? Number(m[1]) : 0, dir: m ? m[2] : 'on', time: t ? t[1].padStart(5, '0') : '09:00', tz: t ? t[2].trim() : '' };
@@ -50,7 +50,7 @@
       case 'column': when = `${tok(c ? c.title : 'a deleted column')} changes${r.value != null && r.value !== '' ? ' to ' + tok(valText(c, r.value)) : ''}`; break;
       case 'created': when = `an item is created${r.group ? ' in ' + tok(groupName(b, r.group)) : ''}`; break;
       case 'moved_group': when = r.group ? `an item moves to ${tok(groupName(b, r.group))}` : 'an item moves to any group'; break;
-      case 'button': when = `${tok(c ? c.title : 'a deleted button')} is pressed`; break;
+      case 'button': when = c || r.col ? `${tok(c ? c.title : 'a deleted button')} is pressed` : `a button is pressed ${tok('this board has no button column — add one first')}`; break;
       case 'date_arrives': when = `${tok(c ? c.title : 'a deleted date')} arrives (${esc(r.when || 'on the date')})`; break;
       case 'sub_status': when = `a subitem’s ${tok(c ? c.title : 'status')} changes${r.value != null && r.value !== '' ? ' to ' + tok(labelName(c, r.value)) : ''}`; break;
       case 'moved_board': when = 'an item is moved here from another board'; break;
@@ -185,7 +185,7 @@
   const groupOpts = (b, any) => [...(any ? [['', 'any group']] : []), ['__top__', 'the top group'], ...(b.groups || []).map(g => [g.id, g.name])];
   function valueControl(path, b, c, cur, aria, allowAny) {
     if (c && c.type === 'status') return sel(path, [...(allowAny ? [['', 'anything']] : []), ...(c.labels || []).filter(l => !l.hidden || l.id === String(cur)).map(l => [l.id, l.label])], Array.isArray(cur) ? cur[0] : cur, aria);
-    if (c && c.type === 'checkbox') return sel(path, [...(allowAny ? [['', 'anything']] : []), ['true', 'checked'], ['', 'unchecked']], cur === true ? 'true' : cur, aria);
+    if (c && c.type === 'checkbox') return sel(path, [...(allowAny ? [['', 'anything']] : []), ['true', 'checked'], ['false', 'unchecked']], cur === true ? 'true' : cur === false ? 'false' : cur, aria);
     if (c && c.type === 'dropdown') return sel(path, [...(allowAny ? [['', 'anything']] : []), ...(c.options || []).map(o => [o, o])], cur, aria);
     if (c && c.type === 'date') return inp(path, cur, 'YYYY-MM-DD', aria, 'type="date"');
     if (c && c.type === 'person') return inp(path, cur, 'Name', aria, 'list="rx-people"');
@@ -242,7 +242,7 @@
           const hooks = (META && META.hooks) || [];
           p = sel(P('hook'), [['', 'every connected tool listening'], ...hooks.map(h => [h.id, h.name + (h.active ? '' : ' (off)') + (h.listens ? '' : ' (not listening for this)')])], a.hook || '', 'Connected tool')
             + inp(P('note'), a.note, 'Note sent along (optional)', 'Note', 'style="flex:1 1 160px"')
-            + `<div class="rx-hint">Sends a signed <code>automation.webhook</code> event to your tool (n8n, Zapier…). Solver.ca itself never texts or emails anyone.${hooks.length ? '' : ' No outgoing webhooks yet: an admin adds one in Integrations.'}</div>`;
+            + `<div class="rx-hint">Sends a signed <code>automation.webhook</code> event to your tool (n8n, Zapier…). This automation doesn’t text or email anyone itself.${hooks.length ? '' : ' No outgoing webhooks yet: an admin adds one in Integrations.'}</div>`;
           break;
         }
         case 'external': p = `<span class="rx-muted">${esc(a.label || 'Monday action')}: stays in Monday, logged here only</span>`; break;
@@ -287,7 +287,7 @@
         <div class="rx-btns">${S.canWrite ? `<button class="toggle" data-act="rx-toggle" data-id="${esc(r.id)}" aria-pressed="${r.on !== false}">${r.on === false ? 'Off' : 'On'}</button><button class="icon-btn" data-act="rx-edit" data-id="${esc(r.id)}">Edit</button><button class="icon-btn" data-act="rx-dup" data-id="${esc(r.id)}">Duplicate</button>` : ''}<button class="icon-btn" data-act="rx-runs" data-id="${esc(r.id)}">Runs</button>${S.canWrite ? `<button class="icon-btn" data-act="rx-del" data-id="${esc(r.id)}">${m.confirm === r.id ? 'Click again to delete' : 'Delete'}</button>` : ''}</div></div>`;
     }).join('');
     return `<div class="rx-editor"><div class="rx-head"><h3>Automations on ${esc(b.name)}</h3>${S.canWrite ? '<button class="btn primary" data-act="rx-new">+ New automation</button>' : ''}</div>
-      <p>Rules that move items, change statuses and dates, assign people, post updates, notify teammates in Solver.ca, and copy or move items between boards. “Send to a connected tool” passes the item to your own tool (n8n, Zapier) as a signed webhook. Solver.ca never texts or emails leads itself: Monday’s email and text actions are only logged.</p>
+      <p>Rules that move items, change statuses and dates, assign people, post updates, notify teammates in Solver.ca, and copy or move items between boards. “Send to a connected tool” passes the item to your own tool (n8n, Zapier) as a signed webhook. Automations never text or email leads by themselves: Monday’s email and text actions are only logged. (Mass text, Mass email and a lead’s Email button do really send.)</p>
       ${m.err ? `<div class="rule rx-err"><div class="rule-text">${esc(m.err)}</div></div>` : ''}
       ${all.length > 6 ? `<input class="field-input" data-r="__q" value="${esc(m.q || '')}" placeholder="Search ${all.length} automations" aria-label="Search automations">` : ''}
       <div class="rx-list">${cards || '<p class="rail-note">No automations yet.</p>'}</div>
@@ -318,7 +318,7 @@
     if (path === 'on') { d.on = !!v; return true; }
     if (path === 'trigger') { d.trigger = v; triggerDefaults(d, b); }
     else if (path === 'col') { d.col = v; if (['status', 'column', 'sub_status'].includes(d.trigger)) d.value = ''; }
-    else if (path === 'value') { const c = col(b, d.col, d.trigger === 'sub_status'); d.value = c && c.type === 'checkbox' ? v === 'true' : v; }
+    else if (path === 'value') { const c = col(b, d.col, d.trigger === 'sub_status'); d.value = c && c.type === 'checkbox' && v !== '' ? v === 'true' : v; }
     else if (head === '_when') { d._when = d._when || {}; d._when[k] = k === 'n' ? Math.max(1, Number(v) || 1) : v; }
     else if (head === 'c') {
       const c = d.conditions[Number(k)];

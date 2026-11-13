@@ -4,7 +4,7 @@
 'use strict';
 const crypto = require('node:crypto');
 
-module.exports = function crossboard({ db, q, now, broadcast, HttpError, readBody, send, mustSee, canWrite, boardInfo }, hooks = {}) {
+module.exports = function crossboard({ db, q, now, broadcast, HttpError, readBody, send, mustSee, canWrite, boardInfo, integ }, hooks = {}) {
   const doc = p => { const r = q.doc.get(p); return r ? JSON.parse(r.data) : null; };
   const labelName = (col, v) => { const l = (col.labels || []).find(x => String(x.id) === String(v)); return l ? l.label : null; };
   function mapValues(b, tb, item, map) {
@@ -44,7 +44,7 @@ module.exports = function crossboard({ db, q, now, broadcast, HttpError, readBod
     if (wb.has(bid) && tb.source === 'monday' && process.env.MONDAY_WRITEBACK !== 'off') return send(res, 200, { ok: true, viaMonday: true, board: tb.name }), true;
     // the same lead copied there by this rule already (e.g. moved to Signed twice): don't make a second one
     const already = db.prepare("SELECT id FROM docs WHERE col = ? AND json_extract(data, '$.copiedFrom') = ?").get(`boards/${target}/items`, `${bid}/${iid}`);
-    if (already && type === 'copy_to_board') return send(res, 200, { ok: true, id: already.id, already: true }), true;
+    if (already && type === 'copy_to_board') return send(res, 200, { ok: true, id: already.id, already: true, board: tb.name }), true;
     const g = (tb.groups || []).find(x => x.id === act.group) || (tb.groups || [])[0];
     const newId = type === 'move_board' ? iid : 'i' + crypto.randomBytes(9).toString('base64url');
     const why = rule.title ? `Automation “${String(rule.title).slice(0, 80)}”` : 'Automation';
@@ -54,6 +54,8 @@ module.exports = function crossboard({ db, q, now, broadcast, HttpError, readBod
     q.upsertDoc.run(`boards/${target}/items/${newId}`, `boards/${target}/items`, newId, JSON.stringify(data), now(), user.id);
     broadcast({ op: 'set', col: `boards/${target}/items`, id: newId, data });
     if (type === 'move_board') { q.deleteDoc.run(`boards/${bid}/items/${iid}`); broadcast({ op: 'delete', col: `boards/${bid}/items`, id: iid }); }
+    // webhooks (n8n, Discord) hear about the new Clients item like any other created item
+    try { if (integ) { if (type === 'move_board') integ.itemChanged(`boards/${bid}/items/${iid}`, item, null, user.id); integ.itemChanged(`boards/${target}/items/${newId}`, null, data, user.id); } } catch (e) { console.error('crossboard webhook:', e.message); }
     try { if (hooks.itemSaved) hooks.itemSaved(target, newId, null, data); } catch (e) { /* sequences only */ }
     try { if (type !== 'move_board' && hooks.newItem) hooks.newItem(target, newId, data); } catch (e) { /* NEW CLIENT banner */ }
     return send(res, 200, { ok: true, id: newId, board: tb.name }), true;
