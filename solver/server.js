@@ -1204,6 +1204,7 @@ function boardStats(id, b, keep) {
     const c = d.createdAt ? Date.parse(d.createdAt) : NaN;
     if (c >= weekAgo) x.newWeek++;
     if (c >= sparkStart.getTime()) { const k = Math.floor((c - sparkStart.getTime()) / 864e5); if (k >= 0 && k < 14) x.spark[k]++; }
+    if (junkGroups.has(d.group)) continue; // Junk/Unqualified leads are never followed up
     for (const fc of followCols) {
       const v = (d.values || {})[fc]; if (!v) continue;
       if (v < today) x.overdue++; else if (v === today) x.dueToday++; else if (v <= inWeek) x.upcoming++;

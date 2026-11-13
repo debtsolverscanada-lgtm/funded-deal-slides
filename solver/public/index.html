@@ -1281,7 +1281,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
     for (const c of b.columns) if (c.type === 'status') { const v = (item.values || {})[c.id]; if (v === undefined || v === null || v === '') { const d = (c.labels || []).find(l => l.id === '5' && l.label && l.label !== '(blank)'); if (d) item.values = { ...(item.values || {}), [c.id]: '5' }; } }
     return item;
   }
-  function linkParts(v) { const s2 = String(v || '').trim(); const m = /^(.*?)\s+[-|]\s+(https?:\/\/\S+)$/i.exec(s2); if (m) return { text: m[1], url: m[2] }; return { text: s2, url: /^https?:\/\/\S+$/i.test(s2) ? s2 : '' }; }
+  function linkParts(v) { const s2 = String(v || '').trim(); const m = /^(.*?)\s+[-|]\s+(https?:\/\/\S+)$/i.exec(s2); if (m) return { text: m[1], url: m[2] }; return { text: s2, url: /^https?:\/\/\S+$/i.test(s2) ? s2 : /^(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(:\d+)?([/?#]\S*)?$/i.test(s2) && !s2.includes('@') ? 'https://' + s2 : '' }; }
   const filterCount = () => Object.values(S.filters).filter(v => v && v.length).length;
   const toast = msg => { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; $('#toasts').appendChild(t); setTimeout(() => t.remove(), 2600); };
   function $(s) { return document.querySelector(s); }
@@ -1866,6 +1866,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
       const c = sortBy.col === 'name' ? null : b.columns.find(x => x.id === sortBy.col);
       const key = i => {
         if (!c) return (i.name || '').toLowerCase();
+        if (c.type === 'formula') { const r = formulaResult(b, i, c); if (r.error || r.value == null || r.value === '') return null; return typeof r.value === 'number' ? r.value : String(r.value).toLowerCase(); }
         const v = (i.values || {})[c.id];
         if (v == null || v === '') return null;
         if (c.type === 'status') return (c.labels || []).findIndex(l => l.id === v);
@@ -1947,6 +1948,11 @@ html.mx-off.pet-docked .pet svg { animation: none; }
       const sum = items.reduce((s, i) => s + (Number((i.values || {})[col.id]) || 0), 0);
       if (col.format === 'percent') return '';
       return `<div class="sumnum">${col.format === 'currency' ? '$' + fmtMoney(sum) : sum.toLocaleString('en-CA', { maximumFractionDigits: 2 })}</div>`;
+    }
+    if (col.type === 'formula') { // numeric formulas get a total, like Monday
+      const vals = items.map(i => formulaResult(board(), i, col)).filter(r => !r.error && typeof r.value === 'number' && isFinite(r.value));
+      if (!vals.length) return '';
+      return `<div class="sumnum">${esc(KSFormula.format(vals.reduce((s, r) => s + r.value, 0)))}</div>`;
     }
     return '';
   }

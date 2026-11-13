@@ -29,7 +29,7 @@
   const personCols = b => b.columns.filter(c => c.type === 'person');
   const statusCols = b => b.columns.filter(c => c.type === 'status');
   const timelineCols = b => b.columns.filter(c => c.type === 'timeline' || /^timeline/.test(c.id) || (c.type === 'text' && !c.source && /timeline|date range/i.test(c.title)));
-  const locCols = b => b.columns.filter(c => c.type === 'location' || /^location/.test(c.id) || (c.type === 'text' && !c.source && /address|location|city|province|region|town/i.test(c.title)));
+  const locCols = b => b.columns.filter(c => c.type === 'location' || /^location/.test(c.id) || (c.type === 'text' && !c.source && /address|location|city|province|region|town/i.test(c.title)) || ((c.type === 'dropdown' || c.type === 'status') && /city|province|region|town/i.test(c.title)));
   const pick = (cols, re) => cols.find(c => re.test(c.title));
   function numVal(b, item, c) {
     if (!c) return 0;
