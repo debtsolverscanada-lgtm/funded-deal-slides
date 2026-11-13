@@ -1132,6 +1132,12 @@ html.mx-off.pet-docked .pet svg { animation: none; }
     #seqm .sq-modal::before{content:"";position:fixed;left:0;right:0;top:0;height:calc(56px + env(safe-area-inset-top));background:var(--panel,#141518);border-bottom:1px solid rgba(255,255,255,.1);z-index:5}
     #seqm .sq-x{position:fixed;top:calc(8px + env(safe-area-inset-top));right:12px;float:none;margin:0;z-index:6}
     .sq-row2{flex-wrap:wrap}.sq-row2 span:last-child{display:flex;gap:6px;margin-left:auto}.sq-row2 .btn{margin-left:0}}
+
+  /* native dropdown lists (Windows draws them white): dark list, light text, readable group headings */
+  :root{color-scheme:dark}
+  select option{background-color:#1b1c20;color:#f2f2f4}
+  select optgroup{background-color:#111215;color:#9aa0aa;font-weight:700;font-style:normal}
+  select option:checked{background-color:#2c3e66;color:#fff}
 </style>
 </head>
 <body>
