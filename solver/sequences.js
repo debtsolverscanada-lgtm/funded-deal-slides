@@ -43,6 +43,8 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
       note: s(d.note || '').slice(0, 500) };
     if (!out.name) throw new HttpError(400, 'Give the sequence a name.');
     if (s(d.from || '').trim() && !out.from) throw new HttpError(400, '“Sent from” must be an email address (or leave it empty to use the board’s rep).');
+    // only an address someone on the team really sends from (Team & settings → "Sends email & texts as")
+    if (out.from && !db.prepare('SELECT 1 FROM users WHERE lower(email_from) = ?').get(out.from)) throw new HttpError(400, `Nobody on the team sends from ${out.from}. Pick a sending address set in Team & settings, or leave it empty to use the board’s rep.`);
     if ((Array.isArray(d.steps) ? d.steps : []).some(x => Number(x && x.waitDays) < 0 || Number(x && x.waitHours) < 0)) throw new HttpError(400, 'Waits can’t be negative.');
     if (!out.boards.length) throw new HttpError(400, 'Pick at least one board.');
     if (!out.steps.length) throw new HttpError(400, 'Add at least one email.');
@@ -187,6 +189,7 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
       return send(res, 200, { rows, available: can }), true;
     }
     if (p === '/api/seq/enroll' && method === 'POST') {
+      if (!user || user.role === 'viewer') throw new HttpError(403, 'Your account can view boards but not send emails.'); // a sequence sends: viewers never send
       const b = await readBody(req, 4096), s = getSeq(String(b.seq || '')); if (!s) throw new HttpError(404, 'No such sequence.');
       const bid = String(b.board || ''), iid = String(b.item || ''); const { board, item } = mail.loadItem(user, bid, iid);
       if (!s.boards.includes(bid)) throw new HttpError(400, 'That sequence isn’t set up for this board.');

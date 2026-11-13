@@ -230,7 +230,7 @@
   const histSig = i => JSON.stringify([i.name, i.group, i.values, (i.updates || []).length, (i.subitems || []).length]);
   function histRow(r, opts = {}) {
     const what = r.kind === 'created' ? 'Created the item' : r.kind === 'deleted' ? 'Deleted the item' : r.kind === 'restored' ? 'Restored from the recycle bin' : r.kind === 'moved' ? `Moved to ${esc(r.after || 'another board')}`
-      : r.kind === 'update' ? `Posted an update: <span class="fx-mute">“${esc(String(r.after || '').slice(0, 160))}”</span>` : r.kind === 'board' ? esc(r.after || '')
+      : r.kind === 'update' ? `Posted an update: <span class="fx-mute" style="white-space:normal">“${esc(String(r.after || '').slice(0, 160))}”</span>` : r.kind === 'board' ? esc(r.after || '')
       : r.col === '__subitems' ? 'Changed subitems' : r.col === '__subdel' ? `Deleted subitem${String(r.before || '').includes('”, “') ? 's' : ''} ${esc(r.before || '')}`
       : `<b>${esc(r.colName)}</b>: ${r.before ? `<span class="was">${esc(r.before)}</span>` : '<span class="fx-mute">empty</span>'}<span class="arrow">→</span>${r.after ? esc(r.after) : '<span class="fx-mute">empty</span>'}`;
     const src = r.source === 'monday' ? '<span class="src">From Monday</span>' : r.source === 'undo' ? '<span class="src">Via undo</span>' : r.source === 'restore' ? '' : ['api', 'link', 'form', 'automation'].includes(r.source) ? `<span class="src">${esc(r.source === 'form' ? 'Form' : r.source === 'link' ? 'Lead link' : r.source === 'api' ? 'API' : 'Automation')}</span>` : '';

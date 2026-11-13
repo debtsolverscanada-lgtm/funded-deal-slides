@@ -705,7 +705,7 @@ body:has(.bulkbar) .toasts { bottom: calc(96px + env(safe-area-inset-bottom, 0px
 .board tr.tv-new td { background: rgba(255,255,255,0.07); }
 .g-grip { opacity: 0; padding: 0 4px; font-size: 12px; }
 .group-head:hover .g-grip, .g-grip:focus { opacity: 1; }
-.icon-btn.g-up { display: none; } @media (max-width: 780px) { .icon-btn.g-up { display: inline-flex; } }
+.icon-btn.g-up { display: none; } @media (max-width: 780px) { .icon-btn.g-up { display: inline-flex; align-items: center; justify-content: center; } .group-head:has(.g-up) { column-gap: 6px; } }
 /* pop-ups (status, labels, menus): items never squash; the list scrolls */
 .pop > * { flex: none; }
 .pop .chip[hidden] { display: none; }
@@ -768,7 +768,7 @@ body:has(.bulkbar) .toasts { bottom: calc(96px + env(safe-area-inset-bottom, 0px
 .head:not(.compact) { padding-bottom: 0; }
 .head:not(.compact) .head-row { gap: 8px; }
 .head .hd-title { align-items: center; margin-bottom: 2px; }
-.head .hd-title .board-title { font-size: 28px; font-weight: 600; letter-spacing: -0.02em; background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 2px 8px; margin-left: -8px; min-width: 0; width: auto; max-width: 46vw; flex: 0 1 auto; text-overflow: ellipsis; }
+.head .hd-title .board-title { font-size: 28px; font-weight: 600; letter-spacing: -0.02em; background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 2px 8px; margin-left: -8px; min-width: 0; width: auto; max-width: calc(100% - 56px); flex: 0 1 auto; text-overflow: ellipsis; } /* a long name uses the row's free width (the actions wrap below it), leaving room for the switch arrow */
 .head .hd-title .board-title:hover { border-color: var(--line); }
 .head .hd-title .board-title:focus { border-color: var(--line-2); outline: none; }
 .head .hd-switch { display: block; flex: none; width: 30px; min-width: 30px; height: 30px; padding: 0; color: transparent; border-radius: 8px; background: transparent url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%23a1a1aa" stroke-width="2" stroke-linecap="round"><path d="m7 10 5 5 5-5"/></svg>') center / 18px no-repeat; border: 1px solid transparent; cursor: pointer; appearance: none; -webkit-appearance: none; }
@@ -1699,13 +1699,18 @@ html.mx-off.pet-docked .pet svg { animation: none; }
   document.addEventListener('focusin', e => { if (tvOn() && e.target.closest && e.target.closest('#content .tablewrap[data-tw]')) { try { tvCheck(); } catch (x) { console.error(x); } } });
 
   function render() {
-    renderRail(); renderHead(); renderContent(); renderLayer(); renderNav();
+    // a held redraw can land just as the Search box is clicked: the new box keeps the focus and caret, so typing isn't lost
+    const sa = document.activeElement, sk = sa && sa.id === 'search' ? [sa.selectionStart, sa.selectionEnd] : null;
+    renderRail(); renderHead();
+    if (sk) { const ns = $('#search'); if (ns && ns !== document.activeElement) { ns.focus({ preventScroll: true }); try { ns.setSelectionRange(sk[0], sk[1]); } catch (x) {} } }
+    renderContent(); renderLayer(); renderNav();
     fillNames(); renderBanner();
   }
   // the board's own write-back setting decides what the top banner promises
   function renderBanner() {
     const el = document.getElementById('banner'); if (!el) return;
     const wb = S.page === 'board' && S.writeback && S.writeback.has(S.boardId);
+    if (S.page !== 'board' && S.writeback && S.writeback.size) { const names = (S.boards || []).filter(b => S.writeback.has(b.id)).map(b => b.name); if (names.length) { el.textContent = `Real client data. Changes on ${names.join(', ')} are written back to Monday; other boards stay in Solver.ca. Emails, texts and payment links you send really go out.`; return; } }
     el.textContent = wb ? 'Changes on this board are written back to Monday, and emails and texts sent from its leads really go out.' : 'Real client data. Changes here stay in Solver.ca and don’t go back to Monday, but emails, texts and payment links you send to leads really go out.';
   }
 
@@ -1884,7 +1889,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
       EMAIL_DRAFTS[m.board + '/' + m.item] = { subject: m.subject || '', text: m.text || '' }; // kept so Esc / a backdrop click doesn't lose it
       if ((m.msg === 'Add a subject.' && (m.subject || '').trim()) || (m.msg === 'Write a message.' && (m.text || '').trim())) { m.msg = !(m.subject || '').trim() ? 'Add a subject.' : !(m.text || '').trim() ? 'Write a message.' : ''; const w = document.querySelector('#em-text') && document.querySelector('#em-text').closest('.em-form').nextElementSibling; if (w && w.classList.contains('em-warn')) { if (m.msg) w.textContent = m.msg; else w.remove(); } } }
     if (t && t.id === 'bl-text') { const n = document.querySelector('#bl-count'); if (n) n.textContent = `${t.value.length}/600 characters`; }
-    if (t && S.modal && S.modal.type === 'blast' && (t.id === 'bl-subject' || t.id === 'bl-text')) { if (t.id === 'bl-subject') S.modal.subject = t.value; else S.modal.text = t.value; if (S.modal.preview) { const s0 = t.selectionStart, s1 = t.selectionEnd; S.modal.preview = null; renderLayer(); const f = $('#' + t.id); if (f) { f.focus(); try { f.setSelectionRange(s0 ?? f.value.length, s1 ?? f.value.length); } catch (x) {} } } } }); // keep the caret where the user is typing
+    if (t && S.modal && S.modal.type === 'blast' && (t.id === 'bl-subject' || t.id === 'bl-text')) { if (t.id === 'bl-subject') S.modal.subject = t.value; else S.modal.text = t.value; if (S.modal.items.length === 1 && S.modal.channel === 'text' && t.id === 'bl-text') EMAIL_DRAFTS['text:' + S.modal.board + '/' + S.modal.items[0]] = t.value; if (S.modal.preview) { const s0 = t.selectionStart, s1 = t.selectionEnd; S.modal.preview = null; renderLayer(); const f = $('#' + t.id); if (f) { f.focus(); try { f.setSelectionRange(s0 ?? f.value.length, s1 ?? f.value.length); } catch (x) {} } } } }); // keep the caret where the user is typing
   // Home banner quotes: the motto first, then roasts and inside jokes (no client names, ever), rotating every ~10 s.
   // 'ds' = DebtSolvers workspaces, 'ms' = MortgageSolvers, 'all' = both.
   const MOTTO = '“Summer 2019 and a million dollars after taxes.”';
@@ -2445,19 +2450,20 @@ html.mx-off.pet-docked .pet svg { animation: none; }
     const byDay = {};
     const junkG = new Set((b.groups || []).filter(g => /junk|unqualif/i.test(g.name || '')).map(g => g.id)); // never followed up
     const overdueCol = /follow|due|deadline|next|callback/i.test(col.title);
-    const od = key => overdueCol && key < today ? ' overdue' : '';
+    const closedG = new Set((b.groups || []).filter(g => /signed|funded|closed|\blost\b|dead/i.test(g.name || '')).map(g => g.id)); // won/dead leads show, but aren't overdue (matches the follow-up counts)
+    const od = (key, i) => overdueCol && key < today && !(i ? [i] : byDay[key] || []).every(x => closedG.has(x.group)) ? ' overdue' : '';
     visibleItems().forEach(i => { const v = (i.values || {})[col.id]; if (v && !junkG.has(i.group)) (byDay[v] = byDay[v] || []).push(i); });
     const days = Array.from({ length: 42 }, (_, k) => new Date(y, m, 1 - first.getDay() + k));
     const dow = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => `<div class="cal-dow">${d}</div>`).join('');
     const cells = days.map(d => {
       const key = ymd(d), list = byDay[key] || [];
-      return `<div class="cal-day ${d.getMonth() !== m ? 'out' : ''} ${key === today ? 'today' : ''}"><span class="cal-num">${d.getDate()}</span><div class="cal-list">${list.map(i => { const l = sc && labelOf(sc, (i.values || {})[sc.id]); return `<button class="cal-chip ${l ? '' : 'plain'}${od(key)}" dir="auto" style="${l ? '--c:' + esc(l.color) : ''}" data-act="open" data-item="${esc(i.id)}" title="${esc(i.name)}${l ? ' · ' + esc(l.label) : ''}${od(key) ? ' · Overdue' : ''}">${esc(i.name)}</button>`; }).join('')}</div></div>`;
+      return `<div class="cal-day ${d.getMonth() !== m ? 'out' : ''} ${key === today ? 'today' : ''}"><span class="cal-num">${d.getDate()}</span><div class="cal-list">${list.map(i => { const l = sc && labelOf(sc, (i.values || {})[sc.id]); return `<button class="cal-chip ${l ? '' : 'plain'}${od(key, i)}" dir="auto" style="${l ? '--c:' + esc(l.color) : ''}" data-act="open" data-item="${esc(i.id)}" title="${cardName(b, i)}${l ? ' · ' + esc(l.label) : ''}${od(key, i) ? ' · Overdue' : ''}">${cardName(b, i)}</button>`; }).join('')}</div></div>`;
     }).join('');
     const inMonth = Object.entries(byDay).filter(([k]) => k.startsWith(`${y}-${pad(m + 1)}`)).reduce((a, [, v]) => a + v.length, 0);
     if (isNarrow()) {
       // phones: an agenda of the month's days that have something on them
       const keys = Object.keys(byDay).filter(k => k.startsWith(`${y}-${pad(m + 1)}`)).sort();
-      const chip = i => { const l = sc && labelOf(sc, (i.values || {})[sc.id]); return `<button class="cal-chip ${l ? '' : 'plain'}${od((i.values || {})[col.id])}" dir="auto" style="${l ? '--c:' + esc(l.color) : ''}" data-act="open" data-item="${esc(i.id)}">${esc(i.name)}${l ? ` · ${esc(l.label)}` : ''}</button>`; };
+      const chip = i => { const l = sc && labelOf(sc, (i.values || {})[sc.id]); return `<button class="cal-chip ${l ? '' : 'plain'}${od((i.values || {})[col.id], i)}" dir="auto" style="${l ? '--c:' + esc(l.color) : ''}" data-act="open" data-item="${esc(i.id)}">${cardName(b, i)}${l ? ` · ${esc(l.label)}` : ''}</button>`; };
       const days2 = keys.map(k => `<div class="ag-day ${k === today ? 'today' : ''}${od(k)}"><div class="ag-date">${esc(new Date(k + 'T12:00:00').toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' }))}${k === today ? ' · Today' : od(k) ? ' · Overdue' : ''}</div>${byDay[k].map(chip).join('')}</div>`).join('');
       return `<div class="cal-head"><h3>${esc(first.toLocaleString('en-CA', { month: 'long', year: 'numeric' }))}</h3>
       <span class="cal-nav"><button class="btn" data-act="cal-nav" data-d="-1" aria-label="Previous month">‹</button><button class="btn" data-act="cal-nav" data-d="0">Today</button><button class="btn" data-act="cal-nav" data-d="1" aria-label="Next month">›</button></span>
@@ -2580,13 +2586,13 @@ html.mx-off.pet-docked .pet svg { animation: none; }
         const fgrid = W ? `<div class="fgrid">${b.columns.map(c => `<div class="fcell ${WIDE_COL.includes(c.type) ? 'span3' : ''}"><div class="f-label">${isLocked(c, b) ? IC.lock : ''}${esc(c.title)}</div><div class="f-value ${c.format === 'currency' ? 'currency' : ''}" ${c.format === 'currency' ? 'style="position:relative"' : ''}>${c.format === 'currency' ? '<span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted);font-family:var(--f-data)">$</span>' : ''}${cellEditor(c, i, true)}</div></div>`).join('')}<div class="fcell">${groupSel}</div></div>
           ${(b.subColumns || []).length || (i.subitems || []).length ? `<div class="dw-subs"><h4 class="sec-title">Subitems · ${(i.subitems || []).length}</h4>${subTable(b, i)}</div>` : ''}
           ${S.canWrite ? `<div class="dw-del"><button class="btn danger" data-act="delete-item" data-item="${esc(i.id)}">${S.confirmDelete === 'i:' + i.id ? 'Click again to delete this item' : 'Delete item'}</button></div>` : ''}` : '';
-        const log = (i.activity || []).map(a => `<li><time>${esc(fmtTime(a.at))}</time><span class="${sys(a) ? 'auto' : ''}">${sys(a) ? '' : `<span data-uid="${esc(a.by)}">${esc((S.nameOf && S.nameOf[a.by]) || (a.by === S.uid && S.me && S.me.name ? S.me.name + ' (you)' : 'Someone'))}</span>: `}${esc(a.text)}</span></li>`).join('');
+        const log = (i.activity || []).map(a => `<li><time>${esc(fmtTime(a.at))}</time><span class="${sys(a) ? 'auto' : ''}">${sys(a) ? '' : `<span data-uid="${esc(a.by)}">${esc((S.nameOf && S.nameOf[a.by]) || (a.by === S.uid && S.me && S.me.name ? S.me.name + ' (you)' : a.byName || 'Someone'))}</span>: `}${esc(a.text)}</span></li>`).join('');
         const sc = b.subColumns || [];
         const subs = (i.subitems || []).map(s => `<div class="subcard"><b>${esc(s.name)}</b><span class="card-meta">${sc.map(c => { const v = (s.values || {})[c.id]; if (v == null || v === '') return ''; const l = c.type === 'status' && labelOf(c, v); return l ? `<span class="pill" style="--c:${esc(l.color)}">${esc(l.label)}</span>` : `<span>${esc(c.title)}: ${esc(describe(c, v))}</span>`; }).join('')}</span></div>`).join('');
         html += `<div class="scrim" data-act="close-item"></div>
         <aside class="drawer ${W ? 'wide' : ''}" role="dialog" aria-modal="true" tabindex="-1" data-key="${esc(i.id + '|' + dtab + (W ? '|w' : ''))}" aria-label="${esc(i.name)}">
           <div class="drawer-head"><input class="drawer-title" data-edit="name" data-item="${esc(i.id)}" value="${esc(i.name)}" title="${esc(i.name)}" aria-label="Item name" ${S.canWrite ? '' : 'readonly'}>
-            <div class="drawer-actions">${canSendMsgs() && contactBoard(b) ? `<button class="btn" data-act="seq-lead" data-item="${esc(i.id)}"><span class="emo">📨</span> Sequences</button>` : ''}${canSendMsgs() && contactBoard(b) ? `<button class="btn" data-act="pay-open" data-item="${esc(i.id)}"><span class="emo">💳</span> Request payment</button>` : ''}${canSendMsgs() && (b.columns || []).some(c => c.type === 'email' && String((i.values || {})[c.id] || '').includes('@')) ? `<button class="btn" data-act="compose-email" data-item="${esc(i.id)}">✉ Email</button>` : ''}${canSendMsgs() && (b.columns || []).some(c => c.type === 'phone' && String((i.values || {})[c.id] || '').replace(/\D/g, '').length >= 10) ? `<button class="btn" data-act="compose-text" data-item="${esc(i.id)}"><span class="emo">💬</span> Text</button>` : ''}${S.canWrite ? `<button class="btn" data-act="dup-item" data-item="${esc(i.id)}">Duplicate</button>` : ''}<button class="btn" data-act="close-item">Close</button></div></div>
+            <div class="drawer-actions">${canSendMsgs() && (b.columns || []).some(c => c.type === 'email' && String((i.values || {})[c.id] || '').includes('@')) ? `<button class="btn" data-act="compose-email" data-item="${esc(i.id)}">✉ Email</button>` : ''}${canSendMsgs() && (b.columns || []).some(c => c.type === 'phone' && String((i.values || {})[c.id] || '').replace(/\D/g, '').length >= 10) ? `<button class="btn" data-act="compose-text" data-item="${esc(i.id)}"><span class="emo">💬</span> Text</button>` : ''}${canSendMsgs() && contactBoard(b) ? `<button class="btn" data-act="seq-lead" data-item="${esc(i.id)}"><span class="emo">📨</span> Sequences</button>` : ''}${canSendMsgs() && contactBoard(b) ? `<button class="btn" data-act="pay-open" data-item="${esc(i.id)}"><span class="emo">💳</span> Request payment</button>` : ''}${S.canWrite ? `<button class="btn" data-act="dup-item" data-item="${esc(i.id)}">Duplicate</button>` : ''}<button class="btn" data-act="close-item">Close</button></div></div>
           ${W ? `<div class="dw-split"><div class="dw-left">${fgrid}</div><div class="dw-right">` : ''}<div class="drawer-tabs" role="tablist">
             ${[...(b.form ? [['fact', 'Fact find']] : []), ['updates', `Updates · ${(i.updates || []).length}`], ...(W ? [] : [['info', 'Info']]), ...(window.SolverExt ? SolverExt.drawerTabs(b, i) : []), ['history', 'History']].map(([k, l]) => `<button class="drawer-tab" role="tab" data-act="dtab" data-tab="${k}" aria-selected="${dtab === k}">${l}</button>`).join('')}
           </div>
@@ -3042,7 +3048,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
       const em = m.channel === 'email', pv = m.preview;
       const groups = {}; (pv ? pv.skipped : []).forEach(x => { (groups[x.why] = groups[x.why] || []).push(x.name); });
       return `<h3>${m.items.length === 1 ? `${em ? 'Email' : 'Text'} ${esc((itemById(m.items[0]) || {}).name || '1 lead')}` : `${em ? 'Mass email' : 'Mass text'} · ${m.items.length} selected`}</h3>
-        <p class="rail-note" style="margin-top:0">Each lead gets their <b>own</b> ${em ? 'email' : 'text'}, sent one at a time from ${em ? 'the board rep’s Gmail' : 'the board rep’s RingCentral line'} (you’ll see exactly which after Check). Use <code>{first name}</code> to personalise.${em ? ' An unsubscribe line is added at the bottom.' : ' “Reply STOP to opt out.” is added at the end.'}</p>
+        <p class="rail-note" style="margin-top:0">${m.items.length === 1 ? `Sent from` : `Each lead gets their <b>own</b> ${em ? 'email' : 'text'}, sent one at a time from`} ${em ? 'the board rep’s Gmail' : 'the board rep’s RingCentral line'} (you’ll see exactly which after Check). Use <code>{first name}</code> to personalise.${em ? ' An unsubscribe line is added at the bottom.' : ' “Reply STOP to opt out.” is added at the end.'}</p>
         <div class="em-form">
           ${em ? `<input class="field-input" id="bl-subject" placeholder="Subject" value="${esc(m.subject || '')}" maxlength="300">` : ''}
           <textarea class="field-input" id="bl-text" rows="${em ? 9 : 4}" maxlength="${em ? 20000 : 600}" placeholder="${em ? 'Hi {first name},\n\n…' : 'Hi {first name}, it’s … from DebtSolvers Canada. …'}">${esc(m.text || '')}</textarea>
@@ -3050,7 +3056,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
         </div>
         ${m.msg ? `<p class="em-warn">${esc(m.msg)}</p>` : ''}
         ${pv ? `<div class="bl-preview">
-          <p><b>${pv.count} will get it</b>${pv.count ? ` · from ${em ? esc(pv.from) : `${esc(pv.fromName || pv.from)}’s RingCentral line`} · about ${pv.minutes} min to send all` : ''}</p>
+          <p><b>${pv.count} will get it</b>${pv.count ? ` · from ${em ? esc(pv.from) : `${esc(pv.fromName || pv.from)}’s RingCentral line`}${m.items.length === 1 ? '' : ` · about ${pv.minutes} min to send all`}` : ''}</p>
           ${Object.keys(groups).length ? `<details><summary>${pv.skipped.length} skipped</summary><ul>${Object.entries(groups).map(([why, names]) => `<li><b>${esc(why)}</b> (${names.length}): ${esc(names.slice(0, 8).join(', '))}${names.length > 8 ? '…' : ''}</li>`).join('')}</ul></details>` : ''}
           ${(pv.unknown || []).length ? `<p class="em-warn">${esc(pv.unknown.join(', '))} won’t be filled in: it goes out as typed. Use {first name}, {name} or {rep}.</p>` : ''}
           ${pv.sample ? `<div class="bl-sample"><span class="rail-note">How ${esc(pv.sample.name)} will see it</span>${em ? `<b>${esc(pv.sample.subject)}</b>` : ''}<div class="u-text">${esc(pv.sample.text)}</div></div>` : ''}
@@ -3318,7 +3324,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
           KS.api('POST', '/api/blast/preview', body).then(r => { m.checking = false; m.preview = r; if (S.modal === m) renderLayer(); }).catch(e => { m.checking = false; m.preview = null; m.msg = e.message; if (S.modal === m) renderLayer(); });
         } else {
           m.sending = true; renderLayer();
-          KS.api('POST', '/api/blast/start', { ...body, expect: m.preview && m.preview.count }).then(r => { if (S.modal === m) { S.modal = null; renderLayer(); } S.selected = new Set(); render(); toast(r.total === 1 ? 'Sending now. It shows on the lead’s Updates.' : `Sending to ${r.total} leads, one at a time. Each one shows on the lead’s Updates.`); pollBlasts(); })
+          KS.api('POST', '/api/blast/start', { ...body, expect: m.preview && m.preview.count }).then(r => { if (m.items.length === 1) delete EMAIL_DRAFTS['text:' + m.board + '/' + m.items[0]]; if (S.modal === m) { S.modal = null; renderLayer(); } S.selected = new Set(); render(); toast(r.total === 1 ? 'Sending now. It shows on the lead’s Updates.' : `Sending to ${r.total} leads, one at a time. Each one shows on the lead’s Updates.`); pollBlasts(); })
             .catch(e => { m.sending = false; m.msg = e.message; if (S.modal === m) renderLayer(); });
         }
         break;
@@ -3357,7 +3363,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
         } else S.modal = { type: 'blast', channel: 'text', board: m.board, items: [m.item], text: `Hi {first name}, here's your secure payment link for ${amt} (${r.descr}): ${r.url}` }, renderLayer();
         break;
       }
-      case 'compose-text': { const b0 = board(); if (!b0) break; S.modal = { type: 'blast', channel: 'text', board: b0.id, items: [t.dataset.item] }; renderLayer(); break; }
+      case 'compose-text': { const b0 = board(); if (!b0) break; S.modal = { type: 'blast', channel: 'text', board: b0.id, items: [t.dataset.item], text: EMAIL_DRAFTS['text:' + b0.id + '/' + t.dataset.item] || '' }; renderLayer(); break; } // a half-typed text survives Esc, like an email
       case 'fx-err': toast(t.title || 'Formula problem'); break; // touch screens can't hover the tooltip
       case 'compose-email': {
         const id = t.dataset.item, b0 = board(); if (!b0) break;
@@ -3608,6 +3614,8 @@ html.mx-off.pet-docked .pet svg { animation: none; }
     }
     if (t.id === 'board-title') { const v = t.value.trim(); if (v && v !== b.name) { patchBoard({ name: v }); localBoard({ name: v }); } else { t.value = b.name; fitTitle(); } t.title = t.value; return; }
     const ed = t.dataset.edit; if (!ed) return;
+    // a half-cleared date (one part wiped) reads as "" in the browser: don't let that erase the saved date
+    if (ed === 'value' && t.type === 'date' && !t.value && t.validity && t.validity.badInput) { toast('Enter a real date, like 2026-11-12.'); t.value = t.defaultValue; return; }
     if (ed === 'value') return setValue(t.dataset.item, t.dataset.col, t.value.trim());
     if (ed === 'name') {
       const i = itemById(t.dataset.item), v = t.value.trim();
@@ -4107,7 +4115,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
     loadSummary(false);
     const first = String((S.me && S.me.name) || '').split(/\s+/)[0];
     const name = first && !/^your$/i.test(first) ? first : '';
-    const wsName = (workspaces().find(w => w.id === S.ws) || {}).name || 'your workspace';
+    const wsName = S.isGuest ? 'boards shared with you' : (workspaces().find(w => w.id === S.ws) || {}).name || 'your workspace'; // a guest's numbers add up every shared board, across workspaces
     const sm = S.summary && S.summary.ws === S.ws ? S.summary : null;
     const motionOk = (() => { let m = 'full'; try { m = localStorage.getItem('ks-motion') || 'full'; } catch (e) {} return m !== 'off' && !(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches); })();
     const top = `<div class="home-top home-hero"><video class="hero-vid" muted loop playsinline ${motionOk ? 'autoplay' : ''} preload="auto" poster="/media/home-banner.jpg" src="/media/home-banner.mp4" aria-hidden="true"></video><div class="hero-coin" aria-hidden="true"><div class="coin3d">${Array.from({ length: 10 }, (_, k) => `<i class="coin-edge" style="--z:${(k - 4.5) * 0.9}px"></i>`).join('')}<b class="coin-face front"><span class="c-val">19<small>¢</small></span><span class="c-ring"></span></b><b class="coin-face back"><span class="c-val">$</span><span class="c-ring"></span></b></div><div class="coin-shadow"></div></div><div class="hero-in"><p class="eyebrow">${esc(new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' }))}</p><h1>${greeting()}${name ? ', ' + esc(name) : ''}</h1><p class="hero-quote" aria-live="polite">${esc(heroQuote())}</p>${S.isGuest ? '<span class="pill guest-badge">Guest</span>' : ''}</div><div style="display:flex;gap:10px">${fx('homeTop') || ''}<button class="icon-round" data-act="sheet-profile" aria-label="Menu">${IC.menu}</button></div></div>`;
@@ -4147,7 +4155,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
       + btn('cal', 'go-calendar', 'Calendar', IC.cal) + btn('me', 'sheet-profile', 'Profile', `<span class="nwrap">${IC.user}${S.notifs.unread ? `<span class="nbadge">${S.notifs.unread > 9 ? '9+' : S.notifs.unread}</span>` : ''}</span>`);
   }
 
-  if (window.KSViews) KSViews.init({ S, board, itemById, visibleItems, labelOf, splitPeople, fileList, isFileCol, describe, colEditable, setValue, patchItem, patchBoard, localBoard, formulaResult, hue, initials, toast, render, renderHead, renderContent, renderLayer, savePage });
+  if (window.KSViews) KSViews.init({ S, board, cardName, itemById, visibleItems, labelOf, splitPeople, fileList, isFileCol, describe, colEditable, setValue, patchItem, patchBoard, localBoard, formulaResult, hue, initials, toast, render, renderHead, renderContent, renderLayer, savePage });
   // the page's internals the add-ons use (ext.js, automations.js, editor.js, extras.js)
   Object.assign(window.SolverApp = window.SolverApp || {}, { S, board, itemById, patchBoard, patchItem, localBoard, render, renderLayer, renderContent, scheduleRender, toast, esc, rid, normRule, describe, labelOf, fmtTime, splitPeople, colEditable, isLocked, fillNames, IC });
 

@@ -104,6 +104,8 @@ module.exports = function features(ctx) {
     if (s.startsWith('form:')) { const r = db.prepare('SELECT data FROM public_forms WHERE id = ?').get(s.slice(5)); return { id: s, name: `Form “${r ? (J(r.data) || {}).title || 'Form' : '?'}”`, source: 'form' }; }
     if (s === 'reminder') return { id: s, name: 'Date reminder', source: 'automation' };
     if (s === 'import') return { id: s, name: 'Import', source: 'import' };
+    if (s === 'sequence') return { id: s, name: 'Email sequence', source: 'automation' };
+    if (s === 'email' || s === 'text') return { id: s, name: s === 'email' ? 'Email reply' : 'Text reply', source: 'system' };
     return { id: s || 'system', name: s || 'Solver.ca', source: 'system' };
   }
   const baseKey = k => String(k).replace(/__d?t$/, '');

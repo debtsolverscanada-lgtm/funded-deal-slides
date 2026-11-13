@@ -427,7 +427,7 @@
         const x = (Math.max(r.s, from) - from) * ppd, w = Math.max(8, (Math.min(r.e, to) - Math.max(r.s, from) + 1) * ppd), hd = editable && w >= 28;
         const l = colorCol && colorCol.type === 'status' ? A.labelOf(colorCol, (it.values || {})[colorCol.id]) : null, col = l ? l.color : g.color;
         const tip = `${it.name}: ${ds(r.s)}${r.e !== r.s ? ' → ' + ds(r.e) : ''}${l ? ' · ' + l.label : ''}`;
-        return `<div class="tl-row"><div class="tl-label" style="width:${LW}px"><button data-act="open" data-item="${esc(it.id)}" title="${esc(it.name)}">${esc(it.name)}</button></div>
+        return `<div class="tl-row"><div class="tl-label" style="width:${LW}px"><button data-act="open" data-item="${esc(it.id)}" title="${A.cardName ? A.cardName(b, it) : esc(it.name)}">${A.cardName ? A.cardName(b, it) : esc(it.name)}</button></div>
           <div class="tl-track" style="width:${W}px"><div class="tl-bar" ${editable ? `data-edit="1"` : `data-act="open" data-item="${esc(it.id)}"`} data-tlbar="${esc(it.id)}" data-s="${r.s}" data-e="${r.e}" data-ppd="${ppd}" style="left:${x}px;width:${w}px${col ? `;--c:${esc(col)}` : ''}${w > 36 ? '' : ';padding:0'}" title="${esc(tip)}">${hd ? '<span class="tl-h l" data-h="l"></span>' : ''}${w > 36 ? esc(it.name) : ''}${hd ? '<span class="tl-h r" data-h="r"></span>' : ''}</div></div></div>`;
       }).join('');
       const more = list.length > n ? `<div class="tl-row tl-more"><div class="tl-label" style="width:${LW}px"><button data-vx="tl-more" data-g="${esc(g.id)}">Show ${Math.min(60, list.length - n)} more · ${list.length - n} hidden</button></div><div class="tl-track" style="width:${W}px"></div></div>` : '';
@@ -532,7 +532,7 @@
   }
   function itemCard(b, it, cols) {
     const sc = statusCols(b)[0], l = sc && A.labelOf(sc, (it.values || {})[sc.id]);
-    return `<button class="card" data-act="open" data-item="${esc(it.id)}" style="cursor:pointer"><span class="card-name">${esc(it.name)}</span><span class="card-meta">${l ? `<span class="pill" style="--c:${esc(l.color)}">${esc(l.label)}</span>` : ''}${cols.map(c => { const v = c.type === 'formula' ? '' : (it.values || {})[c.id]; return v === '' || v == null ? '' : `<span>${esc(c.title)}: ${esc(A.describe(c, v))}</span>`; }).join('')}</span></button>`;
+    return `<button class="card" data-act="open" data-item="${esc(it.id)}" style="cursor:pointer"><span class="card-name">${A.cardName ? A.cardName(b, it) : esc(it.name)}</span><span class="card-meta">${l ? `<span class="pill" style="--c:${esc(l.color)}">${esc(l.label)}</span>` : ''}${cols.map(c => { const v = c.type === 'formula' ? '' : (it.values || {})[c.id]; return v === '' || v == null ? '' : `<span>${esc(c.title)}: ${esc(A.describe(c, v))}</span>`; }).join('')}</span></button>`;
   }
 
   // ---------- Chart ----------
@@ -814,7 +814,7 @@
   // ---- widget editor (own overlay so the page's re-renders don't close it) ----
   const layer = document.createElement('div'); layer.id = 'vx-layer'; document.body.appendChild(layer);
   function renderModal() {
-    const m = D.modal; if (!m) { layer.innerHTML = ''; return; }
+    const m = D.modal; if (!m) { const had = layer.contains(document.activeElement) || document.activeElement === document.body; layer.innerHTML = ''; const r = D.ret; D.ret = null; if (had && r) setTimeout(() => { const el = document.querySelector(r) || document.querySelector('[data-vx="w-add"]'); if (el) el.focus(); }); return; } // focus goes back to the button that opened it
     const w = m.w, boards = selBoards(w);
     const opt = (v, l, cur) => `<option value="${esc(v)}" ${String(v) === String(cur ?? '') ? 'selected' : ''}>${esc(l)}</option>`;
     const colSel = (k, types, cur, none) => `<select class="field-input" data-wf="${k}">${none ? opt('', none, cur) : ''}${colTitles(boards, types).map(c => opt(c.title, c.title + (c.n < boards.length ? ` (${c.n} of ${boards.length} boards)` : ''), cur)).join('')}</select>`;
@@ -893,8 +893,8 @@
       case 'dash-share': { const d = curDash(); if (!d) return; d.shared = !d.shared; saveDash(d); A.toast(d.shared ? 'Shared with the team. Each person sees only the boards they can open.' : 'Only you see this dashboard now.'); break; }
       case 'dash-refresh': D.cache = {}; A.renderContent(); break;
       case 'dash-del': { const d = curDash(); if (!d) return; if (D.confirm !== 'd:' + d.id) { D.confirm = 'd:' + d.id; A.renderContent(); return; } D.confirm = null; KS.api('DELETE', '/api/dashboards/' + d.id).then(() => { D.list = D.list.filter(x => x.id !== d.id); D.cur = (D.list[0] || {}).id || null; A.renderContent(); }).catch(err => A.toast(err.message)); break; }
-      case 'w-add': D.modal = { i: null, w: { id: 'w' + Math.random().toString(36).slice(2, 10), type: 'number', boards: A.S.boardId && A.S.boards.some(x => x.id === A.S.boardId) ? [A.S.boardId] : [], measure: { kind: 'count' } } }; renderModal(); break;
-      case 'w-edit': { const d = curDash(); const w = d && d.widgets[Number(t.dataset.i)]; if (!w) return; D.modal = { i: Number(t.dataset.i), w: JSON.parse(JSON.stringify(w)) }; renderModal(); break; }
+      case 'w-add': D.ret = '[data-vx="w-add"]'; D.modal = { i: null, w: { id: 'w' + Math.random().toString(36).slice(2, 10), type: 'number', boards: A.S.boardId && A.S.boards.some(x => x.id === A.S.boardId) ? [A.S.boardId] : [], measure: { kind: 'count' } } }; renderModal(); break;
+      case 'w-edit': { const d = curDash(); const w = d && d.widgets[Number(t.dataset.i)]; if (!w) return; D.ret = `[data-vx="w-edit"][data-i="${Number(t.dataset.i)}"]`; D.modal = { i: Number(t.dataset.i), w: JSON.parse(JSON.stringify(w)) }; renderModal(); break; }
       case 'w-del': { const d = curDash(); const w = d && d.widgets[Number(t.dataset.i)]; if (!w) return; if (D.confirm !== 'w:' + w.id) { D.confirm = 'w:' + w.id; A.renderContent(); return; } D.confirm = null; d.widgets.splice(Number(t.dataset.i), 1); saveDash(d); break; }
       case 'w-move': { const d = curDash(), i = Number(t.dataset.i), j = i + Number(t.dataset.d); if (!d || j < 0 || j >= d.widgets.length) return; [d.widgets[i], d.widgets[j]] = [d.widgets[j], d.widgets[i]]; saveDash(d); break; }
       case 'w-save': { const d = curDash(), m = D.modal; if (!d || !m) return; if (!(m.w.boards || []).length) { A.toast('Pick at least one board.'); return; } defaults(m.w); if (m.i == null) d.widgets.push(m.w); else d.widgets[m.i] = m.w; D.modal = null; renderModal(); saveDash(d); break; }

@@ -102,7 +102,7 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
     const item = JSON.parse(r.data);
     const nu = { id: 'u' + crypto.randomBytes(6).toString('hex'), at: now(), ...upd };
     item.updates = [...(item.updates || []), nu];
-    if (activityText) item.activity = [{ at: now(), by: upd.by || 'automation', text: activityText }, ...(item.activity || [])].slice(0, 40);
+    if (activityText) item.activity = [{ at: now(), by: upd.by || 'automation', ...(upd.byName ? { byName: upd.byName } : {}), text: activityText }, ...(item.activity || [])].slice(0, 40);
     q.upsertDoc.run(path, `boards/${bid}/items`, iid, JSON.stringify(item), now(), upd.by || 'outreach');
     broadcast({ op: 'set', col: `boards/${bid}/items`, id: iid, data: item });
     if (integHooks.updateAdded) { try { integHooks.updateAdded(bid, iid, nu); } catch (e) { /* write-back only */ } }

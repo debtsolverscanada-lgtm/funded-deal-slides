@@ -53,11 +53,12 @@ module.exports = function stats({ db, q, now, HttpError, send }) {
     }
     return { moves };
   }
+  // an undo putting a lead back (e.g. Junk → back to Callbacks) isn't a new move: the undone move and its undo both drop out
   function solverMoves(boards, since) {
     const out = []; const un = v => { try { const x = JSON.parse(v); return typeof x === 'string' ? x : v; } catch (e) { return v; } };
     for (const lb of boards) {
       const gn = new Map((lb.b.groups || []).map(g => [g.id, kind(g.name)]));
-      let rows = []; try { rows = db.prepare("SELECT at, item, before, after FROM item_history WHERE board = ? AND col = '__group' AND undone = 0 AND at >= ?").all(lb.id, since); } catch (e) { continue; }
+      let rows = []; try { rows = db.prepare("SELECT at, item, before, after FROM item_history WHERE board = ? AND col = '__group' AND undone = 0 AND COALESCE(source, '') <> 'undo' AND at >= ?").all(lb.id, since); } catch (e) { continue; }
       // key by the Monday id when the item has one, so a move also in Monday's log counts once
       const mid = new Map(); if (rows.length) for (const d of q.docsInCol.all(`boards/${lb.id}/items`)) { try { const x = JSON.parse(d.data); if (x.mondayId) mid.set(String(d.id), String(x.mondayId)); } catch (e) {} }
       for (const r of rows) out.push({ board: lb.id, item: mid.get(String(r.item)) || String(r.item), to: gn.get(un(r.after)) || 'other', from: gn.get(un(r.before)) || 'other', day: ymd(Date.parse(r.at)) });
