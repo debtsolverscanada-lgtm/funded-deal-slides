@@ -38,6 +38,10 @@ module.exports = function crossboard({ db, q, now, broadcast, HttpError, readBod
     const act = rule && rule.on !== false && (rule.actions || []).find(a => a.type === type && String(a.board) === target);
     if (!act) throw new HttpError(403, 'No switched-on automation on this board does that.');
     const tb = doc('boards/' + target); if (!tb || !boardInfo(target)) throw new HttpError(404, 'The board this automation copies to isn’t in Solver.ca.');
+    // a board written back to Monday, copying into a board that is copied from Monday: Monday's own automation makes
+    // that copy (and Solver.ca picks it up), so making one here too would double it
+    const wb = new Set(String(process.env.MONDAY_WRITEBACK_BOARDS || '').split(/[\s,]+/).filter(Boolean));
+    if (wb.has(bid) && tb.source === 'monday' && process.env.MONDAY_WRITEBACK !== 'off') return send(res, 200, { ok: true, viaMonday: true, board: tb.name }), true;
     // the same lead copied there by this rule already (e.g. moved to Signed twice): don't make a second one
     const already = db.prepare("SELECT id FROM docs WHERE col = ? AND json_extract(data, '$.copiedFrom') = ?").get(`boards/${target}/items`, `${bid}/${iid}`);
     if (already && type === 'copy_to_board') return send(res, 200, { ok: true, id: already.id, already: true }), true;
@@ -51,6 +55,7 @@ module.exports = function crossboard({ db, q, now, broadcast, HttpError, readBod
     broadcast({ op: 'set', col: `boards/${target}/items`, id: newId, data });
     if (type === 'move_board') { q.deleteDoc.run(`boards/${bid}/items/${iid}`); broadcast({ op: 'delete', col: `boards/${bid}/items`, id: iid }); }
     try { if (hooks.itemSaved) hooks.itemSaved(target, newId, null, data); } catch (e) { /* sequences only */ }
+    try { if (type !== 'move_board' && hooks.newItem) hooks.newItem(target, newId, data); } catch (e) { /* NEW CLIENT banner */ }
     return send(res, 200, { ok: true, id: newId, board: tb.name }), true;
   }
   return { handle };

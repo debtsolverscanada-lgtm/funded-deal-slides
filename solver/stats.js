@@ -49,6 +49,15 @@ module.exports = function stats({ db, q, now, HttpError, send }) {
     }
     return { moves };
   }
+  function solverMoves(boards, since) {
+    const out = []; const un = v => { try { const x = JSON.parse(v); return typeof x === 'string' ? x : v; } catch (e) { return v; } };
+    for (const lb of boards) {
+      const gn = new Map((lb.b.groups || []).map(g => [g.id, kind(g.name)]));
+      let rows = []; try { rows = db.prepare("SELECT at, item, before, after FROM item_history WHERE board = ? AND col = '__group' AND undone = 0 AND at >= ?").all(lb.id, since); } catch (e) { continue; }
+      for (const r of rows) out.push({ board: lb.id, item: String(r.item), to: gn.get(un(r.after)) || 'other', from: gn.get(un(r.before)) || 'other', day: ymd(Date.parse(r.at)) });
+    }
+    return out;
+  }
   async function dials(since) {
     const url = env('STATS_CALLS_HOOK_URL'); if (!url) return null;
     try { const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ since: since + 'T05:00:00Z' }), signal: AbortSignal.timeout(90000) }); return (await r.json()).reps || null; } catch (e) { console.error('stats dials:', e.message); return null; }
@@ -58,10 +67,14 @@ module.exports = function stats({ db, q, now, HttpError, send }) {
   async function build() {
     const ws = weekStart(), today = ymd(Date.now()), month = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
     const boards = leadBoards();
-    const [mv, dl] = await Promise.all([mondayMoves(boards, ws), dials(ws)]);
+    // boards whose moves happen in Monday (copied from Monday, or written back to it) count from Monday's log;
+    // boards that live only in Solver.ca count from Solver.ca's own history
+    const wb = new Set(env('MONDAY_WRITEBACK_BOARDS').split(/[\s,]+/).filter(Boolean)), inMonday = lb => lb.mondayId && (lb.b.source === 'monday' || wb.has(lb.id));
+    const [mv, dl] = await Promise.all([mondayMoves(boards.filter(inMonday), ws), dials(ws)]);
+    mv.moves.push(...solverMoves(boards.filter(lb => !inMonday(lb)), ws));
     const reps = [], src = new Map();
     for (const lb of boards) {
-      const b = lb.b, dcol = colBy(b, /date entered/i), adc = colBy(b, /^ad name$/i), cpc = colBy(b, /campaign name/i), asc = colBy(b, /ad\s*set name/i);
+      const b = lb.b, dcol = colBy(b, /date entered/i), adc = colBy(b, /^ad( name)?$/i), cpc = colBy(b, /^campaign( name)?$/i) || colBy(b, /campaign name/i), asc = colBy(b, /^ad\s*set( name)?$/i) || colBy(b, /ad\s*set name/i);
       const gk = new Map((b.groups || []).map(g => [g.id, kind(g.name)]));
       let leadsToday = 0, leadsWeek = 0, uncontacted = 0, reachedWeek = 0;
       for (const r of q.docsInCol.all(`boards/${lb.id}/items`)) {

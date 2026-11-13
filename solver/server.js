@@ -300,7 +300,9 @@ function refreshClients(userId) {
   const row = q.userById.get(userId);
   for (const [res, u] of clients) if (u.id === userId) { if (!row || row.disabled) { clients.delete(res); res.end(); } else Object.assign(u, { email: row.email, role: row.role, name: row.name }); }
 }
-setInterval(() => { for (const res of [...clients.keys()]) sseWrite(res, ': ping\n\n'); }, 25000).unref();
+// a signed-out (or reset) session's open live-update streams are closed straight away
+function closeStreams(match) { for (const [res, u] of [...clients]) if (match(u)) { clients.delete(res); try { res.end(); } catch (e) {} } }
+setInterval(() => { for (const [res, u] of [...clients]) { if (u.token && !q.session.get(u.token)) { clients.delete(res); try { res.end(); } catch (e) {} continue; } sseWrite(res, ': ping\n\n'); } }, 25000).unref();
 
 // ---------- Penny's heads-ups ("buzz"): small, friendly updates shown by the pet ----------
 // Sent like other live updates, so private boards only reach people who can see them. Nothing is stored or sent outside.
@@ -588,7 +590,7 @@ const ext = require('./ext.js')({ db, q, now, broadcast, HttpError, readBody, se
 module.exports.integ = integ;
 // ---- history, undo, recycle bin, search, templates, public forms, connected columns, time tracking (features.js) ----
 const features = require('./features.js')({ db, q, now, broadcast, HttpError, readBody, send, canSee, mustSee, boardInfo, boardCache, itemVisible, restricted, lockedCols, lockError,
-  canWrite, integ, cleanAccess, itemNotifications, publicDir: PUBLIC_DIR, clearSummary: () => summaryCache.clear(), startIndex: require.main === module, clientIp,
+  canWrite, integ, ext, cleanAccess, itemNotifications, publicDir: PUBLIC_DIR, clearSummary: () => summaryCache.clear(), startIndex: require.main === module, clientIp,
   formulaText: (b, c, item) => { const r = formulaResult(b, item, c); return r.error ? '' : KSFormula.format(r.value); } });
 module.exports.features = features;
 // ---- a board's items as sent to everyone who sees all of them: built and gzipped once, kept until the next write ----
@@ -704,7 +706,7 @@ async function api(req, res, url) {
   // simple CSRF guard: state-changing calls must come from our own page (JSON + same-origin header)
   if (method !== 'GET' && req.headers['x-solver'] !== '1') throw new HttpError(403, 'Request refused.');
 
-  if (p === '/api/logout' && method === 'POST') { q.deleteSession.run(user.token); return send(res, 200, { ok: true }, { 'Set-Cookie': 'ks_session=; Path=/; Max-Age=0' }); }
+  if (p === '/api/logout' && method === 'POST') { q.deleteSession.run(user.token); closeStreams(x => x.token === user.token); return send(res, 200, { ok: true }, { 'Set-Cookie': 'ks_session=; Path=/; Max-Age=0' }); }
   if (p === '/api/me') return send(res, 200, { ...publicUser(user), twofa: user.totpOn, mustSetup2fa: user.needs2fa, signedInWith: user.method, timeZone: TIME_ZONE });
 
   // ---- two-factor: set up, turn off, new backup codes ----
@@ -761,7 +763,7 @@ async function api(req, res, url) {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
     // pages reconnect after 3-10 s (spread out, so a server restart isn't met by every page at once)
     res.write(`retry: ${3000 + Math.floor(Math.random() * 7000)}\n: connected\n\n`);
-    clients.set(res, { id: user.id, email: user.email, role: user.role, name: user.name });
+    clients.set(res, { id: user.id, email: user.email, role: user.role, name: user.name, token: user.token });
     req.on('close', () => clients.delete(res));
     return;
   }
@@ -825,7 +827,7 @@ async function api(req, res, url) {
         db.prepare('UPDATE users SET email_from = ? WHERE id = ?').run(ef || null, target.id);
       }
       if (typeof b.homeBoard === 'string') db.prepare('UPDATE users SET home_board = ? WHERE id = ?').run(b.homeBoard || null, target.id);
-      if (b.password) { db.prepare('UPDATE users SET pw = ? WHERE id = ?').run(hashPassword(String(b.password)), target.id); q.deleteUserSessions.run(target.id); }
+      if (b.password) { db.prepare('UPDATE users SET pw = ? WHERE id = ?').run(hashPassword(String(b.password)), target.id); q.deleteUserSessions.run(target.id); closeStreams(x => x.id === target.id); }
       if (typeof b.disabled === 'boolean') {
         if (target.id === user.id) throw new HttpError(400, 'You can’t turn off your own account.');
         db.prepare('UPDATE users SET disabled = ? WHERE id = ?').run(b.disabled ? 1 : 0, target.id);
@@ -1132,7 +1134,7 @@ async function api(req, res, url) {
         if (add || rem || put) appendToItem(data, add || {}, rem || {}, put || {});
       }
       if (newPerms) data.perms = cleanPerms(newPerms, data); // replaced as a whole, so a lock can be removed
-      if (isBoard && user.role !== 'admin' && Array.isArray(data.automations)) checkRuleLocks(user, before, data.automations);
+      if (isBoard && user.role !== 'admin' && Array.isArray(data.automations)) { checkRuleLocks(user, before, data.automations); checkRuleTargets(user, before, data.automations); }
       // locked columns can't be deleted, retyped or relabelled by someone they're locked for
       if (isBoard && user.role !== 'admin' && before && Array.isArray(data.columns)) {
         const locked = lockedCols(user, before);
@@ -1144,6 +1146,10 @@ async function api(req, res, url) {
       }
       if (isBoard && (method === 'PUT' || 'automations' in body)) ext.checkBoard(data, before); // rules are checked on save
       let stripped = [], guestNotes = null;
+      if (isItem && user.role !== 'guest' && user.role !== 'admin') guardUpdates(before, data, user);
+      // a copy an automation makes ("Signed → copy to Clients"): one per lead, however often it's moved back in
+      if (isItem && !before && data.copiedFrom && db.prepare("SELECT 1 FROM docs WHERE col = ? AND id != ? AND json_extract(data, '$.copiedFrom') = ?").get(col, id, String(data.copiedFrom)))
+        return send(res, 200, { ok: true, already: true });
       if (isItem) {
         if (user.role === 'guest') { checkGuestEdit(before, data, user, info); guestNotes = integ.guestRules(bid, before, data, user); }
         const badUrl = netguard.badLink(before, data, ((info && info.columns) || []).filter(c => c.type === 'link').map(c => c.id));
@@ -1163,6 +1169,7 @@ async function api(req, res, url) {
       integ.itemChanged(dp, before, data, user.id);
       try { itemNotifications(dp, before, data, user); } catch (e) { console.error('notifications:', e.message); }
       if (isItem) ext.itemSaved(dp, before, data, user);
+      if (isItem && !before && data.copiedFrom) { try { ext.newleads.noteItem(bid, id, data); } catch (e) {} } // NEW CLIENT banner
       if (guestNotes) integ.sendNotes(guestNotes.b, id, data, guestNotes.notes);
       return send(res, 200, stripped.length ? { ok: true, stripped: stripped.map(c => colTitle(info, c)) } : { ok: true });
     }
@@ -1259,6 +1266,38 @@ function checkRuleLocks(user, before, list) {
   }
 }
 // Guests may post updates (as themselves) and change guest-editable columns. Nothing else on an item.
+// members: an update is always signed by whoever posts it, and other people's updates (and replies) can't be
+// rewritten or removed by sending back a whole list. Your own you can edit or delete.
+function guardUpdates(before, data, user) {
+  if (!Array.isArray(data.updates)) return;
+  const js = v => JSON.stringify(v ?? null), mine = x => x && (x.by === user.id || x.by === 'automation');
+  const fix = (oldList, newList) => {
+    const old = new Map((oldList || []).filter(x => x && x.id).map(x => [x.id, x]));
+    const out = [];
+    for (const u of newList || []) {
+      if (!u || typeof u !== 'object') continue;
+      const was = u.id && old.get(u.id);
+      if (!was) { out.push(u.by === 'automation' ? { ...u, byName: 'Automation' } : { ...u, by: user.id, byName: user.name }); continue; }
+      if (mine(was)) { out.push({ ...u, by: was.by, byName: was.byName, replies: Array.isArray(u.replies) ? fix(was.replies, u.replies) : u.replies }); continue; }
+      // someone else's: keep it exactly as it was, apart from new replies, likes and seen marks
+      out.push({ ...u, text: was.text, by: was.by, byName: was.byName, at: was.at, ...(was.html !== undefined || u.html !== undefined ? { html: was.html } : {}), replies: fix(was.replies, Array.isArray(u.replies) ? u.replies : was.replies) });
+    }
+    // someone else's that went missing: put back where it was
+    (oldList || []).forEach((x, i) => { if (x && x.id && !mine(x) && !out.some(o => o.id === x.id)) out.splice(Math.min(i, out.length), 0, x); });
+    return out;
+  };
+  if (js(before && before.updates) === js(data.updates)) return;
+  data.updates = fix(before ? before.updates : [], data.updates);
+}
+// members can't point a "copy to / move to board" rule at a board they can't see (only an admin sets those up)
+function checkRuleTargets(user, before, list) {
+  const old = new Set(((before && before.automations) || []).flatMap(r => (r && Array.isArray(r.actions) ? r.actions : []).filter(a => a && (a.type === 'copy_to_board' || a.type === 'move_board')).map(a => a.type + ':' + a.board)));
+  for (const r of list) for (const a of (r && Array.isArray(r.actions) ? r.actions : [])) {
+    if (!a || (a.type !== 'copy_to_board' && a.type !== 'move_board') || old.has(a.type + ':' + a.board)) continue;
+    const t = boardInfo(String(a.board || ''));
+    if (!t || !canSee(user, t.access)) throw new HttpError(403, 'Only an admin can set up an automation that sends items to a board you can’t see.');
+  }
+}
 function checkGuestEdit(before, after, user, info) {
   if (!before) throw new HttpError(403, 'Guests can’t add items.');
   const no = msg => { const e = new HttpError(403, msg || 'Guests can post updates and fill in the columns the admin opened to guests, nothing else.'); e.code = 'locked'; return e; };

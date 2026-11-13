@@ -36,7 +36,7 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
   const EMAIL = /^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[^\s@<>(),;:"]+$/;
   const env = k => String(process.env[k] || '').trim();
   const fromOf = user => { const r = db.prepare('SELECT email_from FROM users WHERE id = ?').get(user.id); const f = r && String(r.email_from || '').trim().toLowerCase(); return f && EMAIL.test(f) ? f : ''; };
-  const canSendRole = user => !!user && (user.role === 'admin' || user.role === 'member' || !!fromOf(user));
+  const canSendRole = user => !!user && user.role !== 'viewer' && (user.role === 'admin' || user.role === 'member' || !!fromOf(user));
   // A board's sender: the one non-admin person on the board's access list who has a sending address (Mariel on
   // Mariel Leads). Anyone who can see that board emails and texts as that rep; a board with no rep uses the
   // sender's own address.
@@ -50,7 +50,8 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
       if (members.includes(lc(u.email)) && EMAIL.test(lc(u.email_from))) froms.add(lc(u.email_from));
     return froms.size === 1 ? [...froms][0] : '';
   }
-  const sendFromFor = (user, bid) => boardFrom(bid) || fromOf(user);
+  // viewers never send; a guest sends only once an admin gave them their own address
+  const sendFromFor = (user, bid) => !user || user.role === 'viewer' || (user.role === 'guest' && !fromOf(user)) ? '' : boardFrom(bid) || fromOf(user);
   const nameForFrom = from => (db.prepare('SELECT name FROM users WHERE lower(email_from) = ?').get(lc(from)) || {}).name || '';
   const asNote = (user, from) => from && from !== fromOf(user) ? `\n(sent by ${user.name || user.email} as ${from})` : '';
   const emailLog = db.prepare('INSERT INTO email_log (id, at, user_id, from_email, to_email, board, item, subject, message_id, thread_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');

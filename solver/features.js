@@ -357,6 +357,7 @@ module.exports = function features(ctx) {
     broadcast({ op: 'set', col: `boards/${bid}/items`, id: iid, data });
     integ.itemChanged(p, before, data, user.id);
     try { itemNotifications(p, before, data, user); } catch (e) {}
+    try { if (ctx.ext) ctx.ext.itemSaved(p, before, data, user); } catch (e) { console.error('undo/restore hooks:', e.message); } // write-back to Monday, sequences
   }
   function saveBoard(bid, data, by, prevAccess) {
     q.upsertDoc.run('boards/' + bid, 'boards', bid, JSON.stringify(data), now(), by);
