@@ -157,7 +157,7 @@ module.exports = function blast({ db, q, now, HttpError, readBody, send, mustSee
       const b = await readBody(req, 256 * 1024), channel = String(b.channel || '');
       const from = checkReady(user, channel, b.board), msg = readMsg(b, channel), bid = String(b.board || '');
       const { go, skip } = plan(user, bid, Array.isArray(b.items) ? b.items : [], channel, msg);
-      if (!go.length) throw new HttpError(400, 'None of the selected leads can get this.');
+      if (!go.length) throw skip.some(s => s.why === 'Already got this same message in the last day') ? new HttpError(409, 'These leads already got this message or are in a blast that’s sending it.') : new HttpError(400, 'None of the selected leads can get this.');
       if (user.role !== 'admin' && go.length > MEMBER_MAX) throw new HttpError(403, `That’s ${go.length} leads. Blasts over ${MEMBER_MAX} need an admin to send them.`);
       if (Number(b.expect) && Number(b.expect) !== go.length) throw new HttpError(409, 'The list changed since the preview. Check it again.');
       const id = 'bl_' + crypto.randomBytes(9).toString('base64url');
