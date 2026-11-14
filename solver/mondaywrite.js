@@ -66,6 +66,15 @@ module.exports = function mondaywrite({ db, q, now, broadcast, HttpError, send, 
     }
   }
 
+  // A Monday date with a time (Solver.ca keeps the instant in "<col>__dt" and shows the local day): Monday stores it in UTC,
+  // so a new day is sent as that instant moved to the new day — the time stays, never wiped by a { date } alone.
+  const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: env('KS_TIMEZONE') || 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' });
+  function withTime(day, dt) {
+    const t = Date.parse(dt), d = Date.parse(String(day || '').slice(0, 10)); if (isNaN(t) || isNaN(d)) return null;
+    const iso = new Date(t + Math.round((d - Date.parse(dayFmt.format(new Date(t)))) / 864e5) * 864e5).toISOString();
+    return { date: iso.slice(0, 10), time: iso.slice(11, 19) };
+  }
+
   // ---------- queue ----------
   const add = (bid, iid, op, payload, by) => { db.prepare("INSERT INTO monday_out (at, board, item, op, payload, status, by) VALUES (?, ?, ?, ?, ?, 'queued', ?)").run(now(), String(bid), String(iid), op, JSON.stringify(payload), by || ''); kick(); };
   let busy = false, again = false;
@@ -77,11 +86,21 @@ module.exports = function mondaywrite({ db, q, now, broadcast, HttpError, send, 
         const r = db.prepare("SELECT * FROM monday_out WHERE status = 'queued' ORDER BY id LIMIT 1").get(); if (!r) break;
         const p = JSON.parse(r.payload);
         db.prepare("UPDATE monday_out SET status = 'sending' WHERE id = ?").run(r.id); // claimed: a restart mid-call never posts the same note twice
+        // a write retried late (e.g. re-queued after a restart) never undoes a newer change that already reached Monday:
+        // a later move of the same item wins, and so do the columns a later write already set
+        if (r.op === 'move' || r.op === 'values') {
+          const later = db.prepare("SELECT payload FROM monday_out WHERE board = ? AND item = ? AND op = ? AND id > ? AND status = 'done'").all(r.board, r.item, r.op, r.id).map(x => JSON.parse(x.payload));
+          if (r.op === 'move' && later.length) { db.prepare("UPDATE monday_out SET status = 'skipped', error = 'A newer move was already sent', done_at = ? WHERE id = ?").run(now(), r.id); continue; }
+          for (const l of later) {
+            const ks = new Set([...Object.keys(l.values || {}), ...Object.keys((l.raw && l.raw.values) || {}), ...(l.raw && l.raw.name !== undefined ? ['name'] : [])]);
+            for (const k of ks) { if (p.values) delete p.values[k]; if (p.raw && p.raw.values) delete p.raw.values[k]; if (k === 'name' && p.raw) delete p.raw.name; }
+          }
+        }
         try {
           if (r.op === 'values' && p.raw) { // queued while Monday's column types couldn't be read: converted now
             const cols = await mondayCols(p.bmid); p.values = {};
             if (p.raw.name !== undefined) p.values.name = p.raw.name;
-            for (const [k, a] of Object.entries(p.raw.values || {})) { const t = cols.get(k); if (!t) continue; const mv = toMonday(t, a); if (mv !== undefined) p.values[k] = mv; }
+            for (const [k, a] of Object.entries(p.raw.values || {})) { const t = cols.get(k); if (!t) continue; const mv = t === 'date' && p.raw.dt && p.raw.dt[k] ? p.raw.dt[k] : toMonday(t, a); if (mv !== undefined) p.values[k] = mv; }
           }
           if (r.op === 'values' && !Object.keys(p.values || {}).length) { /* nothing Monday can take */ }
           else if (r.op === 'move') await gql('mutation($i: ID!, $g: String!) { move_item_to_group(item_id: $i, group_id: $g) { id } }', { i: p.mid, g: p.group });
@@ -127,12 +146,13 @@ module.exports = function mondaywrite({ db, q, now, broadcast, HttpError, send, 
       for (const k of keys) {
         const a = (after.values || {})[k], bv = (before.values || {})[k]; if (JSON.stringify(a ?? '') === JSON.stringify(bv ?? '')) continue;
         raw.values[k] = a ?? '';
+        const dt = (after.values || {})[k + '__dt'], wt = a && dt ? withTime(a, dt) : null;
+        if (wt) (raw.dt = raw.dt || {})[k] = wt;
       }
-      if (!Object.keys(raw.values).length) { if (values.name) add(bid, iid, 'values', { mid, bmid: boardMid(bid, b), values }, who); return; }
-      let cols; try { cols = await mondayCols(boardMid(bid, b)); }
-      catch (e) { add(bid, iid, 'values', { mid, bmid: boardMid(bid, b), raw }, who); return; } // Monday unreachable: column types are read when the queue sends it
-      for (const [k, a] of Object.entries(raw.values)) { const t = cols.get(k); if (!t) continue; const mv = toMonday(t, a); if (mv !== undefined) values[k] = mv; }
-      if (Object.keys(values).length) add(bid, iid, 'values', { mid, bmid: boardMid(bid, b), values }, who);
+      // queued right away and converted to Monday's column types when sent: two quick changes reach Monday in the order
+      // they were made (waiting here for the column types could let the second one queue first and be overwritten)
+      if (Object.keys(raw.values).length) add(bid, iid, 'values', { mid, bmid: boardMid(bid, b), raw }, who);
+      else if (values.name) add(bid, iid, 'values', { mid, bmid: boardMid(bid, b), values }, who);
     } catch (e) { console.error('monday write (diff):', e.message); }
   }
   // a note posted by the server itself (email sent, reply received, text sent…)

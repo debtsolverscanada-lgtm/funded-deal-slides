@@ -1808,7 +1808,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
     return `<div class="tabs" role="group" aria-label="View">
           <button class="tab" data-act="view" data-v="table" aria-pressed="${S.view === 'table' && !S.viewId}">Main table</button>
           ${(b.views || []).map(v => `<button class="tab" data-act="saved-view" data-id="${esc(v.id)}" aria-pressed="${S.viewId === v.id}" title="${esc(v.name)}" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(v.name)}</button>`).join('')}
-          <button class="tab" data-act="view" data-v="kanban" aria-pressed="${S.view === 'kanban' && !S.viewId}">Kanban</button>
+          <button class="tab" data-act="view" data-v="kanban" aria-pressed="${S.view === 'kanban' && !S.viewId}">${dsPipeline(b) ? 'Pipeline' : 'Kanban'}</button>
           <button class="tab" data-act="view" data-v="calendar" aria-pressed="${S.view === 'calendar' && !S.viewId}">Calendar</button>
           ${window.KSViews ? KSViews.tabs(b) : ''}
         </div>`;

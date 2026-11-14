@@ -1069,7 +1069,9 @@ async function api(req, res, url) {
     const addRow = (row, ri) => {
       const item = { name: '', group: grp, values: {} };
       mapping.forEach((m, ci) => {
-        const v = String(row[ci] ?? '').trim(); if (!m || v === '') return;
+        let v = String(row[ci] ?? '').trim(); if (!m || v === '') return;
+        // our own CSV export puts ' before text that starts like a formula (see sheets.csvSafe): take it off again
+        if (/^'([=@]|[+-](?![\d\s().-]*$))/.test(v)) v = v.slice(1);
         if (m === 'name') item.name = v;
         else if (m === 'group') { const g = (b.groups || []).find(x => x.name.toLowerCase() === v.toLowerCase() || x.id === v); if (g) item.group = g.id; }
         else { const c = (b.columns || []).find(x => x.id === m); if (!c) return; item.values[m] = c.type === 'date' && /^\d{4,5}(\.\d+)?$/.test(v) && Number(v) > 20000 && Number(v) < 80000 ? sheets.excelSerialToYmd(v) : v; }
@@ -1187,6 +1189,9 @@ async function api(req, res, url) {
       // a copy an automation makes ("Signed → copy to Clients"): one per lead, however often it's moved back in
       if (isItem && !before && data.copiedFrom && db.prepare("SELECT 1 FROM docs WHERE col = ? AND id != ? AND json_extract(data, '$.copiedFrom') = ?").get(col, id, String(data.copiedFrom)))
         return send(res, 200, { ok: true, already: true });
+      // which Monday item a lead is (mondayId, movedFromMondayId) is set only by the Monday copy and by moves on the server, never
+      // by a page: otherwise the Monday write-back could be pointed at another rep's Monday lead
+      if (isItem) for (const k of ['mondayId', 'movedFromMondayId']) { if (before && before[k] !== undefined) data[k] = before[k]; else delete data[k]; }
       if (isItem) {
         if (user.role === 'guest') { checkGuestEdit(before, data, user, info); guestNotes = integ.guestRules(bid, before, data, user); }
         const badUrl = netguard.badLink(before, data, ((info && info.columns) || []).filter(c => c.type === 'link').map(c => c.id));

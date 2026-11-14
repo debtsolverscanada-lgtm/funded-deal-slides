@@ -7,7 +7,7 @@
 //   NEW_LEAD_BANNERS=off stops new ones. Banners older than 48 hours aren't shown.
 'use strict';
 
-module.exports = function newleads({ db, q, now, HttpError, readBody, send, canSee, boardInfo }) {
+module.exports = function newleads({ db, q, now, HttpError, readBody, send, canSee, boardInfo, itemVisible = () => true }) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS lead_arrivals (
       id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, board TEXT NOT NULL, item TEXT NOT NULL,
@@ -55,7 +55,8 @@ module.exports = function newleads({ db, q, now, HttpError, readBody, send, canS
       const out = [];
       for (const r of rows) {
         const info = boardInfo(r.board); if (!info || !canSee(user, info.access)) continue;
-        if (!q.doc.get(`boards/${r.board}/items/${r.item}`)) continue; // deleted since
+        const ir = q.doc.get(`boards/${r.board}/items/${r.item}`); if (!ir) continue; // deleted since
+        if (!itemVisible(user, info, JSON.parse(ir.data))) continue; // "only items assigned to them" boards: just theirs
         out.push({ id: r.id, at: r.at, board: r.board, boardName: info.name, item: r.item, name: r.name, email: r.email, phone: r.phone, kind: r.kind || 'lead' });
       }
       return send(res, 200, { leads: out }), true;

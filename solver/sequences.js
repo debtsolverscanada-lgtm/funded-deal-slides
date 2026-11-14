@@ -11,7 +11,7 @@
 'use strict';
 const crypto = require('node:crypto');
 
-module.exports = function sequences({ db, q, now, HttpError, readBody, send, canSee, boardInfo }, mail) {
+module.exports = function sequences({ db, q, now, HttpError, readBody, send, canSee, boardInfo, itemVisible = () => true }, mail) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS sequences (id TEXT PRIMARY KEY, data TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, updated_by TEXT);
     CREATE TABLE IF NOT EXISTS seq_enroll (
@@ -191,7 +191,7 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
     m = /^\/api\/seq\/([A-Za-z0-9_-]{3,60})\/enrolled$/.exec(p);
     if (m && method === 'GET') {
       const s = getSeq(m[1]); if (!s) throw new HttpError(404, 'No such sequence.');
-      const rows = db.prepare('SELECT * FROM seq_enroll WHERE seq = ? ORDER BY started_at DESC LIMIT 300').all(m[1]).filter(e => { const i = boardInfo(e.board); return i && canSee(user, i.access); })
+      const rows = db.prepare('SELECT * FROM seq_enroll WHERE seq = ? ORDER BY started_at DESC LIMIT 300').all(m[1]).filter(e => { const i = boardInfo(e.board); if (!i || !canSee(user, i.access)) return false; const d = itemDoc(e.board, e.item); return !d || itemVisible(user, i, d); }) // "only items assigned to them" boards: just theirs
         .map(e => ({ id: e.id, board: e.board, item: e.item, name: (itemDoc(e.board, e.item) || {}).name || '(deleted)', step: e.step, of: s.steps.length, status: e.status, reason: e.reason, next: e.next_at, started: e.started_at }));
       return send(res, 200, { rows }), true;
     }

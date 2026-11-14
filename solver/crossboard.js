@@ -4,7 +4,7 @@
 'use strict';
 const crypto = require('node:crypto');
 
-module.exports = function crossboard({ db, q, now, broadcast, HttpError, readBody, send, mustSee, canWrite, boardInfo, integ }, hooks = {}) {
+module.exports = function crossboard({ db, q, now, broadcast, HttpError, readBody, send, mustSee, canWrite, boardInfo, itemVisible = () => true, integ }, hooks = {}) {
   const doc = p => { const r = q.doc.get(p); return r ? JSON.parse(r.data) : null; };
   const labelName = (col, v) => { const l = (col.labels || []).find(x => String(x.id) === String(v)); return l ? l.label : null; };
   function mapValues(b, tb, item, map) {
@@ -31,9 +31,10 @@ module.exports = function crossboard({ db, q, now, broadcast, HttpError, readBod
     if (url.pathname !== '/api/rules/crossboard' || req.method !== 'POST') return false;
     const b0 = await readBody(req, 8192);
     const bid = String(b0.board || ''), iid = String(b0.item || ''), ruleId = String(b0.rule || ''), target = String(b0.target || ''), type = b0.type === 'move_board' ? 'move_board' : 'copy_to_board';
-    mustSee(user, bid);
-    if (!canWrite(user) && user.role !== 'guest') throw new HttpError(403, 'Your account can view this board but not change it.');
-    const b = doc('boards/' + bid), item = doc(`boards/${bid}/items/${iid}`); if (!b || !item) throw new HttpError(404, 'No such item.');
+    const info = mustSee(user, bid);
+    // guests never: their changes' rules run on the server, which never moves or copies a lead to another board for a guest
+    if (!canWrite(user)) throw new HttpError(403, user.role === 'guest' ? 'Guests can’t move or copy items to other boards.' : 'Your account can view this board but not change it.');
+    const b = doc('boards/' + bid), item = doc(`boards/${bid}/items/${iid}`); if (!b || !item || !itemVisible(user, info, item)) throw new HttpError(404, 'No such item.');
     const rule = (b.automations || []).find(r => String(r.id) === ruleId);
     const act = rule && rule.on !== false && (rule.actions || []).find(a => a.type === type && String(a.board) === target);
     if (!act) throw new HttpError(403, 'No switched-on automation on this board does that.');

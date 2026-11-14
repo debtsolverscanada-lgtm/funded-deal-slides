@@ -46,7 +46,8 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
     let members = []; try { members = ((JSON.parse(r.data).access || {}).members || []).map(lc); } catch (e) { return ''; }
     if (!members.length) return '';
     const froms = new Set();
-    for (const u of db.prepare("SELECT email, role, email_from FROM users WHERE email_from IS NOT NULL AND email_from != '' AND role != 'admin'").all())
+    // only a member is a rep: a guest (a lender, a lawyer) or a viewer shared on the board never is, even with a sending address
+    for (const u of db.prepare("SELECT email, role, email_from FROM users WHERE email_from IS NOT NULL AND email_from != '' AND role = 'member'").all())
       if (members.includes(lc(u.email)) && EMAIL.test(lc(u.email_from))) froms.add(lc(u.email_from));
     return froms.size === 1 ? [...froms][0] : '';
   }
