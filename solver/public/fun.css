@@ -1,0 +1,119 @@
+/* Solver.ca flair: neon themes, 3D tilt, glowing edges, avatar rings, and Penny the money pet. */
+:root { --neon: #ffffff; --neon-2: #bfc6ff; --neon-glow: rgba(255,255,255,.55); }
+html[data-flair-theme="cyan"] { --neon: #3ef2ff; --neon-2: #4d7cff; --neon-glow: rgba(62,242,255,.55); }
+html[data-flair-theme="magenta"] { --neon: #ff4fd8; --neon-2: #8b5cff; --neon-glow: rgba(255,79,216,.55); }
+html[data-flair-theme="lime"] { --neon: #b6ff3e; --neon-2: #2dffb0; --neon-glow: rgba(182,255,62,.5); }
+html[data-flair-theme="aurora"] { --neon: #6dffcf; --neon-2: #b07bff; --neon-glow: rgba(140,180,255,.55); }
+
+/* neon accents (theme colour) */
+html[data-flair-theme]:not([data-flair-theme="classic"]) .board-link[aria-current="true"] .dot { color: var(--neon); background: var(--neon); filter: drop-shadow(0 0 6px var(--neon-glow)); }
+/* the bottom-bar icon is a line drawing: colour its lines only, never fill its box */
+html[data-flair-theme]:not([data-flair-theme="classic"]) .bnav button[aria-current="true"] svg { color: var(--neon); background: none; filter: drop-shadow(0 0 6px var(--neon-glow)); }
+html[data-flair-theme]:not([data-flair-theme="classic"]) .bnav button[aria-current="true"] { color: var(--neon); }
+html[data-flair-theme]:not([data-flair-theme="classic"]) .tab[aria-pressed="true"] { box-shadow: inset 0 0 0 1px var(--neon), 0 0 18px var(--neon-glow); }
+html[data-flair-theme]:not([data-flair-theme="classic"]) .hero-num { text-shadow: 0 0 28px var(--neon-glow); }
+html[data-flair-theme]:not([data-flair-theme="classic"]) .ring circle:nth-of-type(2) { stroke: var(--neon); }
+html[data-flair-theme]:not([data-flair-theme="classic"]) .spark path:last-of-type { stroke: var(--neon); }
+html[data-flair-theme]:not([data-flair-theme="classic"]) .chip.mx-changed { box-shadow: 0 0 0 1px var(--neon), 0 0 26px var(--neon-glow); }
+
+/* animated neon edge on primary buttons and the Home hero */
+@property --fx-angle { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+.btn.primary, .bnav-plus, .hero { position: relative; isolation: isolate; }
+.btn.primary::after, .bnav-plus::after, .hero::before {
+  content: ""; position: absolute; inset: -1.5px; border-radius: inherit; padding: 1.5px; pointer-events: none; z-index: -1;
+  background: conic-gradient(from var(--fx-angle), transparent 0 55%, var(--neon) 70%, var(--neon-2) 80%, transparent 92%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude;
+  animation: fx-spin 4.5s linear infinite; filter: drop-shadow(0 0 6px var(--neon-glow)); opacity: .9;
+}
+.hero::before { z-index: 0; opacity: .75; }
+@keyframes fx-spin { to { --fx-angle: 360deg; } }
+
+/* 3D tilt + light sweep (fun.js sets --rx/--ry/--sx on hover) */
+.fx-tilt { transform: perspective(700px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)) translateZ(0); transition: transform .25s cubic-bezier(.2,.9,.25,1.15), box-shadow .25s; will-change: transform; }
+.fx-tilt.fx-hot { box-shadow: 0 18px 50px rgba(0,0,0,.55), 0 0 30px var(--neon-glow); }
+.fx-tilt::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: linear-gradient(115deg, transparent 30%, rgba(255,255,255,.18) 48%, transparent 66%); background-size: 250% 100%; background-position: var(--sx, 150%) 0; opacity: 0; transition: opacity .3s; }
+.fx-tilt.fx-hot::after { opacity: 1; }
+.qa, .li, .hero, .ov, .card { position: relative; }
+.btn.fx-tilt { position: relative; }
+.btn.fx-tilt:active, .qa.fx-tilt:active { transform: perspective(700px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)) scale(.95); }
+
+/* avatar ring + shimmering name (sidebar "who am I" card) */
+.rail .whoami { position: relative; display: grid; grid-template-columns: auto 1fr; column-gap: 12px; row-gap: 1px; align-items: center; text-align: left; }
+.rail .whoami .role, .rail .whoami b { grid-column: 2; justify-self: start; }
+.rail .whoami .fx-avatar { grid-column: 1; grid-row: 1 / span 2; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; background: rgba(255,255,255,.1); font-weight: 700; position: relative; }
+.whoami .fx-avatar::before { content: ""; position: absolute; inset: -4px; border-radius: 50%; padding: 2px; background: conic-gradient(from var(--fx-angle), var(--neon), var(--neon-2), transparent, var(--neon)); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; animation: fx-spin 3s linear infinite; filter: drop-shadow(0 0 6px var(--neon-glow)); }
+html[data-flair-ring="off"] .whoami .fx-avatar::before { display: none; }
+html[data-flair-ring="sparkle"] .whoami .fx-avatar::after { content: "✦"; position: absolute; top: -8px; right: -6px; font-size: 12px; color: var(--neon); text-shadow: 0 0 8px var(--neon-glow); animation: fx-twinkle 1.6s ease-in-out infinite; }
+@keyframes fx-twinkle { 50% { transform: scale(.5) rotate(40deg); opacity: .4; } }
+html[data-flair-name="shimmer"] .whoami b { background: linear-gradient(90deg, #fff 0%, var(--neon) 30%, #fff 50%, var(--neon-2) 75%, #fff 100%); background-size: 220% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: fx-shimmer 4s linear infinite; }
+@keyframes fx-shimmer { to { background-position: -220% 0; } }
+
+/* Penny the money pet */
+.pet { position: fixed; z-index: 30; left: calc(250px + max(16px, env(safe-area-inset-left, 0px))); bottom: calc(18px + env(safe-area-inset-bottom, 0px)); width: 74px; height: 86px; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; }
+html[data-flair-pet="off"] .pet { display: none; }
+html.pet-nodesk .pet { display: none; }
+html.pet-thru .pet { pointer-events: none; }
+html.pet-thru .pet .pet-news { pointer-events: auto; }
+.pet svg { width: 100%; height: 100%; overflow: visible; filter: drop-shadow(0 0 14px var(--neon-glow)); animation: pet-bob 3.2s ease-in-out infinite; transform-origin: 50% 90%; }
+@keyframes pet-bob { 50% { transform: translateY(-5px) rotate(-1.5deg); } }
+.pet.pet-jump svg { animation: pet-jump .9s cubic-bezier(.2,.9,.25,1.15) 2; }
+@keyframes pet-jump { 0% { transform: translateY(0) scale(1, 1); } 20% { transform: translateY(2px) scale(1.12, .86); } 45% { transform: translateY(-30px) scale(.92, 1.1) rotate(8deg); } 70% { transform: translateY(0) scale(1.08, .92); } 100% { transform: none; } }
+.pet.pet-happy svg { animation: pet-wiggle .6s ease-in-out 2; }
+@keyframes pet-wiggle { 25% { transform: rotate(-9deg); } 75% { transform: rotate(9deg); } }
+.pet .pet-lid { transform-origin: center; transform: scaleY(0); }
+.pet.pet-blink .pet-lid { transform: scaleY(1); }
+.pet.pet-sleep .pet-lid { transform: scaleY(1); }
+.pet.pet-sleep svg { animation: pet-breathe 4s ease-in-out infinite; }
+@keyframes pet-breathe { 50% { transform: scale(1.03, .97); } }
+.pet .pet-zzz { opacity: 0; }
+.pet.pet-sleep .pet-zzz { opacity: 1; animation: pet-z 2.4s ease-in-out infinite; }
+@keyframes pet-z { 0% { transform: translate(0, 0); opacity: 0; } 30% { opacity: 1; } 100% { transform: translate(10px, -16px); opacity: 0; } }
+.pet-bubble { position: absolute; bottom: 92px; left: 50%; transform: translateX(-30%); white-space: nowrap; background: rgba(12,12,14,.97); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border: 1px solid var(--neon); box-shadow: 0 0 18px var(--neon-glow); color: #fff; font-size: 12.5px; padding: 6px 11px; border-radius: 12px; animation: pet-say 2.8s ease forwards; pointer-events: none; }
+@keyframes pet-say { 0% { opacity: 0; transform: translate(-30%, 6px) scale(.9); } 10%, 85% { opacity: 1; transform: translate(-30%, 0) scale(1); } 100% { opacity: 0; } }
+.pet-heart { position: absolute; left: 50%; top: 10px; font-size: 14px; color: var(--neon); text-shadow: 0 0 10px var(--neon-glow); animation: pet-heart 1.4s ease-out forwards; pointer-events: none; }
+@keyframes pet-heart { from { transform: translate(-50%, 0) scale(.6); opacity: 1; } to { transform: translate(calc(-50% + var(--dx, 0px)), -60px) scale(1.2); opacity: 0; } }
+@media (max-width: 780px) { .pet { left: auto; right: max(12px, env(safe-area-inset-right, 0px)); bottom: calc(86px + env(safe-area-inset-bottom, 0px)); width: 58px; height: 68px; } }
+
+/* Flair picker */
+.fx-swatches { display: flex; flex-wrap: wrap; gap: 10px; }
+.fx-sw { width: 54px; height: 54px; border-radius: 16px; border: 1px solid var(--line); background: #0b0b0d; display: grid; place-items: center; position: relative; color: #fff; font-size: 10.5px; }
+.fx-sw i { width: 22px; height: 22px; border-radius: 50%; display: block; box-shadow: 0 0 16px currentColor; }
+.fx-sw[aria-pressed="true"] { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.3); }
+.fx-sw span { position: absolute; bottom: -18px; color: var(--muted); }
+.fx-row { margin-top: 26px; }
+
+html.mx-off .btn.primary::after, html.mx-off .bnav-plus::after, html.mx-off .hero::before { animation: none; }
+@media (prefers-reduced-motion: reduce) { .pet svg, .fx-tilt, .btn.primary::after, .hero::before, .whoami .fx-avatar::before { animation: none !important; transition: none !important; transform: none !important; } }
+
+/* Penny's heads-ups: a tappable bubble */
+.pet-news { position: absolute; bottom: 94px; left: 0; width: max-content; max-width: min(300px, calc(100vw - 40px)); background: rgba(14,14,16,.92); border: 1px solid var(--neon); box-shadow: 0 0 22px var(--neon-glow), 0 18px 50px rgba(0,0,0,.6); color: #fff; font-size: 13px; line-height: 1.35; padding: 9px 12px 9px 12px; border-radius: 14px; cursor: pointer; animation: pet-news-in .45s cubic-bezier(.2,.9,.25,1.15) both; text-align: left; }
+.pet-news::after { content: ""; position: absolute; left: 26px; bottom: -6px; width: 10px; height: 10px; background: inherit; border-right: 1px solid var(--neon); border-bottom: 1px solid var(--neon); transform: rotate(45deg); }
+.pet-news small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+.pet-news .pn-x { position: absolute; top: 3px; right: 6px; color: var(--muted); font-size: 12px; background: none; border: 0; cursor: pointer; }
+.pet-news.out { animation: pet-news-out .3s ease forwards; }
+@keyframes pet-news-in { from { opacity: 0; transform: translateY(8px) scale(.92); } to { opacity: 1; transform: none; } }
+@keyframes pet-news-out { to { opacity: 0; transform: translateY(6px) scale(.96); } }
+@media (max-width: 780px) { .pet-news { left: auto; right: 0; } .pet-news::after { left: auto; right: 22px; } }
+@media (max-width: 780px), (pointer: coarse) { .pet-news { padding-right: 40px; min-height: 44px; } .pet-news .pn-x { top: 0; right: 0; min-width: 44px; min-height: 44px; font-size: 18px; } }
+/* phones: Penny sits at the right edge, so her short sayings open to the left and wrap instead of running off screen */
+@media (max-width: 780px) {
+  .pet-bubble { left: auto; right: 0; transform: none; white-space: normal; width: max-content; max-width: min(260px, calc(100vw - 32px)); text-align: left; animation-name: pet-say-m; }
+  @keyframes pet-say-m { 0% { opacity: 0; transform: translateY(6px) scale(.9); } 10%, 85% { opacity: 1; transform: none; } 100% { opacity: 0; } }
+}
+
+/* Penny wanders (fun.js moves her with transform; these are her walk, duck and peek poses) */
+.pet.pet-walk svg { animation: pet-waddle .46s ease-in-out infinite; }
+.pet.pet-walk.pet-lean-left svg { animation-name: pet-waddle-l; }
+@keyframes pet-waddle { 0%, 100% { transform: translateY(0) rotate(-4deg); } 50% { transform: translateY(-4px) rotate(4deg); } }
+@keyframes pet-waddle-l { 0%, 100% { transform: translateY(0) rotate(4deg); } 50% { transform: translateY(-4px) rotate(-4deg); } }
+.pet.pet-walk .pet-feet ellipse:first-child { animation: pet-step .46s ease-in-out infinite; }
+.pet.pet-walk .pet-feet ellipse:last-child { animation: pet-step .46s ease-in-out infinite reverse; }
+@keyframes pet-step { 50% { transform: translateY(-3px); } }
+.pet.pet-duck svg { transform: translateY(70%) scale(.6); opacity: 0; transition: transform .25s ease-in, opacity .25s ease-in; animation: none; }
+/* peeking: everything below the board's top edge is hidden, so only ears and eyes show over it */
+.pet.pet-peek { clip-path: inset(-400px -400px 48% -400px); }
+.pet.pet-peek svg { animation: pet-peekup .45s cubic-bezier(.2,.9,.25,1.2) both, pet-peekbob 2.6s .45s ease-in-out infinite; }
+@keyframes pet-peekup { from { transform: translateY(60%); } to { transform: translateY(0); } }
+@keyframes pet-peekbob { 50% { transform: translateY(4px) rotate(-3deg); } }
+.pet.pet-peek .pet-feet, .pet.pet-peek ellipse[cy="88"] { opacity: 0; }
+html[data-flair-roam="off"] .pet { transform: none !important; }
