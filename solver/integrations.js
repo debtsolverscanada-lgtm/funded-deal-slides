@@ -346,8 +346,14 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
       Object.assign(fields, raw.fields || {}, raw.values || {});
       const known = {}, extra = [];
       for (const [k, v] of Object.entries(fields)) {
-        const c = (b.columns || []).find(x => x.id === k || x.title.toLowerCase() === k.toLowerCase() || x.title.toLowerCase().replace(/[^a-z0-9]/g, '') === k.toLowerCase().replace(/[^a-z0-9]/g, ''));
-        if (c) known[c.id] = v; else extra.push(`${k}: ${v}`);
+        const kk = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+        // Facebook / Zapier names ("phone_number", "email_address") fill the board's phone and email columns, so repeat leads are still caught
+        const c = (b.columns || []).find(x => x.id === k || x.title.toLowerCase() === k.toLowerCase() || x.title.toLowerCase().replace(/[^a-z0-9]/g, '') === kk)
+          || (['phone', 'phonenumber', 'mobile', 'mobilephone', 'cell', 'cellphone', 'tel', 'telephone'].includes(kk) && (b.columns || []).find(x => x.type === 'phone'))
+          || (['email', 'emailaddress', 'mail'].includes(kk) && (b.columns || []).find(x => x.type === 'email'));
+        // a calculated column can't be filled: the answer is kept in the update instead of refusing the whole lead
+        const calc = c && (['formula', 'button', 'item_id', 'created'].includes(c.type) || (c.readonly && c.source !== 'file'));
+        if (c && !calc) known[c.id] = v; else extra.push(`${k}: ${v}`);
       }
       const actor = { id: 'link:' + h.id, name: 'lead link “' + h.name + '”' };
       if (h.dedupe) {
