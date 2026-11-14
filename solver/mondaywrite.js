@@ -16,7 +16,13 @@ module.exports = function mondaywrite({ db, q, now, broadcast, HttpError, send, 
   const env = k => String(process.env[k] || '').trim();
   const boards = () => new Set(env('MONDAY_WRITEBACK_BOARDS').split(/[\s,]+/).filter(Boolean));
   const on = bid => env('MONDAY_WRITEBACK').toLowerCase() !== 'off' && !!env('MONDAY_API_TOKEN') && boards().has(String(bid));
-  const mondayId = (bid, iid, doc) => { const m = String((doc && doc.mondayId) || iid); return /^\d+$/.test(m) ? m : ''; };
+  // the Monday item this lead is on this board's Monday copy. A lead moved or copied here from another board (it keeps its
+  // old numeric id, and a "move to board" rule keeps the old board's mondayId) is NOT an item of this Monday board: writing
+  // its id would move/annotate the other rep's Monday lead, so it isn't written at all.
+  const mondayId = (bid, iid, doc, b) => {
+    if (doc && (doc.movedFromMondayId || (doc.copiedFrom && !String(doc.copiedFrom).startsWith(bid + '/')))) return '';
+    const m = String((doc && doc.mondayId) || (b && b.source === 'monday' ? '' : iid)); return /^\d+$/.test(m) ? m : '';
+  };
   const boardMid = (bid, b) => String((b && b.mondayId) || String(bid).replace(/^m/, ''));
   // Monday's update body is HTML: escape what was typed and keep the line breaks
   const toHtml = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/\r?\n/g, '<br>');
@@ -107,7 +113,7 @@ module.exports = function mondaywrite({ db, q, now, broadcast, HttpError, send, 
     try {
       if (!on(bid) || !before || !after) return; // new items / deletions aren't written
       const br = q.doc.get('boards/' + bid); if (!br) return; const b = JSON.parse(br.data);
-      const mid = mondayId(bid, iid, after.mondayId ? after : before); if (!mid) return;
+      const mid = mondayId(bid, iid, after.mondayId ? after : before, b); if (!mid) return;
       const who = user ? (user.name || user.email) : '';
       if (after.group && after.group !== before.group) add(bid, iid, 'move', { mid, group: after.group }, who);
       const old = new Set((before.updates || []).map(u => u.id || u.mid || u.at));
@@ -134,7 +140,8 @@ module.exports = function mondaywrite({ db, q, now, broadcast, HttpError, send, 
     try {
       if (!on(bid) || !upd || !upd.text) return;
       const r = q.doc.get(`boards/${bid}/items/${iid}`); if (!r) return; const it = JSON.parse(r.data);
-      const mid = mondayId(bid, iid, it); if (!mid) return;
+      const br = q.doc.get('boards/' + bid);
+      const mid = mondayId(bid, iid, it, br ? JSON.parse(br.data) : null); if (!mid) return;
       add(bid, iid, 'update', { mid, uid: upd.id, text: `${String(upd.text).slice(0, 5000)}\n\n— ${upd.byName || 'Solver.ca'} (in Solver.ca)` }, upd.byName || '');
     } catch (e) { console.error('monday write (note):', e.message); }
   }

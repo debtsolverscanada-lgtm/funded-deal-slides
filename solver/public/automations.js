@@ -32,7 +32,7 @@
   const boardName = id => ((A().S.boards || []).find(x => x.id === id) || {}).name || 'a board that isn’t here';
   const condKind = c => c.col === '__group' ? 'group' : (c.op || 'is') === 'is' ? 'status_is_or_is' : c.op;
   const tok = s => `<span class="tok">${esc(s)}</span>`;
-  const valText = (c, v) => Array.isArray(v) ? v.map(x => labelName(c, x)).join(' or ') : c && c.type === 'status' ? labelName(c, v) : v === true ? 'checked' : v === false && c && c.type === 'checkbox' ? 'unchecked' : String(v ?? '');
+  const valText = (c, v) => Array.isArray(v) ? v.map(x => labelName(c, x)).join(' or ') : c && c.type === 'status' ? labelName(c, v) : v === true || (v === 'true' && c && c.type === 'checkbox') ? 'checked' : (v === false || v === 'false') && c && c.type === 'checkbox' ? 'unchecked' : String(v ?? '');
   function parseWhen(w) {
     const s = String(w || ''), m = /^(\d+) day\(s\) (before|after) the date/.exec(s), t = /at (\d{1,2}:\d{2})\s*(.*)$/.exec(s);
     return { n: m ? Number(m[1]) : 0, dir: m ? m[2] : 'on', time: t ? t[1].padStart(5, '0') : '09:00', tz: t ? t[2].trim() : '' };

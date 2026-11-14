@@ -49,7 +49,8 @@ module.exports = function blast({ db, q, now, HttpError, readBody, send, mustSee
   };
   const firstName = n => { let s = String(n || '').trim().split(/\s+/)[0] || 'there'; s = s.replace(/[^\p{L}'-]/gu, '') || 'there'; return s === s.toLowerCase() || s === s.toUpperCase() ? s[0].toUpperCase() + s.slice(1).toLowerCase() : s; };
   const company = board => /mortgage\s*solver/i.test(((board.workspace || {}).name) || '') ? 'MortgageSolvers' : 'DebtSolvers Canada';
-  const fill = (tpl, item, user) => String(tpl || '').replace(/\{\s*first\s*name\s*\}/gi, firstName(item.name)).replace(/\{\s*(?:pulse\.)?name\s*\}/gi, String(item.name || '').trim() || 'there').replace(/\{\s*rep\s*\}/gi, firstName(user.name || user.email));
+  // replacements are functions so a name with "$&" or "$'" in it goes in as typed, not as a replace() pattern
+  const fill = (tpl, item, user) => String(tpl || '').replace(/\{\s*first\s*name\s*\}/gi, () => firstName(item.name)).replace(/\{\s*(?:pulse\.)?name\s*\}/gi, () => String(item.name || '').trim() || 'there').replace(/\{\s*rep\s*\}/gi, () => firstName(user.name || user.email));
   const withFooter = (channel, text, board) => channel === 'email'
     ? `${text}\n\n--\n${company(board)}\nIf you’d rather not get these emails, reply UNSUBSCRIBE.`
     : (/reply\s+stop/i.test(text) ? text : `${text}${/[.!?…)]$/.test(text) ? '' : '.'} Reply STOP to opt out.`);
@@ -138,18 +139,23 @@ module.exports = function blast({ db, q, now, HttpError, readBody, send, mustSee
   setInterval(() => tick().catch(e => console.error('blast:', e.message)), 1000).unref();
 
   const summary = bl => bl && { id: bl.id, channel: bl.channel, board: bl.board, status: bl.status, total: bl.total, sent: bl.sent, failed: bl.failed, skipped: bl.skipped, at: bl.at,
-    queued: db.prepare("SELECT COUNT(*) AS n FROM blast_rows WHERE blast_id = ? AND status = 'queued'").get(bl.id).n };
+    queued: db.prepare("SELECT COUNT(*) AS n FROM blast_rows WHERE blast_id = ? AND status = 'queued'").get(bl.id).n,
+    // texts waiting for 9am-8pm where the lead lives, so the pill can say why nothing is moving
+    held: bl.channel === 'text' && bl.status === 'sending' ? db.prepare("SELECT prov FROM blast_rows WHERE blast_id = ? AND status = 'queued'").all(bl.id).filter(r => { const h = localHour(r.prov); return h < 9 || h >= 20; }).length : 0 };
 
   async function handle(req, res, url, user) {
     const p = url.pathname, method = req.method;
     if (!p.startsWith('/api/blast')) return false;
     if (p === '/api/blast/preview' && method === 'POST') {
       const b = await readBody(req, 256 * 1024), channel = String(b.channel || '');
-      const from = checkReady(user, channel, b.board), msg = readMsg({ subject: b.subject || (channel === 'text' ? '-' : ''), text: b.text || ' ' }, channel);
-      const { board, go, skip } = plan(user, String(b.board || ''), Array.isArray(b.items) ? b.items : [], channel, b.text ? { body: msg.body, subject: channel === 'email' ? msg.subject : '' } : null);
+      // "Check who gets it" works before the message is written: the list comes back, the sample waits for the text
+      const typed = !!String(b.text || '').trim(), from = checkReady(user, channel, b.board), msg = readMsg({ subject: String(b.subject || '').trim() ? b.subject : '-', text: typed ? b.text : '-' }, channel);
+      if (!String(b.subject || '').trim()) msg.subject = '';
+      const { board, go, skip } = plan(user, String(b.board || ''), Array.isArray(b.items) ? b.items : [], channel, typed ? { body: msg.body, subject: channel === 'email' ? msg.subject : '' } : null);
       const s = go[0], u = { id: user.id, name: mail.nameForFrom(from) || user.name, role: user.role };
       return send(res, 200, { from, fromName: mail.nameForFrom(from) || '', channel, count: go.length, skipped: skip, limit: user.role === 'admin' ? MAX : MEMBER_MAX,
-        sample: s ? { name: s.name, to: s.to, subject: channel === 'email' ? fill(msg.subject, s.lead, u) : '', text: withFooter(channel, fill(msg.body, s.lead, u), board) } : null,
+        later: channel === 'text' ? go.filter(g => { const h = localHour(g.prov); return h < 9 || h >= 20; }).length : 0, // held until 9am-8pm their time
+        sample: s && typed ? { name: s.name, to: s.to, subject: channel === 'email' ? fill(msg.subject, s.lead, u) : '', text: withFooter(channel, fill(msg.body, s.lead, u), board) } : null,
         unknown: [...new Set(((channel === 'email' ? msg.subject + ' ' : '') + msg.body).replace(/\{\s*(?:first\s*name|(?:pulse\.)?name|rep)\s*\}/gi, '').match(/\{[^{}\n]{1,40}\}/g) || [])].slice(0, 10),
         minutes: Math.ceil(go.length * gap(channel) / 60000) }), true;
     }

@@ -392,7 +392,8 @@ const snippet = t => { const s = String(t || '').replace(/\s+/g, ' ').trim(); re
 function mentionedUsers(text) {
   const users = nq.activeUsers.all(), out = new Map();
   for (const m of String(text || '').matchAll(/@([\p{L}][\p{L}'’.-]*)(?:\s+([\p{L}][\p{L}'’.-]*))?/gu)) {
-    const two = m[2] ? norm(m[1] + ' ' + m[2]) : null, one = norm(m[1]);
+    const tidy = s => String(s || '').replace(/['’]s$/i, '').replace(/[.'’-]+$/, ''); // "@Mariel." and "@Jerico’s lead" mean Mariel and Jerico
+    const two = m[2] ? norm(tidy(m[1]) + ' ' + tidy(m[2])) : null, one = norm(tidy(m[1]));
     let hit = two ? users.filter(u => norm(u.name) === two) : [];
     if (!hit.length) hit = users.filter(u => norm(u.name) === one);
     if (!hit.length) { const f = users.filter(u => norm(u.name).split(' ')[0] === one); if (f.length === 1) hit = f; }

@@ -51,6 +51,9 @@ module.exports = function crossboard({ db, q, now, broadcast, HttpError, readBod
     const data = { ...item, values: mapValues(b, tb, item, act.map), group: g ? g.id : '', pos: Date.now(), copiedFrom: `${bid}/${iid}`,
       activity: [{ at: now(), by: 'automation', text: `${why} ${type === 'move_board' ? 'moved' : 'copied'} this here from “${b.name}” (${user.name || user.email})` }, ...(type === 'move_board' ? (item.activity || []) : [])].slice(0, 40) };
     delete data.id; if (type !== 'move_board') { delete data.mondayId; data.updates = []; data.createdAt = now(); }
+    // the target board's own "item created" / "moved here from another board" rules, as when the copy is made in the app
+    const tNotes = [], tbx = { id: target, ...tb };
+    try { if (integ && integ.runRules) integ.runRules(tbx, data, type === 'move_board' ? { type: 'moved_board' } : { type: 'created', group: data.group }, { ...user, via: 'app · ' + (user.name || user.email || 'someone') }, tNotes, newId); } catch (e) { console.error('crossboard rules:', e.message); }
     q.upsertDoc.run(`boards/${target}/items/${newId}`, `boards/${target}/items`, newId, JSON.stringify(data), now(), user.id);
     broadcast({ op: 'set', col: `boards/${target}/items`, id: newId, data });
     if (type === 'move_board') { q.deleteDoc.run(`boards/${bid}/items/${iid}`); broadcast({ op: 'delete', col: `boards/${bid}/items`, id: iid }); }
@@ -58,6 +61,7 @@ module.exports = function crossboard({ db, q, now, broadcast, HttpError, readBod
     try { if (integ) { if (type === 'move_board') integ.itemChanged(`boards/${bid}/items/${iid}`, item, null, user.id); integ.itemChanged(`boards/${target}/items/${newId}`, null, data, user.id); } } catch (e) { console.error('crossboard webhook:', e.message); }
     try { if (hooks.itemSaved) hooks.itemSaved(target, newId, null, data); } catch (e) { /* sequences only */ }
     try { if (type !== 'move_board' && hooks.newItem) hooks.newItem(target, newId, data); } catch (e) { /* NEW CLIENT banner */ }
+    try { if (tNotes.length && integ && integ.sendNotes) integ.sendNotes(tbx, newId, data, tNotes); } catch (e) { console.error('crossboard rules:', e.message); }
     return send(res, 200, { ok: true, id: newId, board: tb.name }), true;
   }
   return { handle };

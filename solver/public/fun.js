@@ -94,6 +94,7 @@
     const m = me(), first = String(m.name || '').split(/\s+/)[0].toLowerCase();
     if (m.homeBoard && ev.board === m.homeBoard) return true;
     if (first && first !== 'your' && String(ev.boardName || '').toLowerCase().includes('(' + first)) return true;
+    if (first && first !== 'your' && new RegExp('^' + first.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s+(leads|crm)\\b').test(String(ev.boardName || '').toLowerCase())) return true; // a rep's own lead board ("Jerico Leads", "Mariel CRM"), like the admin stats read it
     if (first && String(ev.people || '').toLowerCase().split(/,\s*/).some(p => p.split(' ')[0] === first)) return true;
     return false;
   }

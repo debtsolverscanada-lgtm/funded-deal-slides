@@ -552,7 +552,9 @@
     const rows = A.visibleItems().map(item => ({ b, item }));
     const agg = aggregate(rows, by, mc ? { kind: 'sum', col: mc.title } : { kind: 'count' }, sp.kind === 'stacked' ? parseBy(b, sp.stack) : null);
     const c = cfg('chart'), picked = c.sel && agg.cats.find(x => x.key === c.sel);
-    pending.push(() => { const el = $('#vx-chart'); if (!el) return; el.innerHTML = chartSvg(agg, sp.kind, Math.max(280, el.clientWidth), mc ? v => fmtVal(mc, v) : null, { timeAxis: by.kind === 'date', mono: by.kind === 'date' }); });
+    pending.push(() => { const el = $('#vx-chart'); if (!el) return; el.innerHTML = chartSvg(agg, sp.kind, Math.max(280, el.clientWidth), mc ? v => fmtVal(mc, v) : null, { timeAxis: by.kind === 'date', mono: by.kind === 'date' });
+      // keyboard: one tab stop per category (Enter / Space lists its items, like a click)
+      const seen = new Set(); el.querySelectorAll('[data-vxcat]').forEach(m => { if (seen.has(m.dataset.vxcat)) return; seen.add(m.dataset.vxcat); const ti = m.querySelector('title'); m.setAttribute('tabindex', '0'); m.setAttribute('role', 'button'); if (ti) m.setAttribute('aria-label', ti.textContent); }); });
     const list = picked ? `<div class="sec" style="margin:14px 4px 0"><h2 style="font-size:15px">${esc(picked.label)} · ${picked.n} item${picked.n === 1 ? '' : 's'}</h2></div><div class="vx-list">${picked.rows.slice(0, 120).map(r => itemCard(b, r.item, mc ? [mc] : [])).join('')}</div>` : '';
     return `<div class="vx-bar"><span class="vx-note">${mc ? 'Sum of ' + esc(mc.title) : 'Number of items'} ${esc((byOptions(b).find(o => o[0] === sp.by) || ['', ''])[1].toLowerCase())} · total ${esc(mc ? fmtVal(mc, agg.total) : fmtN(agg.total))} · click a bar to list its items</span></div>
       <div class="vx-panel vx-chartbox"><div class="vx-chart" id="vx-chart" data-vx-chartclick="1"></div></div>${list}`;
@@ -685,14 +687,16 @@
   function fillFiles(b, all) {
     const el = $('#vx-fgrid'); if (!el) return;
     const c = cfg('files'), q = String(c.q || '').toLowerCase();
-    const list = all.filter(f => (!c.group || f.it.group === c.group) && (!c.src || f.src === c.src) && (!c.kind || KIND(extOf(f.name) || extOf(f.url)) === c.kind) && (!q || f.name.toLowerCase().includes(q) || String(f.it.name).toLowerCase().includes(q)));
+    // the item as every other view names it (first name + Last Name column), and searchable by that full name
+    const lnc = b.columns.find(x => /^last[\s_-]*name$/i.test(x.title || '')), full = it => `${it.name} ${lnc ? (it.values || {})[lnc.id] || '' : ''}`.toLowerCase();
+    const list = all.filter(f => (!c.group || f.it.group === c.group) && (!c.src || f.src === c.src) && (!c.kind || KIND(extOf(f.name) || extOf(f.url)) === c.kind) && (!q || f.name.toLowerCase().includes(q) || full(f.it).includes(q)));
     $('#vx-fcount').textContent = `${list.length} of ${all.length} file${all.length === 1 ? '' : 's'}`;
     el.innerHTML = list.slice(0, 400).map(f => {
       const e = extOf(f.name) || extOf(f.url), k = KIND(e), local = String(f.url).startsWith('/api/files/'), safe = /^(png|jpe?g|gif|webp|pdf|txt)$/.test(e);
       const open = local && safe ? f.url + '?inline=1' : f.url, g = b.groups.find(x => x.id === f.it.group);
       const thumb = local && k === 'image' && safe ? `<img src="${esc(f.url)}?inline=1" alt="" loading="lazy">` : `<span class="vx-ext">${esc((e || 'file').toUpperCase())}</span>`;
       return `<div class="vx-file glass"><div class="vx-thumb">${thumb}</div><div class="vx-fmeta"><b title="${esc(f.name)}">${esc(f.name)}</b>
-        <span class="vx-note" title="${esc(f.it.name)}">${esc(f.it.name)}${g ? ' · ' + esc(g.name) : ''}</span><span class="vx-note">${f.src === 'Update' ? 'Update' + (f.by ? ' by ' + esc(f.by) : '') : esc(f.src)}${f.at ? ' · ' + esc(new Date(f.at).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })) : ''}</span>
+        <span class="vx-note" title="${A.cardName ? A.cardName(b, f.it) : esc(f.it.name)}">${A.cardName ? A.cardName(b, f.it) : esc(f.it.name)}${g ? ' · ' + esc(g.name) : ''}</span><span class="vx-note">${f.src === 'Update' ? 'Update' + (f.by ? ' by ' + esc(f.by) : '') : esc(f.src)}${f.at ? ' · ' + esc(new Date(f.at).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })) : ''}</span>
         <div class="vx-fact">${f.url ? `<a class="btn" href="${esc(open)}" target="_blank" rel="noopener">Open</a><a class="btn" href="${esc(f.url)}" ${local ? 'download' : 'target="_blank" rel="noopener"'}>Download</a>` : ''}<button class="btn" data-act="open" data-item="${esc(f.it.id)}">Item</button></div></div></div>`;
     }).join('') || `<div class="empty" style="grid-column:1/-1"><h3>No files${all.length ? ' match' : ' yet'}</h3>${all.length ? 'Try another filter.' : 'Files added to file columns and attached to updates show up here.'}</div>`;
   }
@@ -767,7 +771,8 @@
     if (w.type === 'chart') { const by = w.by || { kind: 'group' }; const agg = aggregate(R.rows, by, measure, w.chart === 'stacked' ? (w.stack || { kind: 'group' }) : null); return chartSvg(agg, w.chart || 'bar', W, f, { timeAxis: by.kind === 'date', mono: by.kind === 'date', height: 200 }) + note; }
     if (w.type === 'battery') {
       const agg = aggregate(R.rows, { kind: 'status', col: w.statusCol }, { kind: 'count' }); const tot = agg.total || 1;
-      const done = agg.cats.filter(c => /done|funded|closed|complete|won|paid|signed|approved/i.test(c.label)).reduce((s, c) => s + c.value, 0);
+      // whole words only, and not when negated: "Not done", "Unpaid", "Won’t sign" aren't done
+      const done = agg.cats.filter(c => /\b(done|funded|closed|complete|completed|won|paid|signed|approved)\b/i.test(c.label) && !/\b(not|no|non|never)\b|n['’]t\b/i.test(c.label)).reduce((s, c) => s + c.value, 0);
       return `<div style="display:flex;align-items:baseline;gap:10px"><div class="vx-big" style="font-size:38px">${Math.round(done / tot * 100)}%</div><span class="vx-note">done (${esc(fmtN(done))} of ${esc(fmtN(agg.total))})</span></div>
         <div class="vx-batt">${agg.cats.map(c => `<span style="width:${(c.value / tot * 100).toFixed(2)}%;background:${esc(c.color)}" title="${esc(c.label)}: ${c.value}"></span>`).join('')}</div>
         <div class="vx-legend">${agg.cats.map(c => `<span><i style="background:${esc(c.color)}"></i>${esc(trunc(c.label, 22))} <span class="vx-note">${Math.round(c.value / tot * 100)}%</span></span>`).join('')}</div>${note}`;
@@ -877,7 +882,7 @@
     const t = e.target.closest('[data-vx], [data-open], [data-vxcat], [data-act="go-dash"]'); if (!t) return;
     if (t.dataset.act === 'go-dash') { A.S.page = 'dash'; A.S.modal = null; A.S.openItem = null; A.savePage(); D.list = null; D.cache = {}; A.render(); return; }
     if (t.dataset.open) { const [bid, iid] = t.dataset.open.split('|'); if (window.SolverOpen) window.SolverOpen(bid, iid); return; }
-    if (t.dataset.vxcat !== undefined && t.closest('#vx-chart')) { const c = cfg('chart'); setCfg('chart', { sel: c.sel === t.dataset.vxcat ? '' : t.dataset.vxcat }); return; }
+    if (t.dataset.vxcat !== undefined && t.closest('#vx-chart')) { const c = cfg('chart'), k = t.dataset.vxcat; setCfg('chart', { sel: c.sel === k ? '' : k }); if (e.detail === 0) setTimeout(() => { const m = [...document.querySelectorAll('#vx-chart [data-vxcat][tabindex]')].find(x => x.dataset.vxcat === k); if (m) m.focus(); }, 30); return; }
     const a = t.dataset.vx, b = A.board();
     switch (a) {
       case 'set': setCfg(A.S.view, { [t.dataset.k]: t.dataset.v }); break;
@@ -917,7 +922,7 @@
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && D.modal) { D.modal = null; renderModal(); e.stopPropagation(); }
     if (e.key === 'Tab' && D.modal) { const fs = [...layer.querySelectorAll('.modal button, .modal input, .modal select, .modal textarea')].filter(x => !x.disabled && x.offsetParent); if (!fs.length) return; const i = fs.indexOf(document.activeElement); if (i < 0 || (e.shiftKey && i === 0) || (!e.shiftKey && i === fs.length - 1)) { e.preventDefault(); fs[e.shiftKey ? fs.length - 1 : 0].focus(); } }
-    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('.clu')) { e.preventDefault(); e.target.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('.clu, #vx-chart [data-vxcat][tabindex]')) { e.preventDefault(); e.target.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
   }, true);
   let rz = null;
   window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { if (!A) return; if (A.S.page === 'dash') mountWidgets(); else if (A.S.page === 'board' && (A.S.view === 'chart' || A.S.view === 'map')) A.renderContent(); }, 150); });

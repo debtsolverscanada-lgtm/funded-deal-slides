@@ -86,6 +86,15 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
   }
   const stop = (id, reason) => db.prepare("UPDATE seq_enroll SET status = 'stopped', reason = ?, next_at = NULL WHERE id = ? AND status = 'active'").run(String(reason || '').slice(0, 200), id);
 
+  // The trigger's status column / group was picked on one of the sequence's boards; another board copied from Monday can
+  // give the same column or group a different id, so there it's found by its title / name
+  const lcs = x => String(x || '').trim().toLowerCase();
+  function sameOnBoard(s, b, kind, id) {
+    const list = x => (kind === 'col' ? x.columns : x.groups) || [], title = x => kind === 'col' ? x.title : x.name;
+    if (!id || list(b).some(x => x.id === id)) return id;
+    for (const ob of s.boards) { const d = boardDoc(ob), o = d && list(d).find(x => x.id === id); if (o) { const m = list(b).find(x => lcs(title(x)) === lcs(title(o)) && (kind !== 'col' || x.type === o.type)); return m ? m.id : ''; } }
+    return '';
+  }
   // Called for every item save (Monday copy, lead links, people): start sequences whose trigger just happened
   function onItem(bid, iid, before, after) {
     try {
@@ -97,13 +106,15 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
           if (before) continue;
           const created = Date.parse(after.createdAt || '') || Date.now(); if (Date.now() - created > 6 * 3600e3) continue; // old item copied in late
           if (db.prepare("SELECT 1 FROM docs WHERE id = ? AND col LIKE 'boards/%/items' AND col != ?").get(String(iid), `boards/${bid}/items`)) continue; // moved here
-          if (s.trigger.inGroup && after.group !== s.trigger.inGroup) continue; // only new leads in that group
+          if (s.trigger.inGroup && after.group !== sameOnBoard(s, b, 'group', s.trigger.inGroup)) continue; // only new leads in that group
           enroll(s, bid, iid, 'auto: new lead');
         } else if (s.trigger.type === 'group') {
-          if (before && before.group !== after.group && after.group === s.trigger.group) { const g = (b.groups || []).find(x => x.id === after.group); enroll(s, bid, iid, `auto: moved to ${g ? g.name : 'group'}`); }
+          const tg = sameOnBoard(s, b, 'group', s.trigger.group);
+          if (tg && before && before.group !== after.group && after.group === tg) { const g = (b.groups || []).find(x => x.id === after.group); enroll(s, bid, iid, `auto: moved to ${g ? g.name : 'group'}`); }
         } else if (s.trigger.type === 'status') {
-          const was = before ? statusLabel(b, s.trigger.col, (before.values || {})[s.trigger.col]) : '';
-          const is = statusLabel(b, s.trigger.col, (after.values || {})[s.trigger.col]);
+          const col = sameOnBoard(s, b, 'col', s.trigger.col); if (!col) continue;
+          const was = before ? statusLabel(b, col, (before.values || {})[col]) : '';
+          const is = statusLabel(b, col, (after.values || {})[col]);
           if (is && is.toLowerCase() === s.trigger.label.toLowerCase() && was.toLowerCase() !== is.toLowerCase()) enroll(s, bid, iid, `auto: status → ${is}`);
         }
       }
@@ -117,6 +128,8 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
     try {
       const due = db.prepare("SELECT * FROM seq_enroll WHERE status = 'active' AND next_at <= ? AND seq NOT IN (SELECT id FROM sequences WHERE active = 0) ORDER BY next_at LIMIT 25").all(new Date().toISOString());
       for (const e of due) {
+        // the list was read before the sends above: someone may have pressed Stop (or the lead left) while they went out
+        const cur = db.prepare('SELECT status, step FROM seq_enroll WHERE id = ?').get(e.id); if (!cur || cur.status !== 'active' || cur.step !== e.step) continue;
         const seq = getSeq(e.seq); if (!seq) { stop(e.id, 'sequence deleted'); continue; }
         if (!seq.active) continue; // paused: keeps its place
         const b = boardDoc(e.board), item = itemDoc(e.board, e.item);
@@ -131,8 +144,9 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
         const text = fill(st.body, b, item, from) + (seq.footer ? `\n\n--\n${company(b)}\nIf you’d rather not get these emails, reply UNSUBSCRIBE.` : '');
         // move the lead past this step BEFORE sending, so a restart mid-send can't send the same email twice; put it back if the send fails
         const nx = seq.steps[e.step + 1];
-        if (nx) db.prepare('UPDATE seq_enroll SET step = step + 1, next_at = ?, tries = 0 WHERE id = ?').run(new Date(Date.now() + Math.max(waitMs(nx), 60e3)).toISOString(), e.id);
-        else db.prepare("UPDATE seq_enroll SET step = step + 1, status = 'done', next_at = NULL WHERE id = ?").run(e.id);
+        const moved = nx ? db.prepare("UPDATE seq_enroll SET step = step + 1, next_at = ?, tries = 0 WHERE id = ? AND status = 'active' AND step = ?").run(new Date(Date.now() + Math.max(waitMs(nx), 60e3)).toISOString(), e.id, e.step)
+          : db.prepare("UPDATE seq_enroll SET step = step + 1, status = 'done', next_at = NULL WHERE id = ? AND status = 'active' AND step = ?").run(e.id, e.step);
+        if (!moved.changes) continue; // stopped or moved on meanwhile: never send
         try {
           await mail.sendEmailNow({ user: { id: 'sequence', name: `“${seq.name}” step ${e.step + 1}`, email: '' }, from, bid: e.board, iid: e.item, to, subject: fill(st.subject, b, item, from), text });
         } catch (err) {
@@ -200,8 +214,11 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
       return send(res, 200, { ok: true, id, active: s.active }), true;
     }
     if (p === '/api/seq/stop' && method === 'POST') {
+      if (!user || user.role === 'viewer') throw new HttpError(403, 'Your account can view boards but not change them.');
       const b = await readBody(req, 4096), e = db.prepare('SELECT * FROM seq_enroll WHERE id = ?').get(String(b.id || '')); if (!e) throw new HttpError(404, 'Not found.');
-      mail.loadItem(user, e.board, e.item); stop(e.id, 'stopped by ' + (user.name || user.email));
+      if (itemDoc(e.board, e.item)) mail.loadItem(user, e.board, e.item);
+      else { const i = boardInfo(e.board); if (!i || !canSee(user, i.access)) throw new HttpError(404, 'Not found.'); } // the lead was deleted (it shows as “(deleted)”): it can still be stopped
+      stop(e.id, 'stopped by ' + (user.name || user.email));
       return send(res, 200, { ok: true }), true;
     }
     return false;

@@ -67,7 +67,15 @@ module.exports = function features(ctx) {
   db.exec(`CREATE TABLE IF NOT EXISTS search_items (rowid INTEGER PRIMARY KEY, path TEXT UNIQUE NOT NULL, board TEXT NOT NULL, item TEXT NOT NULL, name TEXT NOT NULL DEFAULT '');
     CREATE INDEX IF NOT EXISTS search_items_board ON search_items(board);`);
   try {
-    db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS search_tri USING fts5(name, fields, tokenize = 'trigram', content = '', contentless_delete = 1)`);
+    // accents don't count (Zoe finds Zoë, Helene finds Hélène), like the board search box. An index made before that
+    // is replaced once: dropping it empties search_items, so the item count no longer matches and it is rebuilt below.
+    const triSql = (db.prepare("SELECT sql FROM sqlite_master WHERE name = 'search_tri'").get() || {}).sql;
+    if (triSql && !/remove_diacritics/.test(triSql) && startIndex) {
+      try { db.exec("CREATE VIRTUAL TABLE temp.search_tri_probe USING fts5(x, tokenize = 'trigram remove_diacritics 1')"); db.exec('DROP TABLE temp.search_tri_probe'); db.exec('DROP TABLE search_tri'); db.exec('DELETE FROM search_items'); }
+      catch (e) { /* this SQLite's trigram can't ignore accents: keep the index as it is */ }
+    }
+    try { db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS search_tri USING fts5(name, fields, tokenize = 'trigram remove_diacritics 1', content = '', contentless_delete = 1)`); }
+    catch (e) { db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS search_tri USING fts5(name, fields, tokenize = 'trigram', content = '', contentless_delete = 1)`); }
     db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS search_words USING fts5(body, tokenize = 'unicode61 remove_diacritics 2', prefix = '2 3', content = '', contentless_delete = 1, detail = 'column')`);
   } catch (e) {
     FTS = false;
@@ -540,6 +548,7 @@ module.exports = function features(ctx) {
   }
 
   // ---------- search ----------
+  const noAccent = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
   function search(user, text, allOf) { // allOf: a board id whose matches are all listed (Show all), not just 8
     const qs = String(text || '').trim().slice(0, 100); if (qs.length < 2) return { q: qs, boards: [], total: 0 };
     const digits = qs.replace(/\D/g, ''), ql = qs.toLowerCase();
@@ -567,7 +576,7 @@ module.exports = function features(ctx) {
       if (!infos.has(r.board)) infos.set(r.board, boardInfo(r.board));
       const info = infos.get(r.board); if (!info || !canSee(user, info.access)) continue;
       if (restricted(user, info)) { const d = itemDoc(r.board, r.item); if (!d || !itemVisible(user, info, d)) continue; }
-      const nameHit = String(r.name || '').toLowerCase().includes(ql);
+      const nameHit = String(r.name || '').toLowerCase().includes(ql) || noAccent(r.name).includes(noAccent(ql));
       if (!byBoard.has(r.board)) byBoard.set(r.board, { id: r.board, name: info.name, count: 0, items: [] });
       const g = byBoard.get(r.board); g.count++; total++;
       g.items.push({ id: r.item, name: r.name, where: '', snip: '', nameHit });
@@ -577,6 +586,7 @@ module.exports = function features(ctx) {
       const d = itemDoc(bid, it.id), info = infos.get(bid); if (!d || !info) return;
       const lines = searchBody(info.columns, d);
       let k = lines.findIndex(l => l.toLowerCase().includes(ql));
+      if (k < 0) { const qa = noAccent(ql); k = lines.findIndex(l => noAccent(l).includes(qa)); }
       if (k < 0 && digits.length >= 3) k = lines.findIndex(l => l.replace(/\D/g, '').includes(digits));
       if (k < 0 && words.length) k = lines.findIndex(l => { const t = l.toLowerCase(); return words.every(w => t.includes(w.toLowerCase())); });
       if (k < 0) return;
@@ -793,11 +803,18 @@ module.exports = function features(ctx) {
       }
       if (!r) return send(res, 200, { cells: 0, none: true });
       // everything that same save changed (an automation may have set more cells), undone together
-      const same = db.prepare("SELECT * FROM item_history WHERE board = ? AND item = ? AND at = ? AND by_id = ? AND kind = 'change' AND undone = 0").all(bid, r.item, r.at, user.id);
+      // a bulk edit (one status or group for several selected leads) saves each lead on its own, moments apart: the same
+      // column changed by the same person in one quick run is one action, so Ctrl+Z undoes all of it
+      const run = [r]; {
+        const near = db.prepare("SELECT * FROM item_history WHERE board = ? AND by_id = ? AND col = ? AND kind = 'change' AND undone = 0 AND source <> 'undo' AND at >= ? AND id < ? ORDER BY id DESC LIMIT 2000").all(bid, user.id, r.col, new Date(Date.parse(r.at) - 600e3).toISOString(), r.id);
+        const seen = new Set([r.item]); let at = Date.parse(r.at);
+        for (const x of near) { const t = Date.parse(x.at); if (at - t > 1500 || seen.has(x.item)) break; seen.add(x.item); run.push(x); at = t; }
+      }
+      const same = run.flatMap(x => db.prepare("SELECT * FROM item_history WHERE board = ? AND item = ? AND at = ? AND by_id = ? AND kind = 'change' AND undone = 0").all(bid, x.item, x.at, user.id));
       const out = applyReverts(user, bid, same.map(x => ({ id: x.id, item: x.item, col: x.col, before: x.before })));
       same.forEach(x => H.markUndone.run(x.id));
       const b = boardInfo(bid);
-      return send(res, 200, { ...out, what: `${colName(b, r.col)} on “${r.item_name}”` });
+      return send(res, 200, { ...out, what: run.length > 1 ? `${colName(b, r.col)} on ${run.length} items` : `${colName(b, r.col)} on “${r.item_name}”` });
     }
 
     if (p === '/api/x/bin' && method === 'GET') {

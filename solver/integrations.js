@@ -137,7 +137,11 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
   const splitNames = v => String(v || '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
   function condOk(b, item, c) {
     if (c.col === '__group') { const gid = c.value === '__top__' ? (b.groups[0] || {}).id : c.value; return c.op === 'is_not' ? item.group !== gid : item.group === gid; }
-    const v = (item.values || {})[c.col], empty = v === '' || v == null || v === false, list = Array.isArray(c.value) ? c.value.map(String) : [String(c.value ?? '')];
+    let v = (item.values || {})[c.col]; const empty = v === '' || v == null || v === false;
+    // a checkbox is checked (true) or not ('' / false / missing): "is unchecked" matches all of those
+    const chk = ((b.columns || []).find(x => x.id === c.col) || {}).type === 'checkbox', tf = x => String(x === true || x === 'true');
+    if (chk) v = tf(v);
+    const list = Array.isArray(c.value) ? c.value.map(chk ? tf : String) : [chk ? tf(c.value) : String(c.value ?? '')];
     switch (c.op) {
       case 'empty': return empty; case 'not_empty': return !empty;
       case 'is_not': case 'is_not_any': return !list.includes(String(v ?? ''));
@@ -151,6 +155,8 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
   function runRules(b, item, ev, actor, notes = [], iid = null, depth = 0) {
     const actorName = (actor && actor.name) || 'someone', locked = lockedCols(actor && actor.role ? actor : null, b), guest = !!actor && actor.role === 'guest';
     const rules = (b.automations || []).filter(r => r.on !== false && r.trigger && (
+      (ev.type === 'rule' && r.id === ev.rule) || // one named rule (a date reminder that came due)
+      (ev.type === 'moved_board' && r.trigger === 'moved_board') || // moved here by another board's rule (crossboard.js)
       (ev.type === 'created' && r.trigger === 'created' && (!r.group || r.group === ev.group)) ||
       (ev.type === 'moved_group' && r.trigger === 'moved_group' && (!r.group || r.group === ev.group || (r.group === '__top__' && (b.groups[0] || {}).id === ev.group))) ||
       (ev.type === 'value' && (r.trigger === 'status' || r.trigger === 'column') && r.col === ev.col && (r.value == null || r.value === '' || (typeof r.value === 'boolean' ? r.value === !!(ev.value && ev.value !== 'false') : String(r.value) === String(ev.value)))))
@@ -174,8 +180,8 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
           const g = a.group === '__top__' ? b.groups[0] : b.groups.find(x => x.id === a.group);
           if (g && item.group !== g.id) { item.group = g.id; did.push('moved it to ' + g.name); } // already there: nothing to say
         }
-        else if (a.type === 'notify') { notes.push({ to: a.to, message: a.message, title: r.title }); did.push('notified ' + (a.to || 'someone')); }
-        else if (a.type === 'webhook') { if (!notes.some(n => n.webhook && n.rule.id === r.id)) notes.push({ webhook: true, rule: r, via: guest ? 'guest' : undefined }); }
+        else if (a.type === 'notify') { notes.push({ to: a.to, message: a.message, title: r.title, kind: actor && actor.noteKind }); did.push('notified ' + (a.to || 'someone')); }
+        else if (a.type === 'webhook') { if (!notes.some(n => n.webhook && n.rule.id === r.id)) notes.push({ webhook: true, rule: r, via: guest ? 'guest' : actor && actor.via ? actor.via : undefined }); }
         else if (a.type === 'create_update') { item.updates = [...(item.updates || []), { at: now(), by: 'automation', byName: 'Automation', text: String(a.value || '') }]; did.push('posted an update'); }
         // moving, copying and duplicating need the app open: say so instead of skipping quietly
         else if (a.type === 'move_board' || a.type === 'copy_to_board' || a.type === 'duplicate') { const what = a.type === 'move_board' ? 'moving it to another board' : a.type === 'copy_to_board' ? 'copying it to another board' : 'duplicating it'; skipped.push(guest ? `skipped: ${what} (${actorName} is a guest)` : `skipped: ${what} only runs for changes made in the app, not through ${actorName}`); }
@@ -186,7 +192,7 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
       // a rule that only sends to a connected tool gets its line in the run log from the send itself
       const hookOnly = !did.length && !skipped.length && (r.actions || []).some(a => a.type === 'webhook');
       const result = [did.length ? 'Ran: ' + did.join(', ') : skipped.length ? '' : 'Ran (nothing to change here)', ...skipped].filter(Boolean).join('; ');
-      if (!hookOnly) notes.push({ ran: { rule: r.id, result, via: (guest ? 'guest' : 'api') + ' · ' + actorName } });
+      if (!hookOnly) notes.push({ ran: { rule: r.id, result, via: actor && actor.via ? actor.via : (guest ? 'guest' : 'api') + ' · ' + actorName } });
     }
     if (log.length) item.activity = [...log, ...(item.activity || [])].slice(0, 40);
     // changes the rules made set off further rules, like the app (4 deep at most)
@@ -534,11 +540,17 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
           fired.push(x);
         }
         if (!fired.length) continue;
+        // a board that lives in Solver.ca: the rule's own actions run too (set a status, post an update, move to a group…,
+        // and the rules those changes set off), like any other rule. On a board copied from Monday, Monday's own rule makes
+        // those changes and they come back with the copy, so only its notifications and webhooks go out from here.
+        const own = b.source !== 'monday', before = own ? JSON.parse(ir.data) : null, notes = [];
+        if (own) for (const { r } of fired) runRules(b, d, { type: 'rule', rule: r.id }, { role: 'admin', name: 'Date reminder', via: 'reminder', noteKind: 'reminder' }, notes, ir.id);
         q.upsertDoc.run(`boards/${b.id}/items/${ir.id}`, `boards/${b.id}/items`, ir.id, JSON.stringify(d), now(), 'reminder');
         broadcast({ op: 'set', col: `boards/${b.id}/items`, id: ir.id, data: d });
+        if (own) { itemChanged(`boards/${b.id}/items/${ir.id}`, before, d, 'reminder'); sendNotes(b, ir.id, d, notes); }
         for (const { r, target } of fired) {
-          sendNotes(b, ir.id, d, [...(r.actions || []).filter(a => a.type === 'notify').map(a => ({ to: a.to, message: a.message, title: r.title || 'Reminder', kind: 'reminder' })), ...((r.actions || []).some(a => a.type === 'webhook') ? [{ webhook: true, rule: r, via: 'reminder' }] : [])]);
-          if (hooks.ruleRan) try { hooks.ruleRan(b.id, r.id, ir.id, d.name, `Reminder for ${target}`, 'reminder'); } catch (e) {}
+          if (!own) sendNotes(b, ir.id, d, [...(r.actions || []).filter(a => a.type === 'notify').map(a => ({ to: a.to, message: a.message, title: r.title || 'Reminder', kind: 'reminder' })), ...((r.actions || []).some(a => a.type === 'webhook') ? [{ webhook: true, rule: r, via: 'reminder' }] : [])]);
+          if (!own && hooks.ruleRan) try { hooks.ruleRan(b.id, r.id, ir.id, d.name, `Reminder for ${target}`, 'reminder'); } catch (e) {} // own boards: runRules logged what it did
           emit('reminder.due', b.id, ir.id, b, d, { reminder: { rule: r.title, column: ((b.columns || []).find(c => c.id === r.col) || {}).title, date: target, notify: (r.actions || []).filter(a => a.type === 'notify').map(a => ({ to: a.to, message: a.message })) } });
         }
       }
@@ -546,5 +558,5 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
   }
   if (process.env.KS_REMINDERS !== 'off') { setInterval(() => { try { checkReminders(); } catch (e) { console.error('reminders:', e.message); } }, 10 * 60 * 1000).unref(); setTimeout(() => { try { checkReminders(); } catch (e) {} }, 30000).unref(); }
 
-  return { handleV1, handleAdmin, itemChanged, EVENTS, checkReminders, createItem, pressButton, emit, safeUrl, guestRules, sendNotes, parseNum, parseDay };
+  return { handleV1, handleAdmin, itemChanged, EVENTS, checkReminders, createItem, pressButton, emit, safeUrl, guestRules, sendNotes, runRules, parseNum, parseDay };
 };

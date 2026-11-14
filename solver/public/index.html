@@ -123,7 +123,7 @@ tr:hover .open-btn, .open-btn:focus-visible { opacity: 1; }
 .chip { width: 100%; height: 37px; border: 0; color: #fff; font-weight: 500; font-size: 13px; padding: 0 10px; text-shadow: 0 1px 0 rgba(0,0,0,.12); }
 .chip.none { background: var(--surface-2); color: var(--muted); text-shadow: none; }
 .chip:hover { filter: brightness(1.08); }
-.w-status { width: 150px; } .w-text { width: 200px; } .w-person { width: 130px; } .w-date { width: 140px; } .w-phone { width: 140px; } .w-email { width: 210px; } .w-number { width: 140px; }
+.w-status { width: 150px; } .w-text { width: 200px; } .w-person { width: 130px; } .w-date { width: 140px; } .w-phone { width: 170px; } /* room for "+1 (403) 555-1072" next to the call button */ .w-email { width: 210px; } .w-number { width: 140px; }
 .add-row td { height: 36px; }
 .add-row .cell-input { color: var(--muted); }
 .sum-row td { height: 30px; background: var(--surface-2); border-bottom: 0; }
@@ -1444,7 +1444,9 @@ html.mx-off.pet-docked .pet svg { animation: none; }
   const rulesOf = b => (b.automations || []).map(normRule).filter(r => r.on !== false);
   function condOk(b, item, vals, c) {
     if (c.col === '__group') { const gid = c.value === '__top__' ? (b.groups[0] || {}).id : c.value; return c.op === 'is_not' ? item.group !== gid : item.group === gid; }
-    const v = vals[c.col], empty = v === '' || v == null || v === false;
+    let v = vals[c.col]; const empty = v === '' || v == null || v === false;
+    // a checkbox is checked (true) or not ('' / false / missing): "is unchecked" matches all of those
+    if (((b.columns || []).find(x => x.id === c.col) || {}).type === 'checkbox') { const tf = x => String(x === true || x === 'true'); v = tf(v); c = { ...c, value: Array.isArray(c.value) ? c.value.map(tf) : tf(c.value) }; }
     switch (c.op) {
       case 'empty': return empty; case 'not_empty': return !empty;
       case 'is_not': return Array.isArray(c.value) ? !c.value.map(String).includes(String(v ?? '')) : String(v ?? '') !== String(c.value ?? '');
@@ -1950,7 +1952,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
   let blastTimer = null; const blastSeen = new Set();
   function pollBlasts() {
     clearTimeout(blastTimer);
-    if (!window.KS || !S.me || S.isGuest) return;
+    if (!window.KS || !S.me || S.me.role === 'viewer') return; // guests send as the board's rep too, so they get the pill and its Stop
     KS.api('GET', '/api/blast/mine').then(list => {
       let el = document.getElementById('blast-pill'); const live = (list || []).filter(x => x.status === 'sending');
       // a blast this page watched has finished (or was stopped): say how it went instead of the pill just vanishing
@@ -1959,7 +1961,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
       if (ended.length) toast(ended.map(x => `${x.channel === 'email' ? 'Mass email' : 'Mass text'} ${x.status === 'stopped' ? 'stopped' : 'done'}: ${x.sent} sent, ${x.failed} failed, ${x.skipped} skipped.`).join(' '));
       if (!live.length) { if (el) el.remove(); return; }
       if (!el) { el = document.createElement('div'); el.id = 'blast-pill'; el.className = 'blast-pill'; document.body.appendChild(el); }
-      el.innerHTML = live.map(x => `<span>${x.channel === 'email' ? '✉ Mass email' : '💬 Mass text'}: ${x.sent} of ${x.total} sent${x.failed ? ` · ${x.failed} failed` : ''}${x.skipped ? ` · ${x.skipped} skipped` : ''}</span><button class="btn" data-act="blast-stop" data-id="${esc(x.id)}">Stop</button>`).join('');
+      el.innerHTML = live.map(x => `<span>${x.channel === 'email' ? '✉ Mass email' : '💬 Mass text'}: ${x.sent} of ${x.total} sent${x.failed ? ` · ${x.failed} failed` : ''}${x.skipped ? ` · ${x.skipped} skipped` : ''}${x.held ? ` · ${x.held} waiting for 9am their time` : ''}</span><button class="btn" data-act="blast-stop" data-id="${esc(x.id)}">Stop</button>`).join('');
       blastTimer = setTimeout(pollBlasts, 5000);
     }).catch(() => { blastTimer = setTimeout(pollBlasts, 15000); });
   }
@@ -1998,9 +2000,14 @@ html.mx-off.pet-docked .pet svg { animation: none; }
     const qp = /^[\d\s()+.\-]+$/.test(q) && q.replace(/\D/g, '').length >= 7 ? q.replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '') : ''; // 403-555-1002 / +1 (403) 555-1002 find 4035551002
     let list = S.items.slice().sort((a, c) => (a.pos || 0) - (c.pos || 0));
     if (S.person && b) { const pc = b.columns.filter(c => c.type === 'person'); list = list.filter(i => pc.some(c => String((i.values || {})[c.id] || '').split(',').map(s => s.trim()).includes(S.person))); }
+    // several words ("Taylor Tester"): each one somewhere in the item, since first and last names live in different columns (like the global search)
+    const qw = !qn && !qp ? q.split(/\s+/).filter(Boolean) : [];
     if (q && b) list = list.filter(i => {
       if (fold(i.name).includes(q)) return true;
-      return b.columns.some(c => { const v = (i.values || {})[c.id]; return fold(describe(c, v)).includes(q) || (qn && c.type === 'number' && v != null && String(v).replace(/[$,\s]/g, '').includes(qn)) || (qp && c.type === 'phone' && v != null && String(v).replace(/\D/g, '').includes(qp)); });
+      if (b.columns.some(c => { const v = (i.values || {})[c.id]; return fold(describe(c, v)).includes(q) || (qn && c.type === 'number' && v != null && String(v).replace(/[$,\s]/g, '').includes(qn)) || (qp && c.type === 'phone' && v != null && String(v).replace(/\D/g, '').includes(qp)); })) return true;
+      if (qw.length < 2) return false;
+      const all = [fold(i.name), ...b.columns.map(c => fold(describe(c, (i.values || {})[c.id])))].join('\n');
+      return qw.every(w => all.includes(w));
     });
     const view = curView(); if (view && b) list = list.filter(i => window.KSViewFilters ? KSViewFilters.matches(view, b, i, { me: S.me }) : (view.rules || []).every(r => viewMatch(b, i, r)));
     Object.entries(S.filters).forEach(([cid, vals]) => { if (vals && vals.length) list = list.filter(i => vals.includes(String((i.values || {})[cid] ?? ''))); });
@@ -2037,10 +2044,13 @@ html.mx-off.pet-docked .pet svg { animation: none; }
     const col = b.columns.find(c => c.id === sp.dataset.col); if (!col) return null;
     td.innerHTML = cellEditor(col, item); return td.querySelector('input, textarea');
   }
+  // reached with Tab/Shift+Tab: the whole value is selected, like a native text box, so typing replaces it (a click puts the caret at the end)
+  let lazyTabAt = 0;
+  document.addEventListener('keydown', e => { if (e.key === 'Tab') lazyTabAt = Date.now(); }, true);
   document.addEventListener('focusin', e => {
     const sp = e.target; if (!sp.classList || !sp.classList.contains('cell-lazy')) return;
     const inp = unlazy(sp); if (!inp) return;
-    inp.focus({ preventScroll: true }); const n = inp.value.length; try { inp.setSelectionRange(n, n); } catch (x) {}
+    inp.focus({ preventScroll: true }); const n = inp.value.length; try { if (Date.now() - lazyTabAt < 500) inp.select(); else inp.setSelectionRange(n, n); } catch (x) {}
   });
   function cellEditor(col, item, inDrawer) {
     { const h = fx('cell', col, item, inDrawer); if (h !== undefined) return h; }
@@ -2136,7 +2146,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
   // Every group shares one sideways scroller (#content) and the same fixed column widths, so columns line up from
   // group to group. On big boards only the columns near the screen and only the groups near the screen are built;
   // the rest are filled in as you scroll (Mark's 1,200 leads x 160 columns would otherwise be ~115,000 elements).
-  const COLW = { status: 150, text: 200, person: 130, date: 140, phone: 140, email: 210, number: 140, formula: 140, button: 130, checkbox: 90, dropdown: 170, link: 200, item_id: 130, created: 130, board_relation: 180, mirror: 180, ai: 220, doc: 200, time_tracking: 150 };
+  const COLW = { status: 150, text: 200, person: 130, date: 140, phone: 170, email: 210, number: 140, formula: 140, button: 130, checkbox: 90, dropdown: 170, link: 200, item_id: 130, created: 130, board_relation: 180, mirror: 180, ai: 220, doc: 200, time_tracking: 150 };
   const colW = c => isFileCol(c) ? 220 : c.long ? 240 : (COLW[c.type] || 170);
   const isNarrow = () => window.matchMedia('(max-width: 780px)').matches;
   const nameW = () => isNarrow() ? (innerWidth < 400 ? 170 : 190) : 300;
@@ -2232,7 +2242,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
           <span class="group-count">${gi.length} ${gi.length === 1 ? 'item' : 'items'}</span>
           ${S.canWrite && !S.isGuest && (board() || { groups: [] }).groups.findIndex(x => x.id === g.id) > 0 ? `<button class="icon-btn g-up" data-act="group-up" data-group="${esc(g.id)}" aria-label="Move ${esc(g.name)} up">Move up</button>` : ''}
           ${S.canWrite ? `<button class="icon-btn" data-act="group-color" data-group="${esc(g.id)}">Colour</button>
-          <button class="icon-btn" data-act="delete-group" data-group="${esc(g.id)}">${S.confirmDelete === 'g:' + g.id ? (gi.length ? `Delete group and ${gi.length} lead${gi.length === 1 ? '' : 's'}` : 'Click again to delete') : 'Delete'}</button>` : ''}
+          <button class="icon-btn" data-act="delete-group" data-group="${esc(g.id)}">${S.confirmDelete === 'g:' + g.id ? (n => n ? `Delete group and ${n} lead${n === 1 ? '' : 's'}` : 'Click again to delete')(S.items.filter(i => i.group === g.id).length) /* every lead in it goes, also those a search or filter hides */ : 'Delete'}</button>` : ''}
         </div>`;
   }
   function renderTable(b) {
@@ -2531,7 +2541,8 @@ html.mx-off.pet-docked .pet svg { animation: none; }
     const lanes = [...(col.labels || []), { id: '', label: 'No status', color: '#6b7280' }].map(l => {
       const li = items.filter(i => ((i.values || {})[colId] || '') === l.id);
       if (!li.length && (!l.id || l.hidden || (col.labels || []).length > 10)) return '';
-      const cards = li.map(i => {
+      const CAP = 150; // like the pipeline lanes: a lane of thousands of leads would freeze phones
+      const cards = li.slice(0, CAP).map(i => {
         const g = b.groups.find(x => x.id === i.group);
         const v = i.values || {};
         const ol = otherStatus && labelOf(otherStatus, v[otherStatus.id]);
@@ -2546,8 +2557,8 @@ html.mx-off.pet-docked .pet svg { animation: none; }
         </div>`;
       }).join('');
       return `<div class="lane" data-lane="${esc(l.id)}" data-col="${esc(colId)}" style="--lc:${esc(l.color)}">
-        <div class="lane-head"><span>${esc(l.label)}</span><span class="group-count">${li.length}</span></div>
-        <div class="lane-body">${cards}</div></div>`;
+        <div class="lane-head"><span>${esc(l.label)}</span><span class="group-count">${li.length.toLocaleString('en-CA')}</span></div>
+        <div class="lane-body">${cards}${li.length > CAP ? `<p class="rail-note" style="padding:6px 8px">Showing ${CAP} of ${li.length.toLocaleString('en-CA')}. Search to find a lead.</p>` : ''}</div></div>`;
     }).join('');
     return `<div class="kanban">${lanes}</div>`;
   }
@@ -2569,6 +2580,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
   function renderLayer() {
     let html = '';
     const b = board();
+    if (S.draftFilesFor !== S.openItem) { S.draftFiles = []; S.draftFilesFor = S.openItem; } // files attached to an unposted update belong to that item only, however the next one is opened
     if (S.openItem && b) {
       const i = itemById(S.openItem);
       if (!i) S.openItem = null;
@@ -2583,7 +2595,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
         if (W && S.drawerTab === 'info') S.drawerTab = 'updates';
         const dtab = S.drawerTab;
         const WIDE_COL = ['long_text', 'doc', 'ai', 'files', 'file'];
-        const fgrid = W ? `<div class="fgrid">${b.columns.map(c => `<div class="fcell ${WIDE_COL.includes(c.type) ? 'span3' : ''}"><div class="f-label">${isLocked(c, b) ? IC.lock : ''}${esc(c.title)}</div><div class="f-value ${c.format === 'currency' ? 'currency' : ''}" ${c.format === 'currency' ? 'style="position:relative"' : ''}>${c.format === 'currency' ? '<span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted);font-family:var(--f-data)">$</span>' : ''}${cellEditor(c, i, true)}</div></div>`).join('')}<div class="fcell">${groupSel}</div></div>
+        const fgrid = W ? `<div class="fgrid">${b.columns.map(c => `<div class="fcell ${WIDE_COL.includes(c.type) || c.long ? 'span3' : ''}"><div class="f-label">${isLocked(c, b) ? IC.lock : ''}${esc(c.title)}</div><div class="f-value ${c.format === 'currency' ? 'currency' : ''}" ${c.format === 'currency' ? 'style="position:relative"' : ''}>${c.format === 'currency' ? '<span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted);font-family:var(--f-data)">$</span>' : ''}${cellEditor(c, i, true)}</div></div>`).join('')}<div class="fcell">${groupSel}</div></div>
           ${(b.subColumns || []).length || (i.subitems || []).length ? `<div class="dw-subs"><h4 class="sec-title">Subitems · ${(i.subitems || []).length}</h4>${subTable(b, i)}</div>` : ''}
           ${S.canWrite ? `<div class="dw-del"><button class="btn danger" data-act="delete-item" data-item="${esc(i.id)}">${S.confirmDelete === 'i:' + i.id ? 'Click again to delete this item' : 'Delete item'}</button></div>` : ''}` : '';
         const log = (i.activity || []).map(a => `<li><time>${esc(fmtTime(a.at))}</time><span class="${sys(a) ? 'auto' : ''}">${sys(a) ? '' : `<span data-uid="${esc(a.by)}">${esc((S.nameOf && S.nameOf[a.by]) || (a.by === S.uid && S.me && S.me.name ? S.me.name + ' (you)' : a.byName || 'Someone'))}</span>: `}${esc(a.text)}</span></li>`).join('');
@@ -3058,6 +3070,8 @@ html.mx-off.pet-docked .pet svg { animation: none; }
         ${pv ? `<div class="bl-preview">
           <p><b>${pv.count} will get it</b>${pv.count ? ` · from ${em ? esc(pv.from) : `${esc(pv.fromName || pv.from)}’s RingCentral line`}${m.items.length === 1 ? '' : ` · about ${pv.minutes} min to send all`}` : ''}</p>
           ${Object.keys(groups).length ? `<details><summary>${pv.skipped.length} skipped</summary><ul>${Object.entries(groups).map(([why, names]) => `<li><b>${esc(why)}</b> (${names.length}): ${esc(names.slice(0, 8).join(', '))}${names.length > 8 ? '…' : ''}</li>`).join('')}</ul></details>` : ''}
+          ${!em && pv.later ? `<p class="rail-note">${pv.later === pv.count ? (pv.count === 1 ? 'It’s' : 'They’re all') : `${pv.later} of these are`} outside 9am–8pm where the lead lives, so ${pv.later === 1 ? 'that text waits' : 'those texts wait'} until 9am their time.</p>` : ''}
+          ${pv.count && !pv.sample && !(m.text || '').trim() ? '<p class="rail-note">Write the message to see how it will read.</p>' : ''}
           ${(pv.unknown || []).length ? `<p class="em-warn">${esc(pv.unknown.join(', '))} won’t be filled in: it goes out as typed. Use {first name}, {name} or {rep}.</p>` : ''}
           ${pv.sample ? `<div class="bl-sample"><span class="rail-note">How ${esc(pv.sample.name)} will see it</span>${em ? `<b>${esc(pv.sample.subject)}</b>` : ''}<div class="u-text">${esc(pv.sample.text)}</div></div>` : ''}
           ${pv.count > pv.limit ? `<p class="em-warn">That’s more than ${pv.limit}. Blasts this big need an admin to send them.</p>` : ''}
@@ -3177,8 +3191,13 @@ html.mx-off.pet-docked .pet svg { animation: none; }
       case 'quick-new': { const b2 = board(); if (!S.canWrite) toast(S.isGuest ? 'Guests can’t add leads.' : 'You can view boards but not add leads.'); else if (b2 && b2.groups[0]) { S.page = 'board'; savePage(); render(); addItem(b2.groups[0].id, newItemName(b2), true); } else toast('Open a board first.'); break; }
       case 'saved-view': { const sv = b && (b.views || []).find(v => v.id === t.dataset.id); S.viewId = t.dataset.id; saveSv(); S.view = sv && sv.type && (['kanban', 'calendar'].includes(sv.type) || (window.KSViews && KSViews.has(sv.type))) ? sv.type : 'table'; if (S.view !== 'table') S.selected = new Set(); } S.shown = {}; render(); break;
       case 'save-view': S.modal = { type: 'save-view' }; renderLayer(); setTimeout(() => $('#sv-name') && $('#sv-name').focus(), 0); break;
-      case 'do-save-view': { const name = ($('#sv-name').value || '').trim(); if (!name) return; const rules = []; Object.entries(S.filters).forEach(([cid, vals]) => { if (vals && vals.length) rules.push({ col: cid, op: 'any', values: vals }); }); if (S.person) { const pc = b.columns.find(c => c.type === 'person'); if (pc) rules.push({ col: pc.id, op: 'any', values: [S.person] }); }
-        const v = { id: rid('v'), name, rules, sort: S.sort, columns: b.columns.filter(c => !S.hidden.has(c.id)).map(c => c.id), source: 'keystone', ...(window.KSViews && KSViews.has(S.view) ? { type: S.view, settings: KSViews.settings(S.view) } : {}) }; const views = [...(b.views || []), v]; patchBoard({ views }); localBoard({ views }); S.filters = {}; S.sort = null; S.person = ''; S.viewId = v.id; saveSv(); S.modal = null; toast(`Saved view “${name}”`); render(); break; }
+      case 'do-save-view': { const name = ($('#sv-name').value || '').trim(); if (!name) return;
+        // saved from inside another saved view: keep that view's filters (the new view shows what's on screen now)
+        const base = curView(), rules = base ? JSON.parse(JSON.stringify(base.rules || [])) : []; let groups = base && (base.groups || []).length ? JSON.parse(JSON.stringify(base.groups)) : null; const match = base && base.match === 'or' ? 'or' : 'and';
+        Object.entries(S.filters).forEach(([cid, vals]) => { if (vals && vals.length) rules.push({ col: cid, op: 'any', values: vals }); });
+        // the person filter matches any person column (Rep, Closer…), so the view does too
+        if (S.person) { const pcs = b.columns.filter(c => c.type === 'person'); if (pcs.length === 1 || (pcs.length && groups && match === 'or')) rules.push({ col: pcs[0].id, op: 'any', values: [S.person] }); else if (pcs.length) groups = [...(groups || []), { match: 'or', rules: pcs.map(c => ({ col: c.id, op: 'any', values: [S.person] })) }]; }
+        const v = { id: rid('v'), name, rules, ...(groups ? { groups, match } : {}), sort: S.sort || (base && base.sort) || null, columns: visCols(b).map(c => c.id), source: 'keystone', ...(window.KSViews && KSViews.has(S.view) ? { type: S.view, settings: KSViews.settings(S.view) } : {}) }; const views = [...(b.views || []), v]; patchBoard({ views }); localBoard({ views }); S.filters = {}; S.sort = null; S.person = ''; S.viewId = v.id; saveSv(); S.modal = null; toast(`Saved view “${name}”`); render(); break; }
       case 'delete-view': { if (S.confirmDelete !== 'v:' + S.viewId) { S.confirmDelete = 'v:' + S.viewId; renderHead(); if (S.modal) renderLayer(); return; } S.confirmDelete = null; const views = (b.views || []).filter(v => v.id !== S.viewId); S.viewId = null; saveSv(); patchBoard({ views }); localBoard({ views }); toast('View deleted'); break; }
       case 'view': S.viewId = null; saveSv(); S.view = t.dataset.v; if (S.view !== 'table') S.selected = new Set(); /* only the table shows what's ticked */ try { localStorage.setItem('ks-view', S.view); } catch (x) {} render(); break;
       case 'notifs': { const fromProfile = !!(S.modal && S.modal.type === 'profile'); S.pop = null; S.modal = { type: 'notifs', fromProfile }; renderLayer(); loadNotifs(); break; }
@@ -3324,7 +3343,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
           KS.api('POST', '/api/blast/preview', body).then(r => { m.checking = false; m.preview = r; if (S.modal === m) renderLayer(); }).catch(e => { m.checking = false; m.preview = null; m.msg = e.message; if (S.modal === m) renderLayer(); });
         } else {
           m.sending = true; renderLayer();
-          KS.api('POST', '/api/blast/start', { ...body, expect: m.preview && m.preview.count }).then(r => { if (m.items.length === 1) delete EMAIL_DRAFTS['text:' + m.board + '/' + m.items[0]]; if (S.modal === m) { S.modal = null; renderLayer(); } S.selected = new Set(); render(); toast(r.total === 1 ? 'Sending now. It shows on the lead’s Updates.' : `Sending to ${r.total} leads, one at a time. Each one shows on the lead’s Updates.`); pollBlasts(); })
+          KS.api('POST', '/api/blast/start', { ...body, expect: m.preview && m.preview.count }).then(r => { if (m.items.length === 1) delete EMAIL_DRAFTS['text:' + m.board + '/' + m.items[0]]; if (S.modal === m) { S.modal = null; renderLayer(); } S.selected = new Set(); render(); toast(r.total === 1 ? (r.held ? 'Queued: it’s outside 9am–8pm where the lead lives, so it goes at 9am their time. It shows on the lead’s Updates once sent.' : 'Sending now. It shows on the lead’s Updates.') : `Sending to ${r.total} leads, one at a time. Each one shows on the lead’s Updates.`); pollBlasts(); })
             .catch(e => { m.sending = false; m.msg = e.message; if (S.modal === m) renderLayer(); });
         }
         break;
@@ -3579,7 +3598,10 @@ html.mx-off.pet-docked .pet svg { animation: none; }
     // Chromium fires change after every typed part of a date (12252026 = 8 saves, some with years like 0002): save once, on leaving the cell or after a pause
     if (t.type === 'date' && !t._dtFlush && (t.dataset.edit === 'value' || t.hasAttribute('data-sub-edit')) && t.isConnected) {
       clearTimeout(t._dtTimer);
-      if (!t._dtSave) { t._dtSave = () => { clearTimeout(t._dtTimer); t.removeEventListener('blur', t._dtSave); t._dtSave = null; t._dtFlush = true; try { t.dispatchEvent(new Event('change', { bubbles: true })); } finally { t._dtFlush = false; } }; t.addEventListener('blur', t._dtSave); }
+      if (!t._dtSave) { t._dtSave = () => { clearTimeout(t._dtTimer); t.removeEventListener('blur', t._dtSave); t._dtSave = null; t._dtFlush = true; try { t.dispatchEvent(new Event('change', { bubbles: true })); } finally { t._dtFlush = false; }
+        // saved while still in the cell: Esc now goes back to this date, not the one the cell had when it was clicked
+        { const it = itemById(t.dataset.item), sub = it && t.hasAttribute('data-sub-edit') ? (it.subitems || []).find(s => String(s.id) === t.dataset.sub) : it;
+          if (sub && String((sub.values || {})[t.dataset.col] ?? '') === t.value) t.defaultValue = t.value; } }; t.addEventListener('blur', t._dtSave); }
       t._dtTimer = setTimeout(t._dtSave, 1500); return;
     }
     if (t.dataset && t.dataset.sub !== undefined && t.hasAttribute('data-sub-edit')) { setSub(t.dataset.item, t.dataset.sub, t.dataset.col, t.value.trim()); return; }
@@ -3670,7 +3692,7 @@ html.mx-off.pet-docked .pet svg { animation: none; }
     if (e.key === 'Escape') {
       if (document.querySelector('#fx-layer .modal-wrap, #fx-layer .fx-search-wrap, body > .modal-wrap')) return; // an add-on window closes itself
       // Escape in a cell being edited throws the typed text away (nothing is saved), like Monday and spreadsheets
-      if (t.matches && t.matches('input.cell-input[data-edit], textarea.cell-input[data-edit], input.drawer-title[data-edit], input[data-sub-edit]') && t.type !== 'checkbox' && t.value !== t.defaultValue) { t.value = t.defaultValue; t.blur(); return; }
+      if (t.matches && t.matches('input.cell-input[data-edit], textarea.cell-input[data-edit], input.drawer-title[data-edit], input[data-sub-edit]') && t.type !== 'checkbox' && t.value !== t.defaultValue) { if (t._dtSave) { clearTimeout(t._dtTimer); t.removeEventListener('blur', t._dtSave); t._dtSave = null; } t.value = t.defaultValue; t.blur(); return; } // a date's pending save is dropped too
       if (t.matches && t.matches('input.group-name') && !t.readOnly) { t.value = t.defaultValue; t.blur(); return; } // a group rename is cancelled too
       if (t.dataset && t.dataset.actKey === 'add-item' && t.value) { t.value = ''; t.blur(); return; } // and a half-typed new item
       if (t.id === 'board-title' && !t.readOnly) { const bb = board(); t.value = bb ? bb.name : t.defaultValue; fitTitle(); t.blur(); return; } // and a board rename
@@ -3780,7 +3802,9 @@ html.mx-off.pet-docked .pet svg { animation: none; }
       patchBoard({ groups: rest }); localBoard({ groups: rest }); return;
     }
     if (kind === 'card') { const l = e.target.closest('.lane'); if (l) { e.preventDefault();
-      if (l.dataset.glane !== undefined) { const it = itemById(id), bb = board(); if (!l.dataset.glane) { toast(`This board has no ${l.dataset.glabel} group.`); return; } if (it && bb && it.group !== l.dataset.glane) { moveToGroup(bb, it, l.dataset.glane); render(); } return; }
+      if (l.dataset.glane !== undefined) { const it = itemById(id), bb = board(); if (!l.dataset.glane) { toast(`This board has no ${l.dataset.glabel} group.`); return; }
+        const L = bb && (dsPipeline(bb) || []).find(x => x.label === l.dataset.glabel); if (it && L && L.groups.includes(it.group)) return; // dropped back in its own lane: keep its group (Contacted stays Contacted)
+        if (it && bb && it.group !== l.dataset.glane) { moveToGroup(bb, it, l.dataset.glane); render(); } return; }
       setValue(id, l.dataset.col, l.dataset.lane); } return; }
     if (kind !== 'row') return;
     const item = itemById(id), b = board(); if (!item || !b) return;
@@ -3812,8 +3836,11 @@ html.mx-off.pet-docked .pet svg { animation: none; }
   function duplicateItem(i, open, withUpdates) {
     const ref = itemsCol().doc(rid('i'));
     // the copy goes right under the original: halfway to the next item down (items copied from Monday can share a pos)
-    const base = i.pos || 0, nextPos = S.items.filter(x => x.group === i.group && (x.pos || 0) > base).reduce((m, x) => Math.min(m, x.pos), Infinity);
-    const data = { name: i.name + ' (copy)', group: i.group, pos: nextPos < Infinity ? (base + nextPos) / 2 : base + 0.01, values: JSON.parse(JSON.stringify(i.values || {})), updates: withUpdates ? JSON.parse(JSON.stringify(i.updates || [])) : [], subitems: JSON.parse(JSON.stringify(i.subitems || [])), activity: [{ at: now(), by: S.uid, text: `Duplicated from “${i.name}”` }], createdAt: now() };
+    const grp = S.items.filter(x => x.group === i.group).sort((x, y) => (x.pos || 0) - (y.pos || 0)), k = grp.indexOf(i), nx = grp[k + 1];
+    let cpos = (i.pos || 0) + 0.01;
+    if (nx && (nx.pos || 0) > (i.pos || 0)) cpos = ((i.pos || 0) + (nx.pos || 0)) / 2;
+    else if (nx) { grp.forEach((x, n) => { if (x.pos !== n) { x.pos = n; patchItem(x.id, { pos: n }); } }); cpos = k + 0.5; } // tied with the next row (copied from Monday): number the group in its shown order, so the copy stays right under the original after a reload
+    const data = { name: i.name + ' (copy)', group: i.group, pos: cpos, values: JSON.parse(JSON.stringify(i.values || {})), updates: withUpdates ? JSON.parse(JSON.stringify(i.updates || [])) : [], subitems: JSON.parse(JSON.stringify(i.subitems || [])), activity: [{ at: now(), by: S.uid, text: `Duplicated from “${i.name}”` }], createdAt: now() };
     write(ref.path, () => ref.set(data));
     const at = S.items.indexOf(i); S.items.splice(at < 0 ? S.items.length : at + 1, 0, { id: ref.id, ...data }); // ties in pos keep this order
     if (open) { S.openItem = ref.id; S.drawerTab = 'info'; toast('Duplicated'); }

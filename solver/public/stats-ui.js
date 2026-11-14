@@ -3,18 +3,18 @@
   'use strict';
   const S = () => (window.SolverApp && window.SolverApp.S) || {};
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-  let data = null, loading = false, err = '', dim = 'campaign', got = 0;
+  let data = null, loading = false, err = '', dim = 'campaign', got = 0, failedAt = 0;
   const n = v => v == null ? '—' : Number(v).toLocaleString('en-CA');
   const p = v => v == null ? '—' : v + '%';
   const built = () => { const t = data && Date.parse(data.at); return t > 0 ? t : got; }; // the server's build time (the data may come from its 10-min cache)
   const ago = () => `updated ${Math.max(0, Math.round((Date.now() - built()) / 60000))} min ago`;
   async function load(fresh) {
     if (loading) return; loading = true; err = ''; paint();
-    try { data = await window.KS.api('GET', '/api/stats/admin' + (fresh ? '?fresh=1' : '')); got = Date.now(); } catch (e) { err = e.message || 'Couldn’t load stats.'; }
+    try { data = await window.KS.api('GET', '/api/stats/admin' + (fresh ? '?fresh=1' : '')); got = Date.now(); } catch (e) { err = e.message || 'Couldn’t load stats.'; failedAt = Date.now(); } // a failed load is tried again a minute later (or with Try again)
     loading = false; paint();
   }
   function html() {
-    if (!data) return `<div class="st-card"><div class="st-h"><h2>Team this week</h2></div><p class="rail-note">${err ? esc(err) : 'Loading team stats… (first load takes ~20 s)'}</p></div>`;
+    if (!data) return `<div class="st-card"><div class="st-h"><h2>Team this week</h2>${err && !loading ? '<button class="btn" data-st-refresh>Try again</button>' : ''}</div><p class="rail-note">${err && !loading ? esc(err) : 'Loading team stats… (first load takes ~20 s)'}</p></div>`;
     const d = data, R = d.reps, tot = k => R.reduce((a, r) => a + (r[k] || 0), 0);
     const dOn = d.dialsOn && R.some(r => r.dialsToday != null || r.dialsWeek != null); // no rep matched the phone data = phone stats off, not 0 dials
     const best = (k) => R.slice().sort((a, b) => (b[k] || 0) - (a[k] || 0))[0];
@@ -58,6 +58,7 @@
     </div>`;
   }
   function paint() {
+    const s = S(); if (s.page !== 'home') return; // a load that finishes after you left home (e.g. for Dashboards, which also has a .home-top) paints nothing
     const host = document.querySelector('#content .home-top'); if (!host) return;
     let el = document.getElementById('admin-stats');
     if (!el) { el = document.createElement('section'); el.id = 'admin-stats'; host.insertAdjacentElement('afterend', el); }
@@ -67,7 +68,7 @@
     const s = S(); if (!s.me || s.me.role !== 'admin' || s.page !== 'home') return;
     const host = document.querySelector('#content .home-top'); if (!host) return;
     if (!document.getElementById('admin-stats')) paint();
-    if (!data && !loading && !err) load(false); else if (data && Date.now() - got > 10 * 60e3 && !loading) load(false);
+    if (!data && !loading && (!err || Date.now() - failedAt > 60e3)) load(false); else if (data && Date.now() - got > 10 * 60e3 && !loading) load(false);
   }
   document.addEventListener('click', e => {
     const t = e.target.closest('[data-st-refresh],[data-st-dim],[data-st-open]'); if (!t) return;
