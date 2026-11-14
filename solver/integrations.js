@@ -337,10 +337,11 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
       const ip = clientIp(req);
       if (limited('link:' + h.id, 60, 60e3) || limited('linkh:' + h.id, 1000, 3600e3) || limited('linkip:' + ip, 30, 60e3)) throw new HttpError(429, 'Too many leads sent to this link. Try again in a minute.');
       if (Number(req.headers['content-length'] || 0) > 64 * 1024) throw new HttpError(413, 'That lead is too large.');
-      const raw = await readBody(req, 64 * 1024);
+      // JSON, or plain form fields (an HTML form's POST, Zapier's default "form" payload), as /developers says
+      const raw = /application\/x-www-form-urlencoded/i.test(String(req.headers['content-type'] || '')) ? await readForm(req, 64 * 1024) : await readBody(req, 64 * 1024);
       // Flat forms: name/first_name/last_name + any field named like a column title.
-      const name = raw.name || [raw.first_name || raw.firstName, raw.last_name || raw.lastName].filter(Boolean).join(' ') || raw.email || raw.phone || 'New lead';
-      const fields = {}; const skip = new Set(['name', 'first_name', 'firstName', 'last_name', 'lastName', 'group', 'values', 'fields', 'update', 'note']);
+      const name = raw.name || raw.full_name || raw.fullName || [raw.first_name || raw.firstName, raw.last_name || raw.lastName].filter(Boolean).join(' ') || raw.email || raw.phone || 'New lead';
+      const fields = {}; const skip = new Set(['name', 'full_name', 'fullName', 'first_name', 'firstName', 'last_name', 'lastName', 'group', 'values', 'fields', 'update', 'note']);
       for (const [k, v] of Object.entries(raw)) if (!skip.has(k) && (typeof v !== 'object' || v === null)) fields[k] = v;
       Object.assign(fields, raw.fields || {}, raw.values || {});
       const known = {}, extra = [];
