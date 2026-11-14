@@ -375,10 +375,24 @@ function notifyUsers(users, { kind, text, board, item }, exceptId) {
   }
   return n;
 }
-const notifyNames = (names, n, exceptId) => notifyUsers(usersByNames(names), n, exceptId);
+// Monday's "notify item subscribers": the people in the item's person columns, plus the board's own members (its rep).
+function withSubscribers(names, { board, item }) {
+  const list = (names || []).map(String), isSub = s => /^(item\s+|the\s+item'?s?\s+)?subscribers$/i.test(s.trim());
+  if (!list.some(isSub) || !board) return list;
+  const out = list.filter(s => !isSub(s));
+  try {
+    const b = JSON.parse((q.doc.get('boards/' + board) || {}).data || 'null'); if (!b) return out;
+    const it = item ? JSON.parse((q.doc.get(`boards/${board}/items/${item}`) || {}).data || 'null') : null;
+    if (it) for (const c of (b.columns || []).filter(c => c.type === 'person')) out.push(...people((it.values || {})[c.id]));
+    out.push(...(((b.access || {}).members) || []).map(String));
+  } catch (e) { /* nobody extra */ }
+  return out;
+}
+const notifyNames = (names, n, exceptId) => notifyUsers(usersByNames(withSubscribers(names, n)), n, exceptId);
 // "{item.Name} needs {item.text42__1}" -> filled in from the item, like Monday's notify messages.
+// Monday's own forms of the same tokens work too: {6465797366.pulse.name}, {board.name}, {user.name} (the reader: "there").
 function fillTemplate(text, b, item) {
-  return String(text || '').replace(/\{(?:item|pulse)\.([^}]+)\}/g, (m, key) => {
+  return String(text || '').replace(/\{\s*(?:\d+\.)?board\.name\s*\}/gi, () => (b && b.name) || 'this board').replace(/\{\s*user\.name\s*\}/gi, 'there').replace(/\{(?:\d+\.)?(?:item|pulse)\.([^}]+)\}/g, (m, key) => {
     if (/^name$/i.test(key)) return item.name || '';
     const c = ((b && b.columns) || []).find(x => x.id === key || x.title === key); if (!c) return '';
     const v = (item.values || {})[c.id]; if (v == null) return '';
@@ -814,6 +828,7 @@ async function api(req, res, url) {
       for (const sql of ['DELETE FROM sessions WHERE user_id = ?', 'DELETE FROM notifications WHERE user_id = ?', 'DELETE FROM push_subs WHERE user_id = ?', 'DELETE FROM user_prefs WHERE user_id = ?']) { try { db.prepare(sql).run(target.id); } catch (e) { /* table not there */ } }
       try { db.prepare('DELETE FROM login_known WHERE email = ?').run(String(target.email).toLowerCase()); } catch (e) {}
       db.prepare('DELETE FROM users WHERE id = ?').run(target.id);
+      closeStreams(x => x.id === target.id); // their open pages stop getting live changes straight away
       teamCache.at = 0; console.log(`Person removed by an admin: ${target.id}`);
       return send(res, 200, { ok: true });
     }
@@ -822,6 +837,15 @@ async function api(req, res, url) {
       if (b.role && !ROLES.includes(b.role)) throw new HttpError(400, 'Role must be admin, member, viewer or guest.');
       if (target.id === user.id && b.role && b.role !== 'admin') throw new HttpError(400, 'You can’t remove your own admin role.');
       if (b.password && String(b.password).length < 8) throw new HttpError(400, 'Passwords need at least 8 characters.');
+      // check everything first, so a refused change doesn't leave half of it saved
+      if (b.name !== undefined && b.name !== null && b.name !== '') { const nm = String(b.name).trim(); if (!nm) throw new HttpError(400, 'Enter a name.'); if (nm.length > 80) throw new HttpError(400, 'Keep the name to 80 characters or fewer.'); }
+      if (typeof b.disabled === 'boolean' && target.id === user.id) throw new HttpError(400, 'You can’t turn off your own account.');
+      if (typeof b.email === 'string' && b.email.trim().toLowerCase() !== String(target.email).toLowerCase()) {
+        const ne = b.email.trim().toLowerCase();
+        if (!/^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[^\s@<>(),;:"]+$/.test(ne)) throw new HttpError(400, 'That isn’t an email address.');
+        if (q.userByEmail.get(ne)) throw new HttpError(409, 'Someone already signs in with that email.');
+      }
+      if (typeof b.emailFrom === 'string' && b.emailFrom.trim() && !/^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[^\s@<>(),;:"]+$/.test(b.emailFrom.trim().toLowerCase())) throw new HttpError(400, 'That isn’t an email address.');
       if (b.role) db.prepare('UPDATE users SET role = ? WHERE id = ?').run(b.role, target.id);
       if (b.name) db.prepare('UPDATE users SET name = ? WHERE id = ?').run(String(b.name).trim(), target.id);
       // change the email someone signs in with (their sharing on boards moves with it)
@@ -844,7 +868,12 @@ async function api(req, res, url) {
         db.prepare('UPDATE users SET email_from = ? WHERE id = ?').run(ef || null, target.id);
       }
       if (typeof b.homeBoard === 'string') db.prepare('UPDATE users SET home_board = ? WHERE id = ?').run(b.homeBoard || null, target.id);
-      if (b.password) { db.prepare('UPDATE users SET pw = ? WHERE id = ?').run(hashPassword(String(b.password)), target.id); q.deleteUserSessions.run(target.id); closeStreams(x => x.id === target.id); }
+      if (b.password) {
+        db.prepare('UPDATE users SET pw = ? WHERE id = ?').run(hashPassword(String(b.password)), target.id);
+        // everyone signed in as them is signed out; an admin setting their own password stays signed in on this device
+        if (target.id === user.id) { db.prepare('DELETE FROM sessions WHERE user_id = ? AND token <> ?').run(target.id, user.token); closeStreams(x => x.id === target.id && x.token !== user.token); }
+        else { q.deleteUserSessions.run(target.id); closeStreams(x => x.id === target.id); }
+      }
       if (typeof b.disabled === 'boolean') {
         if (target.id === user.id) throw new HttpError(400, 'You can’t turn off your own account.');
         db.prepare('UPDATE users SET disabled = ? WHERE id = ?').run(b.disabled ? 1 : 0, target.id);
@@ -1044,6 +1073,10 @@ async function api(req, res, url) {
       const c = settable.find(x => !used.has(x.id) && !locked.has(x.id) && (key(x.title) === k || x.id === h)); if (c) { used.add(c.id); return c.id; }
       return '';
     });
+    // then the usual spreadsheet names for a phone or email ("Phone Number", "Cell", "E-mail Address") go to the board's phone / email column
+    const ALIAS = { phone: ['phone', 'phonenumber', 'mobile', 'mobilephone', 'cell', 'cellphone', 'tel', 'telephone'], email: ['email', 'emailaddress', 'mail'] };
+    headers.forEach((h, i) => { if (mapping[i]) return; const t = Object.keys(ALIAS).find(x => ALIAS[x].includes(key(h))); if (!t) return;
+      const c = settable.find(x => x.type === t && !used.has(x.id) && !locked.has(x.id)); if (c) { used.add(c.id); mapping[i] = c.id; } });
     for (const [k, v] of importUploads) if (v.exp < Date.now()) importUploads.delete(k);
     const token = crypto.randomBytes(18).toString('base64url');
     importUploads.set(token, { uid: user.id, bid, rows: table.slice(1), headers, exp: Date.now() + 30 * 60 * 1000 });
@@ -1124,6 +1157,8 @@ async function api(req, res, url) {
     if (method === 'PUT' || method === 'PATCH') {
       const body = await readBody(req);
       let data = body;
+      // { $had: { columns: [ids] } }: what the page knew when it sent a whole columns/groups/rules list (see patchBoard)
+      const had = isBoard && method === 'PATCH' && body && body.$had && typeof body.$had === 'object' ? body.$had : null; if (body && typeof body === 'object') delete body.$had;
       if (isItem && body && typeof body.name === 'string' && body.name.length > 500) body.name = body.name.slice(0, 500); // item names are capped, like subitem names
       if (method === 'PUT') { delete body.$append; delete body.$remove; delete body.$set; } // list operations only work on PATCH
       // Only admins decide who can see a board and who can change which columns.
@@ -1170,6 +1205,20 @@ async function api(req, res, url) {
         // { $set: { subitems: [{ id, name?, values? }] } } changes just those subitems, matched by id, in what's stored now
         const put = isItem && body.$set && typeof body.$set === 'object' ? body.$set : null; delete body.$set;
         data = merge(JSON.parse(prev.data), body);
+        // a page sends its whole activity list with a cell change: keep the lines someone else added since that page
+        // last loaded (two people changing the same lead at once both keep their line), newest first
+        if (isItem && Array.isArray(body.activity) && before && Array.isArray(before.activity)) {
+          const key = a => a && typeof a === 'object' ? `${a.at}|${a.by}|${a.text}` : JSON.stringify(a), had = new Set(before.activity.map(key));
+          const fresh = body.activity.filter(a => !had.has(key(a)));
+          data.activity = [...fresh, ...before.activity].slice(0, Math.max(40, body.activity.length));
+        }
+        // a column, group or rule someone else added after this page loaded its list is kept (two people adding at once)
+        if (had && before) for (const k of ['columns', 'groups', 'automations']) {
+          if (!Array.isArray(body[k]) || !Array.isArray(had[k]) || !Array.isArray(before[k])) continue;
+          const known = new Set(had[k].map(String)), sent = new Set(body[k].filter(x => x && x.id != null).map(x => String(x.id)));
+          const extra = before[k].filter(x => x && x.id != null && !known.has(String(x.id)) && !sent.has(String(x.id)));
+          if (extra.length) data[k] = [...data[k], ...extra];
+        }
         if (add || rem || put) appendToItem(data, add || {}, rem || {}, put || {});
       }
       if (newPerms) data.perms = cleanPerms(newPerms, data); // replaced as a whole, so a lock can be removed

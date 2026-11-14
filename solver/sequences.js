@@ -20,6 +20,8 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
     );
     CREATE INDEX IF NOT EXISTS seq_enroll_due ON seq_enroll(status, next_at);
     CREATE INDEX IF NOT EXISTS seq_enroll_item ON seq_enroll(board, item);
+    CREATE TABLE IF NOT EXISTS seq_sent (enroll TEXT NOT NULL, seq TEXT NOT NULL, step INTEGER NOT NULL, at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS seq_sent_seq ON seq_sent(seq);
   `);
   const env = k => String(process.env[k] || '').trim();
   const off = () => env('SEQUENCES').toLowerCase() === 'off';
@@ -32,12 +34,22 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
   const statusLabel = (b, colId, v) => { const c = (b.columns || []).find(x => x.id === colId); if (!c) return ''; const l = (c.labels || []).find(x => String(x.id) === String(v)); return String((l && l.label) ?? v ?? ''); };
 
   // ---------- cleaning what an admin saves ----------
+  // when emails may go out, in the lead's own time zone (Monday: "selected weekdays" + "send window"). Default Mon–Sat 8am–8pm.
+  const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  function cleanWindow(w) {
+    w = w && typeof w === 'object' ? w : {};
+    const days = Array.isArray(w.days) ? DAYS.filter(x => w.days.includes(x)) : DAYS.slice(1);
+    const from = Math.min(23, Math.max(0, Math.floor(Number(w.from ?? 8)) || 0)), to = Math.min(24, Math.max(1, Math.floor(Number(w.to ?? 20)) || 0));
+    if (!days.length) throw new HttpError(400, 'Pick at least one day the emails may go out.');
+    if (to <= from) throw new HttpError(400, 'The sending window must end after it starts.');
+    return { days, from, to };
+  }
   function clean(d) {
     const s = String;
     const out = { name: s(d.name || '').trim().slice(0, 120), boards: [...new Set((Array.isArray(d.boards) ? d.boards : []).map(String))].slice(0, 50),
       trigger: { type: ['created', 'status', 'group', 'manual'].includes(d.trigger && d.trigger.type) ? d.trigger.type : 'manual', col: s((d.trigger || {}).col || '').slice(0, 100), label: s((d.trigger || {}).label || '').slice(0, 120), group: s((d.trigger || {}).group || '').slice(0, 100), inGroup: s((d.trigger || {}).inGroup || '').slice(0, 100) },
       from: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s(d.from || '').trim()) ? s(d.from).trim().toLowerCase() : '',
-      footer: d.footer !== false, stopOnReply: d.stopOnReply !== false,
+      footer: d.footer !== false, stopOnReply: d.stopOnReply !== false, window: cleanWindow(d.window),
       steps: (Array.isArray(d.steps) ? d.steps : []).slice(0, 20).map(x => { const h = Math.max(0, Math.floor(Number(x.waitDays) || 0)) * 24 + Math.max(0, Math.floor(Number(x.waitHours) || 0)); return { waitDays: Math.min(365, Math.floor(h / 24)), waitHours: Math.floor(h / 24) > 365 ? 0 : h % 24, subject: s(x.subject || '').replace(/[\r\n]+/g, ' ').slice(0, 300), body: s(x.body || '').replace(/\r\n/g, '\n').slice(0, 20000) }; }),
       source: d.source && typeof d.source === 'object' ? { monday: s(d.source.monday || '').slice(0, 100), kind: s(d.source.kind || '').slice(0, 40), board: s(d.source.board || '').slice(0, 40) } : null,
       note: s(d.note || '').slice(0, 500) };
@@ -71,7 +83,7 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
   const TZ = { AB: 'America/Edmonton', BC: 'America/Vancouver', SK: 'America/Regina', MB: 'America/Winnipeg', ON: 'America/Toronto', QC: 'America/Toronto', NB: 'America/Halifax', NS: 'America/Halifax', PE: 'America/Halifax', NL: 'America/St_Johns' };
   const provOf = (b, item) => { const c = (b.columns || []).find(x => /province|prov\b|state/i.test(x.title || '')); const u = String(c ? (item.values || {})[c.id] || '' : '').toUpperCase(); const m = { ALBERTA: 'AB', 'BRITISH COLUMBIA': 'BC', SASK: 'SK', MANITOBA: 'MB', ONTARIO: 'ON', QUEBEC: 'QC', 'NEW BRUNSWICK': 'NB', 'NOVA SCOTIA': 'NS', PRINCE: 'PE', NEWFOUNDLAND: 'NL' }; for (const k in m) if (u.startsWith(k)) return m[k]; return TZ[u.trim()] ? u.trim() : ''; };
   const localParts = (prov, t) => { const f = new Intl.DateTimeFormat('en-CA', { timeZone: TZ[prov] || 'America/Toronto', hour: 'numeric', hourCycle: 'h23', weekday: 'short' }).formatToParts(new Date(t)); return { h: Number(f.find(p => p.type === 'hour').value), wd: f.find(p => p.type === 'weekday').value }; };
-  const okToSend = (prov, t = Date.now()) => { if (env('SEQ_HOURS') === 'any') return true; const { h, wd } = localParts(prov, t); return wd !== 'Sun' && h >= 8 && h < 20; };
+  const okToSend = (prov, t = Date.now(), w) => { if (env('SEQ_HOURS') === 'any') return true; const { h, wd } = localParts(prov, t); const win = w && Array.isArray(w.days) ? w : { days: DAYS.slice(1), from: 8, to: 20 }; return win.days.includes(wd) && h >= win.from && h < win.to; };
   const waitMs = st => (st.waitDays * 24 + st.waitHours) * 3600e3;
 
   // ---------- enrolling ----------
@@ -84,7 +96,9 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
       .run(id, seq.id, bid, iid, new Date(Date.now() + waitMs(first)).toISOString(), 'active', now(), by || 'auto');
     return id;
   }
-  const stop = (id, reason) => db.prepare("UPDATE seq_enroll SET status = 'stopped', reason = ?, next_at = NULL WHERE id = ? AND status = 'active'").run(String(reason || '').slice(0, 200), id);
+  const stop = (id, reason) => db.prepare("UPDATE seq_enroll SET status = 'stopped', reason = ?, next_at = NULL WHERE id = ? AND status IN ('active', 'paused')").run(String(reason || '').slice(0, 200), id);
+  // a reply from the lead (email or text) logged on it, as Solver logs them (email.js)
+  const isReply = u => u && (u.by === 'email' || u.by === 'sms' || u.by === 'text' || /^Incoming Email/i.test(String(u.text || '')));
 
   // The trigger's status column / group was picked on one of the sequence's boards; another board copied from Monday can
   // give the same column or group a different id, so there it's found by its title / name
@@ -98,7 +112,7 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
   // Called for every item save (Monday copy, lead links, people): start sequences whose trigger just happened
   function onItem(bid, iid, before, after) {
     try {
-      if (!after) { for (const e of db.prepare("SELECT id FROM seq_enroll WHERE board = ? AND item = ? AND status = 'active'").all(bid, iid)) stop(e.id, 'lead deleted'); return; }
+      if (!after) { for (const e of db.prepare("SELECT id FROM seq_enroll WHERE board = ? AND item = ? AND status IN ('active', 'paused')").all(bid, iid)) stop(e.id, 'lead deleted'); return; }
       const seqs = allSeqs().filter(s => s.active && s.boards.includes(String(bid)) && s.trigger.type !== 'manual'); if (!seqs.length) return;
       const b = boardDoc(bid); if (!b) return;
       for (const s of seqs) {
@@ -135,9 +149,9 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
         const b = boardDoc(e.board), item = itemDoc(e.board, e.item);
         if (!b || !item) { stop(e.id, 'lead deleted'); continue; }
         const why = mail.blockedReason(b, item); if (why) { stop(e.id, why.replace(/, so .*$/, '').replace(/\.$/, '')); continue; }
-        if (seq.stopOnReply && (item.updates || []).some(u => (u.by === 'email' || u.by === 'sms' || u.by === 'text' || /^Incoming Email/i.test(String(u.text || ''))) && String(u.at || '') > e.started_at)) { stop(e.id, 'the lead replied'); continue; }
+        if (seq.stopOnReply && (item.updates || []).some(u => isReply(u) && String(u.at || '') > e.started_at)) { stop(e.id, 'the lead replied'); continue; }
         const prov = provOf(b, item);
-        if (!okToSend(prov)) { db.prepare('UPDATE seq_enroll SET next_at = ? WHERE id = ?').run(new Date(Date.now() + 30 * 60e3).toISOString(), e.id); continue; }
+        if (!okToSend(prov, Date.now(), seq.window)) { db.prepare('UPDATE seq_enroll SET next_at = ? WHERE id = ?').run(new Date(Date.now() + 30 * 60e3).toISOString(), e.id); continue; }
         const st = seq.steps[e.step]; if (!st) { db.prepare("UPDATE seq_enroll SET status = 'done', next_at = NULL WHERE id = ?").run(e.id); continue; }
         const to = mail.leadEmails(b, item)[0]; if (!to) { stop(e.id, 'no email address'); continue; }
         const from = seq.from || mail.sendFromFor({ id: '-' }, e.board); if (!from) { stop(e.id, 'no sending address for this board'); continue; }
@@ -149,6 +163,7 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
         if (!moved.changes) continue; // stopped or moved on meanwhile: never send
         try {
           await mail.sendEmailNow({ user: { id: 'sequence', name: `“${seq.name}” step ${e.step + 1}`, email: '' }, from, bid: e.board, iid: e.item, to, subject: fill(st.subject, b, item, from), text });
+          db.prepare('INSERT INTO seq_sent (enroll, seq, step, at) VALUES (?, ?, ?, ?)').run(e.id, e.seq, e.step, now()); // for the sequence's numbers (sent / replied per email)
         } catch (err) {
           if (!db.prepare("UPDATE seq_enroll SET step = ?, status = 'active', next_at = ? WHERE id = ? AND step = ? AND status IN ('active', 'done')").run(e.step, new Date(Date.now() + 20 * 60e3).toISOString(), e.id, e.step + 1).changes) continue; // stopped meanwhile
           const tries = e.tries + 1;
@@ -161,7 +176,23 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
   const timer = setInterval(() => tick(), Number(env('SEQUENCE_TICK_MS')) || 60e3); timer.unref();
 
   // ---------- API ----------
-  const outSeq = s => { const c = db.prepare("SELECT status, COUNT(*) AS n FROM seq_enroll WHERE seq = ? GROUP BY status").all(s.id); const n = k => (c.find(x => x.status === k) || {}).n || 0; return { ...s, counts: { active: n('active'), done: n('done'), stopped: n('stopped') } }; };
+  const outSeq = s => { const c = db.prepare("SELECT status, COUNT(*) AS n FROM seq_enroll WHERE seq = ? GROUP BY status").all(s.id); const n = k => (c.find(x => x.status === k) || {}).n || 0; const sent = db.prepare('SELECT COUNT(*) AS n FROM seq_sent WHERE seq = ?').get(s.id).n, replied = db.prepare("SELECT COUNT(*) AS n FROM seq_enroll WHERE seq = ? AND reason = 'the lead replied'").get(s.id).n; return { ...s, counts: { active: n('active'), paused: n('paused'), done: n('done'), stopped: n('stopped'), sent, replied } }; };
+  // Monday's sequence analytics, from what Solver logged: emails sent per step, and leads who answered (email or text) after
+  // that step's email and before the next one. Only the leads this person can see count.
+  function statsFor(s, enrolls) {
+    const per = s.steps.map(() => ({ sent: 0, replied: 0 })); let sent = 0, replied = 0;
+    const sends = db.prepare('SELECT enroll, step, at FROM seq_sent WHERE seq = ? ORDER BY at').all(s.id), by = new Map();
+    for (const x of sends) (by.get(x.enroll) || by.set(x.enroll, []).get(x.enroll)).push(x);
+    for (const e of enrolls) {
+      const list = by.get(e.id) || []; if (!list.length) continue;
+      for (const x of list) { if (per[x.step]) per[x.step].sent++; sent++; }
+      const d = itemDoc(e.board, e.item), r = d && (d.updates || []).filter(u => isReply(u) && String(u.at || '') > list[0].at).map(u => String(u.at)).sort()[0];
+      if (!r && e.reason !== 'the lead replied') continue;
+      replied++;
+      const k = r ? [...list].reverse().find(x => x.at < r) : list[list.length - 1]; if (k && per[k.step]) per[k.step].replied++;
+    }
+    return { enrolled: enrolls.length, sent, replied, steps: per };
+  }
   async function handle(req, res, url, user) {
     const p = url.pathname, method = req.method;
     if (!p.startsWith('/api/seq')) return false;
@@ -172,7 +203,7 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
     let m = /^\/api\/seq\/([A-Za-z0-9_-]{3,60})$/.exec(p);
     if (m && (method === 'PUT' || method === 'DELETE')) {
       if (!isAdmin(user)) throw new HttpError(403, 'Only admins change sequences.');
-      if (method === 'DELETE') { db.prepare('DELETE FROM sequences WHERE id = ?').run(m[1]); db.prepare("UPDATE seq_enroll SET status = 'stopped', reason = 'sequence deleted', next_at = NULL WHERE seq = ? AND status = 'active'").run(m[1]); return send(res, 200, { ok: true }), true; }
+      if (method === 'DELETE') { db.prepare('DELETE FROM sequences WHERE id = ?').run(m[1]); db.prepare("UPDATE seq_enroll SET status = 'stopped', reason = 'sequence deleted', next_at = NULL WHERE seq = ? AND status IN ('active', 'paused')").run(m[1]); return send(res, 200, { ok: true }), true; }
       const b = await readBody(req, 512 * 1024), d = clean(b), was = getSeq(m[1]);
       const noSender = d.from ? [] : d.boards.filter(bid => !mail.boardFrom(bid));
       if (noSender.length) throw new HttpError(400, `${noSender.map(bid => (boardDoc(bid) || {}).name || bid).join(', ')} ${noSender.length > 1 ? 'have' : 'has'} no rep with a sending address. Fill in “Sent from”, or untick ${noSender.length > 1 ? 'those boards' : 'that board'}.`);
@@ -191,9 +222,10 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
     m = /^\/api\/seq\/([A-Za-z0-9_-]{3,60})\/enrolled$/.exec(p);
     if (m && method === 'GET') {
       const s = getSeq(m[1]); if (!s) throw new HttpError(404, 'No such sequence.');
-      const rows = db.prepare('SELECT * FROM seq_enroll WHERE seq = ? ORDER BY started_at DESC LIMIT 300').all(m[1]).filter(e => { const i = boardInfo(e.board); if (!i || !canSee(user, i.access)) return false; const d = itemDoc(e.board, e.item); return !d || itemVisible(user, i, d); }) // "only items assigned to them" boards: just theirs
+      const seen = db.prepare('SELECT * FROM seq_enroll WHERE seq = ? ORDER BY started_at DESC').all(m[1]).filter(e => { const i = boardInfo(e.board); if (!i || !canSee(user, i.access)) return false; const d = itemDoc(e.board, e.item); return !d || itemVisible(user, i, d); }); // "only items assigned to them" boards: just theirs
+      const rows = seen.slice(0, 300)
         .map(e => ({ id: e.id, board: e.board, item: e.item, name: (itemDoc(e.board, e.item) || {}).name || '(deleted)', step: e.step, of: s.steps.length, status: e.status, reason: e.reason, next: e.next_at, started: e.started_at }));
-      return send(res, 200, { rows }), true;
+      return send(res, 200, { rows, total: seen.length, stats: statsFor(s, seen) }), true;
     }
     if (p === '/api/seq/item' && method === 'GET') {
       const bid = url.searchParams.get('board') || '', iid = url.searchParams.get('item') || '';
@@ -219,6 +251,21 @@ module.exports = function sequences({ db, q, now, HttpError, readBody, send, can
       if (itemDoc(e.board, e.item)) mail.loadItem(user, e.board, e.item);
       else { const i = boardInfo(e.board); if (!i || !canSee(user, i.access)) throw new HttpError(404, 'Not found.'); } // the lead was deleted (it shows as “(deleted)”): it can still be stopped
       stop(e.id, 'stopped by ' + (user.name || user.email));
+      return send(res, 200, { ok: true }), true;
+    }
+    // pause one lead's run (keeps its place) and pick it up again later, like Monday's per-lead pause
+    if (p === '/api/seq/pause' && method === 'POST') {
+      if (!user || user.role === 'viewer') throw new HttpError(403, 'Your account can view boards but not change them.');
+      const b = await readBody(req, 4096), e = db.prepare('SELECT * FROM seq_enroll WHERE id = ?').get(String(b.id || '')); if (!e) throw new HttpError(404, 'Not found.');
+      const { board, item } = mail.loadItem(user, e.board, e.item);
+      if (b.pause) {
+        if (!db.prepare("UPDATE seq_enroll SET status = 'paused', reason = ? WHERE id = ? AND status = 'active'").run('paused by ' + (user.name || user.email), e.id).changes) throw new HttpError(400, 'Only a lead that is still in the sequence can be paused.');
+      } else {
+        if (e.status !== 'paused') throw new HttpError(400, 'That lead isn’t paused.');
+        const why = mail.blockedReason(board, item); if (why) throw new HttpError(400, why); // a lead that turned Junk / opted out while paused stays out
+        const next = e.next_at && Date.parse(e.next_at) > Date.now() ? e.next_at : new Date(Date.now() + 60e3).toISOString();
+        db.prepare("UPDATE seq_enroll SET status = 'active', reason = NULL, next_at = ? WHERE id = ? AND status = 'paused'").run(next, e.id);
+      }
       return send(res, 200, { ok: true }), true;
     }
     return false;

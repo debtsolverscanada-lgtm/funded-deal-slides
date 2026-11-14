@@ -12,7 +12,7 @@
   const TRIG = {
     status: 'a status changes', column: 'a column changes', created: 'an item is created', moved_group: 'an item moves to a group',
     button: 'a button is pressed', date_arrives: 'a date arrives', sub_status: 'a subitem’s status changes', moved_board: 'an item is moved here from another board',
-    monday_only: 'something happens in Monday (logged only)',
+    replied: 'the lead replies (email or text)', monday_only: 'something happens in Monday (logged only)',
   };
   const ACT = {
     move_group: 'move it to a group', set_status: 'set a status', set_value: 'set a column', set_date: 'set a date', clear: 'clear a column',
@@ -20,6 +20,7 @@
     duplicate: 'duplicate it', notify: 'notify someone in Solver.ca', webhook: 'send to a connected tool (webhook)', external: 'a Monday-only action (logged only)',
   };
   const SUB_ACT = ['set_status', 'set_value', 'set_date', 'clear'];
+  const SERVER_SKIPS = ['move_board', 'copy_to_board', 'duplicate']; // rules the server runs (a lead's reply) can't do these
   const COND = { status_is: 'a status is', is: 'a column is', is_not: 'a column is not', empty: 'a column is empty', not_empty: 'a column is not empty', contains: 'a column contains', has_person: 'a person is', group: 'the group is' };
   const NOT_SETTABLE = ['formula', 'button', 'item_id', 'created', 'ai'];
   const RUNS_HERE = ['move_group', 'set_status', 'set_value', 'set_date', 'clear', 'assign', 'create_update', 'move_board', 'copy_to_board', 'duplicate', 'notify', 'webhook'];
@@ -54,6 +55,7 @@
       case 'date_arrives': when = `${tok(c ? c.title : 'a deleted date')} arrives (${esc(r.when || 'on the date')})`; break;
       case 'sub_status': when = `a subitem’s ${tok(c ? c.title : 'status')} changes${r.value != null && r.value !== '' ? ' to ' + tok(labelName(c, r.value)) : ''}`; break;
       case 'moved_board': when = 'an item is moved here from another board'; break;
+      case 'replied': when = `the lead replies${r.value === 'email' ? ' by email' : r.value === 'text' ? ' by text' : ' (email or text)'}`; break;
       default: when = esc(String(r.title || 'something happens in Monday').replace(/^when\s+/i, '').replace(/\s*→.*$/, ''));
     }
     const conds = (r.conditions || []).map(k => {
@@ -158,6 +160,7 @@
     if (d.trigger === 'moved_group') d.group = ((b.groups || [])[0] || {}).id;
     if (d.trigger === 'button') { const c = pick('button'); d.col = c && c.id; }
     if (d.trigger === 'date_arrives') { const c = pick('date'); d.col = c && c.id; d._when = { n: 0, dir: 'on', time: '09:00', tz: '' }; }
+    if (d.trigger === 'replied') { d.value = ''; d.actions = d.actions.filter(a => !SERVER_SKIPS.includes(a.type)); if (d._new && d.actions.length === 1 && d.actions[0].type === 'move_group') d.actions = []; if (!d.actions.length) d.actions.push({ type: 'notify', to: 'item subscribers', message: 'New reply from {item.Name}' }); }
     if (d.trigger === 'sub_status') { const c = pick('status', true); d.col = c && c.id; d.value = ''; d.actions = d.actions.filter(a => SUB_ACT.includes(a.type)); if (!d.actions.length) d.actions.push(defaultAction(b, 'set_status', true)); }
   }
   // the rule to save (internal fields dropped, empty ones removed)
@@ -167,7 +170,7 @@
     if (d.trigger === 'date_arrives') r.when = makeWhen(d._when || {});
     else delete r.when;
     if (!['status', 'column', 'sub_status', 'button', 'date_arrives'].includes(r.trigger)) delete r.col;
-    if (!['status', 'column', 'sub_status'].includes(r.trigger) || r.value === '') delete r.value;
+    if (!['status', 'column', 'sub_status', 'replied'].includes(r.trigger) || r.value === '') delete r.value;
     if (!['created', 'moved_group'].includes(r.trigger) || !r.group) delete r.group;
     r.conditions = (d.conditions || []).map(c => { const x = { ...c }; delete x._kind; return x; });
     r.actions = (d.actions || []).map(a => ({ ...a }));
@@ -207,6 +210,8 @@
         + sel('_when.dir', [['on', 'on the date'], ['before', 'days before'], ['after', 'days after']], w.dir, 'When')
         + (w.dir !== 'on' ? inp('_when.n', w.n || 1, 'days', 'Days', 'type="number" min="1" max="365" style="width:76px"') : '')
         + '<span class="rx-w">at</span>' + inp('_when.time', w.time || '09:00', '09:00', 'Time', 'type="time" style="width:120px"'); break; }
+      case 'replied': tp = sel('value', [['', 'by email or text'], ['email', 'by email'], ['text', 'by text']], d.value || '', 'Reply kind')
+        + '<div class="rx-hint">Runs when a reply to an email or text sent from Solver.ca comes in. “item subscribers” means the people on the lead and the board’s rep.</div>'; break;
       case 'sub_status': tp = sel('col', colOpts((b.subColumns || []).filter(x => x.type === 'status'), d.col), d.col, 'Subitem status column') + '<span class="rx-w">changes to</span>' + valueControl('value', b, c, d.value, 'Status label', true); break;
     }
     const conds = (d.conditions || []).map((k, i) => {
@@ -217,7 +222,7 @@
         : sel(`c.${i}.col`, colOpts(pool, k.col), k.col, 'Column') + (['empty', 'not_empty'].includes(kind) ? '' : valueControl(`c.${i}.value`, b, kc, k.value, 'Value'));
       return `<div class="rx-line"><span class="rx-w">${i ? 'and' : 'and only if'}</span>${sel(`c.${i}._kind`, Object.entries(COND), kind, 'Condition')}${ctl}<button class="icon-btn" data-act="rx-cond-del" data-k="${i}" aria-label="Remove condition">×</button></div>`;
     }).join('');
-    const actTypes = Object.entries(ACT).filter(([k]) => (sub ? SUB_ACT.includes(k) : true) && (k !== 'external' || fromMonday));
+    const actTypes = Object.entries(ACT).filter(([k]) => (sub ? SUB_ACT.includes(k) : true) && (d.trigger !== 'replied' || !SERVER_SKIPS.includes(k)) && (k !== 'external' || fromMonday));
     const acts = (d.actions || []).map((a, i) => {
       const ac = col(b, a.col, sub), P = f => `a.${i}.${f}`;
       let p = '';
@@ -242,7 +247,7 @@
           const hooks = (META && META.hooks) || [];
           p = sel(P('hook'), [['', 'every connected tool listening'], ...hooks.map(h => [h.id, h.name + (h.active ? '' : ' (off)') + (h.listens ? '' : ' (not listening for this)')])], a.hook || '', 'Connected tool')
             + inp(P('note'), a.note, 'Note sent along (optional)', 'Note', 'style="flex:1 1 160px"')
-            + `<div class="rx-hint">Sends a signed <code>automation.webhook</code> event to your tool (n8n, Zapier…). This automation doesn’t text or email anyone itself.${hooks.length ? '' : ' No outgoing webhooks yet: an admin adds one in Integrations.'}</div>`;
+            + `<div class="rx-hint">Sends a signed <code>automation.webhook</code> event to your tool (n8n, Zapier…). This automation doesn’t text or email anyone itself.${hooks.length ? '' : ' No outgoing webhooks yet: an admin adds one under Connect apps → API keys &amp; webhooks.'}</div>`;
           break;
         }
         case 'external': p = `<span class="rx-muted">${esc(a.label || 'Monday action')}: stays in Monday, logged here only</span>`; break;
@@ -279,7 +284,7 @@
     const qq = String(m.q || '').toLowerCase();
     const shown = all.filter(r => (m.showAll || r.mondayActive !== false || r.source !== 'monday')).filter(r => !qq || plain(sentence(b, r)).toLowerCase().includes(qq) || String(r.title || '').toLowerCase().includes(qq));
     const hidden = all.filter(r => !(m.showAll || r.mondayActive !== false || r.source !== 'monday')).length;
-    const runsHere = r => r.trigger !== 'monday_only' && (r.actions || []).some(a => RUNS_HERE.includes(a.type));
+    const runsHere = r => (r.trigger !== 'monday_only' || r.note === 'email_received') && (r.actions || []).some(a => RUNS_HERE.includes(a.type));
     const cards = shown.map(r => {
       const last = m.last && m.last[r.id];
       return `<div class="rule rx-card ${r.on === false ? 'off' : ''}" data-rule="${esc(r.id)}"><div class="rule-text">${sentence(b, r)}
@@ -287,7 +292,7 @@
         <div class="rx-btns">${S.canWrite ? `<button class="toggle" data-act="rx-toggle" data-id="${esc(r.id)}" aria-pressed="${r.on !== false}">${r.on === false ? 'Off' : 'On'}</button><button class="icon-btn" data-act="rx-edit" data-id="${esc(r.id)}">Edit</button><button class="icon-btn" data-act="rx-dup" data-id="${esc(r.id)}">Duplicate</button>` : ''}<button class="icon-btn" data-act="rx-runs" data-id="${esc(r.id)}">Runs</button>${S.canWrite ? `<button class="icon-btn" data-act="rx-del" data-id="${esc(r.id)}">${m.confirm === r.id ? 'Click again to delete' : 'Delete'}</button>` : ''}</div></div>`;
     }).join('');
     return `<div class="rx-editor"><div class="rx-head"><h3>Automations on ${esc(b.name)}</h3>${S.canWrite ? '<button class="btn primary" data-act="rx-new">+ New automation</button>' : ''}</div>
-      <p>Rules that move items, change statuses and dates, assign people, post updates, notify teammates in Solver.ca, and copy or move items between boards. “Send to a connected tool” passes the item to your own tool (n8n, Zapier) as a signed webhook. Automations never text or email leads by themselves: Monday’s email and text actions are only logged. (Mass text, Mass email and a lead’s Email button do really send.)</p>
+      <p>Rules that move items, change statuses and dates, assign people, post updates, notify teammates in Solver.ca, and copy or move items between boards. “Send to a connected tool” passes the item to your own tool (n8n, Zapier) as a signed webhook. Automations never text or email leads by themselves: Monday’s email and text actions are only logged. (Mass text, Mass email, email sequences and a lead’s Email and Text buttons do really send.)</p>
       ${m.err ? `<div class="rule rx-err"><div class="rule-text">${esc(m.err)}</div></div>` : ''}
       ${all.length > 6 ? `<input class="field-input" data-r="__q" value="${esc(m.q || '')}" placeholder="Search ${all.length} automations" aria-label="Search automations">` : ''}
       <div class="rx-list">${cards || '<p class="rail-note">No automations yet.</p>'}</div>
@@ -397,7 +402,7 @@
       if (x.kind !== 'webhook') return false;
       KS.api('POST', '/api/automations/webhook', { board: b.id, item: item.id, rule: x.rule }).then(r => {
         if (r.sent) A().toast(`Sent to ${r.sent === 1 ? 'the connected tool' : r.sent + ' connected tools'}.`);
-        else A().toast('No connected tool is listening yet. An admin can add one in Integrations.');
+        else A().toast('No connected tool is listening yet. An admin can add one under Connect apps → API keys & webhooks.');
       }).catch(e => A().toast(e.message || 'Couldn’t send to the connected tool.'));
       return true;
     },

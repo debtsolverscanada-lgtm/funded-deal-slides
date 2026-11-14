@@ -74,7 +74,7 @@
   .fx-q .sub { grid-column: 2 / 4; }
   .fx-link-out { word-break: break-all; user-select: all; font-family: var(--f-data); font-size: 12px; }
   .fx-pick { display: flex; flex-direction: column; gap: 2px; max-height: 50vh; overflow-y: auto; }
-  @media (max-width: 780px) { .fx-search-wrap { padding: 0; align-items: stretch; } .fx-search { border-radius: 0; max-height: none; height: 100%; width: 100%; } .fx-search-top { padding-top: max(12px, env(safe-area-inset-top)); } .fx-q { grid-template-columns: auto minmax(0, 1fr); } .fx-q .req { grid-column: 2; } }
+  @media (max-width: 780px) { .fx-search-wrap { padding: 0; align-items: stretch; } .fx-search { border-radius: 0; max-height: none; height: 100%; width: 100%; padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); } .fx-search-top { padding-top: max(12px, env(safe-area-inset-top)); } .fx-q { grid-template-columns: auto minmax(0, 1fr); } .fx-q .req { grid-column: 2; } }
   `;
   document.head.appendChild(css);
   const layer = document.createElement('div'); layer.id = 'fx-layer'; document.body.appendChild(layer);
@@ -234,7 +234,7 @@
       : r.col === '__subitems' ? 'Changed subitems' : r.col === '__subdel' ? `Deleted subitem${String(r.before || '').includes('”, “') ? 's' : ''} ${esc(r.before || '')}`
       : `<b>${esc(r.colName)}</b>: ${r.before ? `<span class="was">${esc(r.before)}</span>` : '<span class="fx-mute">empty</span>'}<span class="arrow">→</span>${r.after ? esc(r.after) : '<span class="fx-mute">empty</span>'}`;
     const src = r.source === 'monday' ? '<span class="src">From Monday</span>' : r.source === 'undo' ? '<span class="src">Via undo</span>' : r.source === 'restore' ? '' : ['api', 'link', 'form', 'automation'].includes(r.source) ? `<span class="src">${esc(r.source === 'form' ? 'Form' : r.source === 'link' ? 'Lead link' : r.source === 'api' ? 'API' : 'Automation')}</span>` : '';
-    const item = opts.board && r.item ? `<button class="icon-btn" style="padding:0;color:#fff" data-fx="open-link" data-b="${esc(opts.board)}" data-i="${esc(r.item)}">${esc(r.itemName || 'Item')}</button> · ` : '';
+    const item = opts.board && r.item ? `<button class="icon-btn" style="padding:0;color:var(--fg);font-size:inherit" data-fx="open-link" data-b="${esc(opts.board)}" data-i="${esc(r.item)}">${esc(r.itemName || 'Item')}</button> · ` : '';
     const undo = r.canUndo && canWrite() ? `<button class="icon-btn" data-fx="revert" data-id="${r.id}" title="Put the old value back">Undo</button>` : r.undone ? '<span class="fx-mute">Undone</span>' : '';
     return `<div class="fx-h ${r.undone ? 'undone' : ''}"><div class="fx-h-main">${item}${what}<div class="fx-h-meta"><span>${esc(r.byName || 'Someone')}</span><span>${esc(fmtWhen(r.at))}</span>${src}</div></div>${undo}</div>`;
   }
@@ -471,13 +471,13 @@
         break;
       }
       case 'save-tp': closeMenu(); if (b) openModal({ type: 'save-template', title: 'Save as template', board: b.id, name: b.name }); break;
-      case 'tp-save': { const m = M; api('POST', '/api/x/templates', { board: m.board, name: document.getElementById('fx-tp-name').value }).then(r => { closeModal(); toast(`Saved template “${r.name}”`); }).catch(err => { m.err = err.message; renderModal(); }); break; }
+      case 'tp-save': { const m = M; if (m.saving) break; m.saving = true; api('POST', '/api/x/templates', { board: m.board, name: document.getElementById('fx-tp-name').value }).then(r => { closeModal(); toast(`Saved template “${r.name}”`); }).catch(err => { m.saving = false; m.err = err.message; renderModal(); }); break; }
       case 'templates': closeMenu(); openModal({ type: 'templates', title: 'Templates', list: null }); loadTemplates(); break;
       case 'tp-pick': M.pick = t.dataset.id; renderModal(); setTimeout(() => { const i = document.getElementById('fx-tp-new'); if (i) { i.focus(); i.select(); } }, 0); break;
       case 'tp-del': { const m = M, id = t.dataset.id; if (m.confirm !== id) { m.confirm = id; renderModal(); return; } api('DELETE', '/api/x/templates/' + id).then(() => { m.confirm = null; loadTemplates(); }).catch(err => { m.err = err.message; renderModal(); }); break; }
       case 'tp-use': {
-        const m = M, s = S(), ws = (A().workspaces().find(w => w.id === s.ws)) || null;
-        api('POST', '/api/x/templates/use', { id: m.pick, name: document.getElementById('fx-tp-new').value, workspace: ws }).then(r => { closeModal(); toast(`Made “${r.name}”`); setTimeout(() => window.SolverOpen && window.SolverOpen(r.id), 400); }).catch(err => { m.err = err.message; renderModal(); });
+        const m = M, s = S(), ws = (A().workspaces().find(w => w.id === s.ws)) || null; if (m.saving) break; m.saving = true; // one board per click, however slow the server
+        api('POST', '/api/x/templates/use', { id: m.pick, name: document.getElementById('fx-tp-new').value, workspace: ws }).then(r => { closeModal(); toast(`Made “${r.name}”`); setTimeout(() => window.SolverOpen && window.SolverOpen(r.id), 400); }).catch(err => { m.saving = false; m.err = err.message; renderModal(); });
         break;
       }
       case 'links': closeMenu(); if (b) openModal({ type: 'links', title: 'Connect boards', board: b.id, mirRel: (b.columns.find(c => c.type === 'board_relation') || {}).id, mirRelBoard: ((b.columns.find(c => c.type === 'board_relation') || {}).boards || [])[0] }); break;
@@ -514,8 +514,8 @@
       case 'form-edit': { const f = (M.list || []).find(x => x.id === t.dataset.id); if (f) { M.edit = JSON.parse(JSON.stringify(f)); M.err = ''; renderModal(); } break; }
       case 'form-back': M.edit = null; M.err = ''; renderModal(); break;
       case 'form-save': {
-        const m = M, body = readForm();
-        (m.edit.id ? api('PATCH', '/api/x/forms/' + m.edit.id, body) : api('POST', '/api/x/forms', { board: m.board, ...body })).then(() => { m.edit = null; m.err = ''; toast('Form saved'); loadForms(); renderModal(); }).catch(err => { m.err = err.message; renderModal(); });
+        const m = M, body = readForm(); if (m.saving) break; m.saving = true; // a second click while the first is on its way makes no second form
+        (m.edit.id ? api('PATCH', '/api/x/forms/' + m.edit.id, body) : api('POST', '/api/x/forms', { board: m.board, ...body })).then(() => { m.saving = false; m.edit = null; m.err = ''; toast('Form saved'); loadForms(); renderModal(); }).catch(err => { m.saving = false; m.err = err.message; renderModal(); });
         break;
       }
       case 'form-toggle': { const m = M, f = (m.list || []).find(x => x.id === t.dataset.id); if (!f) return; api('PATCH', '/api/x/forms/' + f.id, { active: !f.active }).then(() => { toast(f.active ? 'Form turned off: the link now says it’s closed' : 'Form is open again'); loadForms(); }).catch(err => toast(err.message)); break; }

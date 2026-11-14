@@ -193,6 +193,7 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
               const out = STOP.test(body) || /unsubscribe/i.test(body.slice(0, 60));
               if (out) optOut(row.to_email, 'email', 'reply');
               addUpdate(row.board, row.item, { by: 'email', byName: 'Email reply', text: `↩️ Reply from ${String(m.from || row.to_email).slice(0, 200)}${m.subject ? `\nSubject: ${String(m.subject).slice(0, 300)}` : ''}\n\n${body}${out ? '\n\n(They asked to stop: this address won’t get any more emails from Solver.ca.)' : ''}`, email: { dir: 'in', threadId: tid } }, out ? 'Lead unsubscribed from email' : 'Lead replied by email');
+              if (integHooks.leadReplied) { try { integHooks.leadReplied(row.board, row.item, 'email', { from: m.from || row.to_email, optedOut: out }); } catch (e) { console.error('reply automations:', e.message); } }
             }
           }
         }
@@ -210,6 +211,7 @@ module.exports = function email({ db, q, now, broadcast, HttpError, readBody, se
             if (out) optOut(p10, 'phone', 'text STOP');
             if (!row) continue; // a text from someone we didn't text from Solver.ca: left to the rep's phone app
             addUpdate(row.board, row.item, { by: 'text', byName: 'Text reply', text: `💬 Text reply from ${p10.replace(/(\d{3})(\d{3})(\d{4})/, '($1) $2-$3')}\n\n${body}${out ? '\n\n(They texted STOP: this number won’t get any more texts from Solver.ca.)' : ''}`, sms: { dir: 'in' } }, out ? 'Lead texted STOP' : 'Lead replied by text');
+            if (integHooks.leadReplied) { try { integHooks.leadReplied(row.board, row.item, 'text', { from: p10, optedOut: out }); } catch (e) { console.error('reply automations:', e.message); } }
           }
           meta.set(key, started);
         }

@@ -24,7 +24,8 @@
   // Recursive-descent parser producing a small AST.
   function parse(src) {
     const t = tokenize(src); let p = 0;
-    const peek = () => t[p], eat = v => { if (t[p] && t[p].v === v) { p++; return true; } return false; };
+    // only operator tokens: a text "/" or "-" in CONCATENATE(MONTH({d}), "/", DAY({d})) is a string, not division
+    const peek = () => t[p], eat = v => { if (t[p] && t[p].k === 'op' && t[p].v === v) { p++; return true; } return false; };
     const expect = v => { if (!eat(v)) throw new Error('Expected ' + v); };
     function cmp() { let l = cat(); for (;;) { const o = peek(); if (o && o.k === 'op' && ['=', '<>', '<', '>', '<=', '>='].includes(o.v)) { p++; l = { op: o.v, l, r: cat() }; } else return l; } }
     function cat() { let l = add(); while (eat('&')) l = { op: '&', l, r: add() }; return l; }
@@ -43,7 +44,7 @@
         if (x.v === 'TRUE') return { lit: true }; if (x.v === 'FALSE') return { lit: false };
         throw new Error('Unknown name ' + x.v);
       }
-      if (x.v === '(') { const e = cmp(); expect(')'); return e; }
+      if (x.k === 'op' && x.v === '(') { const e = cmp(); expect(')'); return e; }
       throw new Error('Unexpected ' + x.v);
     }
     const ast = cmp(); if (p < t.length) throw new Error('Unexpected ' + t[p].v); return ast;
@@ -120,7 +121,7 @@
     SWITCH: (v, ...a) => { for (let i = 0; i + 1 < a.length; i += 2) if (String(v).toLowerCase() === String(a[i]).toLowerCase()) return a[i + 1]; return a.length % 2 ? a[a.length - 1] : ''; },
     XOR: (...a) => a.filter(truthy).length % 2 === 1,
     AND: (...a) => a.every(truthy), OR: (...a) => a.some(truthy), NOT: a => !truthy(a),
-    TODAY: () => today(), NOW: () => new Date().toISOString(),
+    TODAY: () => today(), NOW: () => dateRef('', new Date().toISOString()), // the local time, with its UTC offset
     DAYS: (end, start) => { const a = toDate(start), b = toDate(end); return a && b ? Math.round((b - a) / 864e5) : ''; },
     WORKDAYS: workdays,
     // date-times are compared as instants; time-only values ("14:30", "2:30 PM") as times of the same day
@@ -140,6 +141,31 @@
     TEXT: textFmt, YEAR: v => { const d = toDate(v); return d ? d.getFullYear() : ''; }, MONTH: v => { const d = toDate(v); return d ? d.getMonth() + 1 : ''; }, DAY: v => { const d = toDate(v); return d ? d.getDate() : ''; },
     ADD_DAYS: (v, n) => { const d = toDate(v); if (!d) return ''; d.setDate(d.getDate() + num(n)); return ymd(d); },
     SUBTRACT_DAYS: (v, n) => { const d = toDate(v); if (!d) return ''; d.setDate(d.getDate() - num(n)); return ymd(d); },
+    // the rest of Monday's function list
+    MINUS: (a, b) => num(a) - num(b), MULTIPLY: (...a) => a.reduce((s, v) => s * num(v), 1), DIVIDE: (a, b) => { const d = num(b); return d === 0 ? '' : num(a) / d; },
+    COUNT: (...a) => a.filter(v => v !== '' && v !== null && typeof v !== 'boolean' && Number.isFinite(Number(v))).length,
+    LOG: (v, base = 10) => Math.log(num(v)) / Math.log(num(base)), PI: () => Math.PI,
+    EXACT: (a, b) => String(a ?? '') === String(b ?? ''),
+    REPT: (v, n) => String(v ?? '').repeat(Math.max(0, Math.min(1000, Math.trunc(num(n)) || 0))),
+    SEARCH: (f, v, start = 1) => { const i = String(v ?? '').toLowerCase().indexOf(String(f ?? '').toLowerCase(), Math.max(0, num(start) - 1)); return i < 0 ? 0 : i + 1; },
+    SUBSTITUTE: (v, from, to = '', nth) => {
+      const s = String(v ?? ''), a = String(from ?? ''); if (!a) return s;
+      if (nth === undefined || nth === '') return s.split(a).join(String(to ?? ''));
+      let i = -1; for (let k = 0; k < num(nth); k++) { i = s.indexOf(a, i + 1); if (i < 0) return s; }
+      return s.slice(0, i) + String(to ?? '') + s.slice(i + a.length);
+    },
+    REPLACE: (v, start, len, to) => { const s = String(v ?? ''), i = Math.max(0, num(start) - 1); return s.slice(0, i) + String(to ?? '') + s.slice(i + Math.max(0, num(len))); },
+    DATE: (y, m, d) => { const x = new Date(num(y), num(m) - 1, num(d)); return isNaN(x) ? '' : ymd(x); },
+    DATEVALUE: v => { if (isDate(v)) return String(v).slice(0, 10); const t = Date.parse(v); return Number.isFinite(t) ? ymd(new Date(t)) : ''; },
+    WEEKDAY: v => { const d = toDate(v); return d ? d.getDay() : ''; }, // 0 = Sunday … 6 = Saturday
+    WEEKNUM: v => { const d = toDate(v); if (!d) return ''; const j = new Date(d.getFullYear(), 0, 1); return Math.floor((Math.round((d - j) / 864e5) + j.getDay()) / 7) + 1; },
+    ISOWEEKNUM: v => { const d = toDate(v); if (!d) return ''; const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())); const w = t.getUTCDay() || 7; t.setUTCDate(t.getUTCDate() + 4 - w); const y0 = new Date(Date.UTC(t.getUTCFullYear(), 0, 1)); return Math.ceil(((t - y0) / 864e5 + 1) / 7); },
+    WORKDAY: (v, n) => { const d = toDate(v); if (!d) return ''; let k = Math.trunc(num(n)); const s = k < 0 ? -1 : 1; while (k !== 0) { d.setDate(d.getDate() + s); const w = d.getDay(); if (w !== 0 && w !== 6) k -= s; } return ymd(d); },
+    // date-times reach formulas as the local wall time ("2026-03-01T21:30:00-05:00"); a plain date has no time (0)
+    HOUR: v => { const m = /T(\d\d):(\d\d)(?::(\d\d))?/.exec(String(v ?? '')); const t = m ? null : timeOnly(v); return m ? Number(m[1]) : t != null ? Math.floor(t / 60) : isDate(v) ? 0 : ''; },
+    MINUTE: v => { const m = /T(\d\d):(\d\d)(?::(\d\d))?/.exec(String(v ?? '')); const t = m ? null : timeOnly(v); return m ? Number(m[2]) : t != null ? t % 60 : isDate(v) ? 0 : ''; },
+    SECOND: v => { const m = /T(\d\d):(\d\d):(\d\d)/.exec(String(v ?? '')); return m ? Number(m[3]) : isDate(v) || timeOnly(v) != null ? 0 : ''; },
+    FORMAT_DATE: (v, f = 'MMM DD, YYYY') => (isDate(v) ? textFmt(v, f) : ''),
   };
 
   function evalNode(n, getRef, depth) {

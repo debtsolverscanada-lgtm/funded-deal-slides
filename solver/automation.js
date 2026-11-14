@@ -4,7 +4,8 @@
 // Solver.ca still never texts or emails anyone: Monday's email/SMS actions stay logged only ("external").
 'use strict';
 
-const TRIGGERS = ['status', 'column', 'created', 'moved_group', 'button', 'date_arrives', 'sub_status', 'moved_board', 'monday_only'];
+// 'replied': the lead answered an email or text sent from Solver.ca (run on the server when the reply is logged; value '' | 'email' | 'text')
+const TRIGGERS = ['status', 'column', 'created', 'moved_group', 'button', 'date_arrives', 'sub_status', 'moved_board', 'replied', 'monday_only'];
 const ACTIONS = ['move_group', 'set_status', 'set_value', 'set_date', 'clear', 'assign', 'create_update', 'move_board', 'copy_to_board', 'duplicate', 'notify', 'webhook', 'external'];
 const COND_OPS = ['is', 'is_not', 'empty', 'not_empty', 'contains', 'has_person', 'is_not_any'];
 // Only rules copied from Monday may keep Monday-only parts (they are shown and logged, never run).
@@ -45,6 +46,7 @@ function cleanRule(r, b, { strict, boardExists }) {
     case 'button': need(col(r.col) && col(r.col).type === 'button', 'pick a button column.'); break;
     case 'date_arrives': need(col(r.col) && col(r.col).type === 'date', 'pick a date column.'); out.when = str(r.when, 120); if (strict) need(/^(on the date|\d{1,3} day\(s\) (before|after) the date)(, at \d{1,2}:\d{2}.*)?$/.test(out.when) || !out.when, 'say when (on the date, or N days before/after, at a time).'); break;
     case 'sub_status': need(subCol(r.col) && subCol(r.col).type === 'status', 'pick a subitem status column.'); break;
+    case 'replied': if (r.value != null && !['', 'email', 'text'].includes(String(r.value))) throw `${name}: say whether it’s an email or a text reply (or either).`; break;
   }
   if (r.value != null) out.value = typeof r.value === 'boolean' ? r.value : str(r.value, 500);
   // conditions: status is / column empty / person is / group is (and a few more)
@@ -68,6 +70,7 @@ function cleanRule(r, b, { strict, boardExists }) {
     const x = { ...a };
     const c = r.trigger === 'sub_status' ? subCol(a.col) : col(a.col);
     if (r.trigger === 'sub_status' && strict && !SUB_ACTIONS.has(a.type)) throw `${name}: subitem automations can set, date or clear subitem columns only.`;
+    if (r.trigger === 'replied' && strict && ['move_board', 'copy_to_board', 'duplicate'].includes(a.type)) throw `${name}: a reply comes in on the server, so it can’t move, copy or duplicate the lead. Notify someone, set a status or move it to a group instead.`;
     switch (a.type) {
       case 'move_group': need(groupOk(a.group), 'pick a group to move to.'); break;
       case 'set_status': need(c && c.type === 'status', 'pick a status column to set.'); if (c && strict) need((c.labels || []).some(l => l.id === String(a.value)), 'pick the label to set.'); x.value = str(a.value, 200); break;

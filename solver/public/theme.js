@@ -10,10 +10,13 @@
     ['maroon', 'Maroon', '#4a1020'], ['blue', 'Blue', '#102a5c'], ['beige', 'Beige', '#efe3cf'],
   ];
   const get = () => { try { const t = localStorage.getItem('ks-theme'); return THEMES.some(x => x[0] === t) ? t : 'dark'; } catch (e) { return 'dark'; } };
-  const KEEP = '.home-hero, video, img, picture, canvas#coins, .pet, .penny, .penny-desk, .fx-avatar img, .mx-confetti, iframe, #newlead, .qr-box, .emo, .chip[style*="--c"], .pill[style*="--c"], .sumbar > span[style*="background:#"]';
+  const KEEP = '.home-hero, video, img, picture, canvas#coins, .pet, .penny, .penny-desk, .fx-avatar img, .mx-confetti, iframe, #newlead, .qr-box, .emo, .chip[style*="--c"], .pill[style*="--c"], .sumbar > span[style*="background:#"], .vx-chart rect.mark, .vx-chart path.mark, .vx-legend i, .vx-batt > span, .wl-key i, .st-bar i';
   const css = `
   html[data-theme="light"], html[data-theme="beige"] { filter: invert(1) hue-rotate(180deg); }
   html[data-theme="light"] :is(${KEEP}):not(.home-hero *):not(.penny-desk *):not(#newlead *):not(.qr-box *), html[data-theme="beige"] :is(${KEEP}):not(.home-hero *):not(.penny-desk *):not(#newlead *):not(.qr-box *) { filter: invert(1) hue-rotate(180deg); }
+  /* status colours in charts and filter swatches keep their real colour (like the pills); hover still brightens a bar */
+  html:is([data-theme="light"], [data-theme="beige"]) :is(.vx-chart .mark:hover):not(.home-hero *):not(.penny-desk *):not(#newlead *):not(.qr-box *) { filter: brightness(1.25) invert(1) hue-rotate(180deg); }
+  html:is([data-theme="light"], [data-theme="beige"]) .pop-check .sw:not([style*="var("]) { filter: saturate(0.5) brightness(1.05) invert(1) hue-rotate(180deg); }
   html[data-theme] { background: #000; }
   html[data-theme]:not([data-theme="dark"])::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 2147483646; }
   html[data-theme="grey"]::after { background: #34353a; mix-blend-mode: screen; }

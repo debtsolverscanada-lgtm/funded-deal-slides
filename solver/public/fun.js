@@ -248,7 +248,7 @@
   function addFlairButton(root) {
     if (!root || root.querySelector('[data-fx-open]')) return;
     const row = root.querySelector('[data-slot="settings"]') || root.querySelector('.form-row:last-of-type'); if (!row) return;
-    const b = document.createElement('button'); b.className = 'btn'; b.type = 'button'; b.dataset.fxOpen = '1'; b.textContent = '✦ Flair';
+    const b = document.createElement('button'); b.className = 'btn'; b.type = 'button'; b.dataset.fxOpen = '1'; b.textContent = row.closest('.pf-group') ? 'Flair' : '✦ Flair'; // the profile sheet draws its own star icon
     b.addEventListener('click', e => { e.stopPropagation(); openFlair(); }); row.appendChild(b);
   }
   const layer = document.getElementById('layer');

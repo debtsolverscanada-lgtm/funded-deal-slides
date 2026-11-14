@@ -5,7 +5,8 @@ Kanban views, subitems, updates, activity log, simple automations, person filter
 live updates between everyone who has it open.
 
 It's one Node process and one SQLite file. No packages to install, no outside services.
-**Monday is not changed by anything here.** Solver.ca is a separate test copy.
+**Monday is only changed for the boards listed in `MONDAY_WRITEBACK_BOARDS`** (edits there are written back;
+`MONDAY_WRITEBACK=off` stops it). Every other board stays in Solver.ca.
 
 ## Run it on your computer
 

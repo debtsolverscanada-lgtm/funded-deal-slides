@@ -36,7 +36,7 @@
     if (c.type === 'formula') { try { const r = A.formulaResult(b, item, c); const n = Number(r.value); return r.error || r.value === '' || !isFinite(n) ? 0 : n; } catch (e) { return 0; } }
     const v = (item.values || {})[c.id]; if (v === '' || v == null) return 0; const n = Number(v); return isFinite(n) ? n : 0;
   }
-  const fmtVal = (c, n) => c && c.format === 'currency' ? '$' + Math.round(n).toLocaleString('en-CA') : c && c.format === 'percent' ? fmtN(n) + '%' : fmtN(n);
+  const fmtVal = (c, n) => c && c.format === 'currency' ? '$' + Math.round(n).toLocaleString('en-CA') : c && c.format === 'percent' ? fmtN(n) + '%' : c && c.format === 'unit' && c.unit ? (c.unitLeft ? c.unit + ' ' + fmtN(n) : fmtN(n) + ' ' + c.unit) : fmtN(n);
 
   // ---------- per-view settings (saved views keep their own) ----------
   const mem = {};
@@ -99,7 +99,7 @@
   .tl-headrow { position:sticky; top:0; z-index:3; background:#0b0b0d; border-bottom:1px solid var(--line); }
   .tl-label { position:sticky; left:0; z-index:2; flex:none; background:#0b0b0d; border-right:1px solid var(--line); padding:0 10px; display:flex; align-items:center; gap:6px; min-width:0; }
   .tl-headrow .tl-label { z-index:4; color:var(--muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; line-height:44px; }
-  .tl-label button { border:0; background:none; color:#fff; text-align:left; padding:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; min-width:0; }
+  .tl-label button { align-self:stretch; border:0; background:none; color:#fff; text-align:left; padding:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; min-width:0; }
   .tl-ticks { position:relative; height:44px; flex:none; }
   .tl-tick { position:absolute; bottom:0; height:20px; border-left:1px solid rgba(255,255,255,.07); font-size:10.5px; color:var(--muted); padding:3px 0 0 4px; white-space:nowrap; font-family:var(--f-data); }
   .tl-top { position:absolute; top:4px; font-size:11.5px; color:#fff; font-weight:600; white-space:nowrap; padding-left:4px; border-left:1px solid rgba(255,255,255,.18); }

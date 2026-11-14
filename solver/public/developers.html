@@ -41,18 +41,18 @@ a { color: #fff; }
 <body>
 <main>
 <h1>Solver.ca API</h1>
-<p class="lead">Connect Solver.ca to n8n, Zapier, Make, your website, form tools, RingCentral, Google Sheets, or your own scripts. Admins set up keys, webhooks and lead links under <b>Integrations</b> in the app.</p>
+<p class="lead">Connect Solver.ca to n8n, Zapier, Make, your website, form tools, RingCentral, Google Sheets, or your own scripts. Admins set up keys, webhooks and lead links in the app under <b>your name → Connect apps → API keys &amp; webhooks</b>.</p>
 <div class="note"><p style="margin:0">Solver.ca never texts, emails or calls anyone by itself. Webhooks only tell <i>your</i> tools what changed. If a tool you connect sends messages, it must follow the house rules: never message Junk/Unqualified, referred, opted-out or “(copy)” leads.</p></div>
 
 <h2>1. Incoming lead links (no code)</h2>
-<p>Create one under <b>Integrations → Incoming lead links</b>, pick the board (and group), and paste the link into your form tool's “webhook” or “HTTP POST” step. Send JSON or form fields. Any field whose name matches a column title (for example <code>Phone</code>, <code>Email</code>, <code>Province</code>) fills that column. Everything else is added to the item's first update.</p>
+<p>Create one under <b>API keys &amp; webhooks → Lead links</b>, pick the board (and group), and paste the link into your form tool's “webhook” or “HTTP POST” step. Send JSON or form fields. Any field whose name matches a column title (for example <code>Phone</code>, <code>Email</code>, <code>Province</code>) fills that column. Everything else is added to the item's first update.</p>
 <pre><code>curl -X POST https://YOUR-SITE/api/v1/in/LINK-TOKEN \
   -H "Content-Type: application/json" \
   -d '{"first_name":"Dana","last_name":"Smith","Phone":"4035550101","Email":"dana@example.com","Amount Requested":85000}'</code></pre>
 <p>If “skip duplicates” is on, a second lead with the same phone number isn't created; the reply says <code>"duplicate": true</code>.</p>
 
 <h2>2. The API</h2>
-<p>Create a key under <b>Integrations → API keys</b> and send it with every request:</p>
+<p>Create a key under <b>API keys &amp; webhooks → API keys</b> and send it with every request:</p>
 <pre><code>Authorization: Bearer ks_…</code></pre>
 <div class="tw"><table>
 <tr><th>Request</th><th>What it does</th></tr>
@@ -74,7 +74,7 @@ curl -X PATCH https://YOUR-SITE/api/v1/boards/Setter%20Desk%20(Jan)/items/ITEM_I
   -d '{"group":"Appointment Booked","fields":{"Status":"Contacted"}}'</code></pre>
 
 <h2>3. Outgoing webhooks</h2>
-<p>Add one under <b>Integrations → Outgoing webhooks</b>. Solver.ca sends a <code>POST</code> with JSON within a second of the change, and retries up to 2 more times (after about 5 and 15 seconds) if your tool doesn't answer or answers with a 5xx error.</p>
+<p>Add one under <b>API keys &amp; webhooks → Send to a tool</b>. Solver.ca sends a <code>POST</code> with JSON within a second of the change, and retries up to 2 more times (after about 5 and 15 seconds) if your tool doesn't answer or answers with a 5xx error.</p>
 <div class="tw"><table>
 <tr><th>Event</th><th>When</th><th>Extra data</th></tr>
 <tr><td><code>item.created</code></td><td>A new item, from the app, the API, an automation or a lead link</td><td></td></tr>

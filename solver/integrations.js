@@ -157,6 +157,8 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     const rules = (b.automations || []).filter(r => r.on !== false && r.trigger && (
       (ev.type === 'rule' && r.id === ev.rule) || // one named rule (a date reminder that came due)
       (ev.type === 'moved_board' && r.trigger === 'moved_board') || // moved here by another board's rule (crossboard.js)
+      // the lead replied (email.js); Monday's copied "When a new email arrives → notify" runs too once it's switched on here
+      (ev.type === 'replied' && ((r.trigger === 'replied' && (!r.value || r.value === ev.value)) || (r.trigger === 'monday_only' && r.note === 'email_received' && ev.value === 'email'))) ||
       (ev.type === 'created' && r.trigger === 'created' && (!r.group || r.group === ev.group)) ||
       (ev.type === 'moved_group' && r.trigger === 'moved_group' && (!r.group || r.group === ev.group || (r.group === '__top__' && (b.groups[0] || {}).id === ev.group))) ||
       (ev.type === 'value' && (r.trigger === 'status' || r.trigger === 'column') && r.col === ev.col && (r.value == null || r.value === '' || (typeof r.value === 'boolean' ? r.value === !!(ev.value && ev.value !== 'false') : String(r.value) === String(ev.value)))))
@@ -307,9 +309,10 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     const iid = rid('i'); const item = { name, group: grp, pos: Date.now(), values, updates: [], subitems: [], createdAt: now(),
       activity: [{ at: now(), by: actor.id, text: `Created by ${actor.name}` }] };
     // a cell the import couldn't fill is flagged on the item itself
-    for (const w of warnings) item.activity.unshift({ at: now(), by: actor.id, text: `Import: ${w.title} left empty, “${w.value.slice(0, 80)}” ${w.why || 'isn’t one of its labels'}` });
+    const via = String(actor.id || '').startsWith('link:') ? 'Lead link' : 'Import';
+    for (const w of warnings) item.activity.unshift({ at: now(), by: actor.id, text: `${via}: ${w.title} left empty, “${w.value.slice(0, 80)}” ${w.why || 'isn’t one of its labels'}` });
     // and the value itself is kept whole, as a comment on the item, so nothing in the sheet is lost
-    if (warnings.length) item.updates.push({ at: now(), by: '', byName: actor.name, text: ('Import: these values didn’t fit their column (not one of its labels, not a number or not a date), so the cells were left empty:\n' + warnings.map(w => `${w.title}: ${w.value}`).join('\n')).slice(0, 20000) });    if (body.update) item.updates.push({ at: now(), by: '', byName: actor.name, text: String(body.update).slice(0, 4000) });
+    if (warnings.length) item.updates.push({ at: now(), by: '', byName: actor.name, text: (`${via}: these values didn’t fit their column (not one of its labels, not a number or not a date), so the cells were left empty:\n` + warnings.map(w => `${w.title}: ${w.value}`).join('\n')).slice(0, 20000) });    if (body.update) item.updates.push({ at: now(), by: '', byName: actor.name, text: String(body.update).slice(0, 4000) });
     const notes = [];
     runRules(b, item, { type: 'created', group: grp }, actor, notes, iid);
     saveItem(b.id, iid, item, actor, opts);
@@ -325,6 +328,15 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
     return { id: 'key:' + row.id, name: 'API key “' + row.name + '”', scope: row.scope };
   }
 
+  // a urlencoded body (name=Dana&Phone=403…) as a flat object; a field sent twice keeps every answer, comma-joined
+  function readForm(req, limit) {
+    return new Promise((resolve, reject) => {
+      let size = 0; const chunks = [];
+      req.on('data', c => { size += c.length; if (size > limit) { reject(new HttpError(413, 'That lead is too large.')); req.destroy(); } else chunks.push(c); });
+      req.on('end', () => { const out = {}; for (const [k, v] of new URLSearchParams(Buffer.concat(chunks).toString('utf8'))) out[k] = k in out ? out[k] + ', ' + v : v; resolve(out); });
+      req.on('error', reject);
+    });
+  }
   // ---------- /api/v1 (API key) and /api/v1/in/<token> (incoming lead links) ----------
   async function handleV1(req, res, url) {
     const p = url.pathname, method = req.method;
@@ -365,7 +377,9 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
       }
       // a group sent with the lead must exist; otherwise the link's own group (then the first group) is used, so no lead is lost
       const grpIn = raw.group && groupId(b, String(raw.group)) ? String(raw.group) : (h.grp && groupId(b, h.grp) ? h.grp : undefined);
-      const out = createItem(b, { name: String(name).slice(0, 255), group: grpIn, values: known, update: [raw.update || raw.note, extra.length ? 'Other form answers:\n' + extra.join('\n') : ''].filter(Boolean).join('\n\n') }, actor);
+      // lenient: an answer that isn't one of a status column's labels, a number or a date leaves that cell empty and is kept
+      // as a comment on the lead (like a spreadsheet import), so a form tool sending "Hot" never loses the whole lead
+      const out = createItem(b, { name: String(name).slice(0, 255), group: grpIn, values: known, update: [raw.update || raw.note, extra.length ? 'Other form answers:\n' + extra.join('\n') : ''].filter(Boolean).join('\n\n') }, actor, { lenient: true });
       setHookResult.run(now(), 'created', null, h.id);
       return send(res, 201, { ok: true, id: out.id });
     }
@@ -442,11 +456,14 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
       fresh();
       const values = toValues(b, { ...(body.values || {}), ...(body.fields || {}) }, errors);
       let grp = item.group; if (body.group) { grp = groupId(b, body.group); if (!grp) errors.push(`No group called “${body.group}”.`); }
+      // a name made only of spaces would leave a blank row, like creating one without a name
+      const newName = body.name === undefined || body.name === null ? '' : String(body.name).trim().slice(0, 255);
+      if (body.name !== undefined && body.name !== null && String(body.name) !== '' && !newName) errors.push('Give the item a name.');
       if (errors.length) throw new HttpError(400, errors.join(' '));
       // columns an admin locked can't be changed through the API either
       const locked = lockedCols(null, b), bad = Object.keys(values).filter(k => locked.has(k) && JSON.stringify(values[k] ?? '') !== JSON.stringify((item.values || {})[k] ?? ''));
       if (bad.length) { if (lockError) throw lockError(b, new Set(bad)); throw new HttpError(403, 'That column is locked.'); }
-      const next = { ...item, values: { ...(item.values || {}), ...values }, group: grp, ...(body.name ? { name: String(body.name) } : {}) };
+      const next = { ...item, values: { ...(item.values || {}), ...values }, group: grp, ...(newName ? { name: newName } : {}) };
       next.activity = [{ at: now(), by: user.id, text: `Changed by ${user.name}` }, ...(item.activity || [])].slice(0, 40);
       const notes = [];
       // only real changes set off rules (sending the value a column already has does nothing, like the app)
@@ -488,12 +505,14 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
         }
         const u = safeUrl(b.url); if (!u) throw new HttpError(400, 'Enter a public https:// address.');
         try { await netguard.checkUrl(u); } catch (e) { throw new HttpError(400, e.message + ' Enter a public https:// address.'); }
+        // only one board's events: a board that doesn't exist would mean a webhook that never fires
+        const ob = b.board ? findBoard(b.board) : null; if (b.board && !ob) throw new HttpError(400, 'That board doesn’t exist. Pick a board or “all boards”.');
         const ev = (Array.isArray(b.events) ? b.events : []).filter(e => EVENTS.includes(e));
         // several webhooks to one tool (e.g. n8n) can share one signing secret, so the tool checks them all with one key
         const twin = b.sameSecretAs ? db.prepare("SELECT name, secret FROM hooks WHERE id = ? AND kind = 'out'").get(String(b.sameSecretAs)) : null;
         if (b.sameSecretAs && !twin) throw new HttpError(400, 'That webhook to share a secret with doesn’t exist.');
         const secret = twin ? twin.secret : crypto.randomBytes(24).toString('base64url');
-        db.prepare("INSERT INTO hooks (id, kind, name, url, secret, events, board, created_at) VALUES (?, 'out', ?, ?, ?, ?, ?, ?)").run(rid('h_'), name, u, secret, JSON.stringify(ev), b.board || null, now());
+        db.prepare("INSERT INTO hooks (id, kind, name, url, secret, events, board, created_at) VALUES (?, 'out', ?, ?, ?, ?, ?, ?)").run(rid('h_'), name, u, secret, JSON.stringify(ev), ob ? ob.id : null, now());
         if (twin) return send(res, 201, { ok: true, sharedWith: twin.name, note: `Signed with the same secret as “${twin.name}”.` });
         return send(res, 201, { ok: true, secret, note: 'Use this secret to check the X-Solver-Signature header. It won’t be shown again.' });
       }
@@ -504,7 +523,8 @@ module.exports = function integrations({ db, q, now, broadcast, HttpError, readB
       if (hm[2] && method === 'POST') {
         if (h.kind !== 'out') throw new HttpError(400, 'Only outgoing webhooks can be tested.');
         const status = await deliver(h, { event: 'test', delivery: rid('d_'), at: now(), message: 'This is a test from Solver.ca.' });
-        return send(res, 200, { status });
+        const after = db.prepare('SELECT last_error FROM hooks WHERE id = ?').get(h.id);
+        return send(res, 200, { status, error: status >= 200 && status < 300 ? null : (after && after.last_error) || null });
       }
       if (method === 'PATCH') { const b = await readBody(req); if (typeof b.active === 'boolean') db.prepare('UPDATE hooks SET active = ? WHERE id = ?').run(b.active ? 1 : 0, h.id); return send(res, 200, { ok: true }); }
       if (method === 'DELETE') { db.prepare('DELETE FROM hooks WHERE id = ?').run(h.id); return send(res, 200, { ok: true }); }

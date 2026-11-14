@@ -28,6 +28,24 @@ module.exports = function ext(ctx) {
   integHooks.onEvent = (body, hits, actor) => comms.onEvent(body, hits, actor);
   integHooks.newItem = (bid, iid, doc) => newleads.noteItem(bid, iid, doc); // NEW LEAD banners
   integHooks.itemSaved = (bid, iid, before, after) => sequences.onItem(bid, iid, before, after); // email sequences
+  // "When the lead replies" rules (Monday's "When a new email arrives → notify"): run on the server as the reply is logged.
+  // REPLY_AUTOMATIONS=off stops them (the reply is still logged on the lead).
+  integHooks.leadReplied = (bid, iid, kind) => {
+    if (String(process.env.REPLY_AUTOMATIONS || '').trim().toLowerCase() === 'off') return;
+    const br = ctx.q.doc.get('boards/' + bid), ir = ctx.q.doc.get(`boards/${bid}/items/${iid}`); if (!br || !ir) return;
+    const b = { id: bid, ...JSON.parse(br.data) };
+    if (!(b.automations || []).some(r => r.on !== false && (r.trigger === 'replied' || (r.trigger === 'monday_only' && r.note === 'email_received')))) return;
+    const before = JSON.parse(ir.data), item = JSON.parse(ir.data), notes = [];
+    ctx.integ.runRules(b, item, { type: 'replied', value: kind }, { role: 'admin', name: kind === 'text' ? 'a text reply' : 'an email reply', via: 'reply', noteKind: 'automation' }, notes, iid);
+    if (JSON.stringify(before) !== JSON.stringify(item)) {
+      const path = `boards/${bid}/items/${iid}`;
+      ctx.q.upsertDoc.run(path, `boards/${bid}/items`, iid, JSON.stringify(item), ctx.now(), 'automation');
+      ctx.broadcast({ op: 'set', col: `boards/${bid}/items`, id: iid, data: item });
+      ctx.integ.itemChanged(path, before, item, 'automation');
+      sequences.onItem(bid, iid, before, item); mondaywrite.onSaved(bid, iid, before, item, { name: 'Automation' });
+    }
+    ctx.integ.sendNotes(b, iid, item, notes);
+  };
 
   const modules = [automation, ai, docs, push, alerts, comms, email, blast, apps, newleads, sequences, crossboard, stats, mondaywrite];
   return {

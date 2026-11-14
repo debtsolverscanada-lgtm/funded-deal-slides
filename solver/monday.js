@@ -73,6 +73,10 @@ function convColumns(cols) {
       col.type = 'number';
       const sym = (s.unit || {}).symbol || '';
       if (sym === '$') col.format = 'currency'; else if (sym === '%') col.format = 'percent';
+      else if (sym) { // Monday's other units: "custom" (e.g. " Months") or a symbol like €, £, ¥
+        const u = String(sym === 'custom' ? (s.unit || {}).custom_unit || '' : sym).trim().slice(0, 20);
+        if (u) { col.format = 'unit'; col.unit = u; if ((s.unit || {}).direction === 'left') col.unitLeft = true; }
+      }
     } else if (c.type === 'formula') {
       col.type = 'formula'; col.formula = String(s.formula || '');
     } else if (c.type === 'checkbox') col.type = 'checkbox';

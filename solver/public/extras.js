@@ -68,7 +68,7 @@
     const rc = d.ringcentral || {};
     return `<div class="comms"><div class="cm-head"><h4 class="sec-title">Calls and texts</h4><button class="btn" data-act="comms-refresh">Refresh</button></div>
       <p class="rail-note">${d.phones ? 'Matched by this lead’s phone number.' : 'This item has no phone number yet, so only events sent for this item show here.'} Texts and emails sent from Solver.ca show here too; calls are read-only.</p>
-      <div class="cm-rc ${rc.on ? 'on' : ''}">${rc.on ? (rc.error ? 'RingCentral: ' + esc(rc.error) : 'RingCentral call log and texts: connected (read-only)') : 'RingCentral: not connected. Events your phone tools post to Solver.ca show here.'}</div>
+      <div class="cm-rc ${rc.on ? 'on' : ''}">${rc.on ? (rc.error ? 'RingCentral: ' + esc(rc.error) : 'RingCentral call log and texts: connected (read-only)') : 'RingCentral call log: not connected, so calls made outside Solver.ca don’t show. Texts sent from Solver.ca and events your phone tools post here still do.'}</div>
       ${rows ? `<ul class="cm-list">${rows}</ul>` : '<p class="rail-note">No calls or texts recorded yet.</p>'}</div>`;
   }
 

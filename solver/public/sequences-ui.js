@@ -39,24 +39,37 @@
     const byBoard = {}; for (const s of state.list) { const k = s.boards.map(bname).join(', '); (byBoard[k] = byBoard[k] || []).push(s); }
     const card = s => `<div class="sq-card${s.active ? ' on' : ''}">
         <div class="sq-row1"><b>${esc(s.name)}</b><label class="sq-switch" title="${s.active ? 'On: sending' : 'Off'}"><input type="checkbox" data-sq="toggle" data-id="${esc(s.id)}" ${s.active ? 'checked' : ''}><span></span></label></div>
-        <div class="sq-meta">${trig(s)} · ${s.steps.length} email${s.steps.length > 1 ? 's' : ''} · from ${esc(s.from || 'the board’s rep')}</div>
+        <div class="sq-meta">${trig(s)} · ${s.steps.length} email${s.steps.length > 1 ? 's' : ''} · from ${esc(s.from || 'the board’s rep')} · ${esc(winText(s))}</div>
         ${s.note ? `<div class="sq-note">${esc(s.note)}</div>` : ''}
-        <div class="sq-row2"><span>${s.counts.active} in it · ${s.counts.done} finished · ${s.counts.stopped} stopped</span><span><button class="btn" data-sq="people" data-id="${esc(s.id)}">People</button><button class="btn" data-sq="edit" data-id="${esc(s.id)}">Edit</button></span></div></div>`;
+        <div class="sq-row2"><span>${s.counts.active} in it${s.counts.paused ? ` · ${s.counts.paused} paused` : ''} · ${s.counts.done} finished · ${s.counts.stopped} stopped${s.counts.sent ? ` · <b>${s.counts.sent}</b> sent · <b>${s.counts.replied}</b> replied` : ''}</span><span><button class="btn" data-sq="people" data-id="${esc(s.id)}">People</button><button class="btn" data-sq="edit" data-id="${esc(s.id)}">Edit</button></span></div></div>`;
     shell(`<div class="sq-head"><h3>Email sequences</h3><button class="btn primary" data-sq="new">+ New sequence</button></div>
       ${state.paused ? '<p class="em-warn">All sequences are paused on the server (SEQUENCES=off).</p>' : ''}
       <p class="rail-note" style="margin-top:0">Copied from Monday. They start <b>off</b>: turn one on only after you turn its twin off in Monday, or leads get every email twice.</p>
       ${Object.keys(byBoard).map(k => `<h4 class="sq-board">${esc(k)}</h4>${byBoard[k].map(card).join('')}`).join('') || '<p class="rail-note">No sequences yet.</p>'}
       <div class="form-row"><button class="btn" data-sq="close">Close</button></div>`);
   }
+  // Pause / Resume / Stop for one lead's run (viewers never change sequences; the server checks too)
+  const canAct = () => !!S().me && S().me.role !== 'viewer';
+  const runBtns = (r, back) => { if (!canAct() || (r.status !== 'active' && r.status !== 'paused')) return ''; const b = (a, l) => `<button class="btn" data-sq="${a}" data-id="${esc(r.id)}" ${back ? `data-back="${esc(back)}"` : ''}>${l}</button>`; return ` <span class="sq-acts">${r.status === 'active' ? b('pause', 'Pause') : b('resume', 'Resume')}${b('stop', 'Stop')}</span>`; };
+  // the sequence's numbers, like Monday's sequence analytics (no open tracking: Solver doesn't put pixels in emails)
+  const when = iso => { const t = new Date(iso); if (isNaN(t)) return ''; return t <= Date.now() + 60e3 ? 'due now' : t.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
+  const pct = (a, b) => b ? Math.round(a / b * 100) + '%' : '–';
+  const statsHtml = (x, s) => !x ? '' : `<div class="sq-stats"><div><b>${x.enrolled}</b><span>enrolled</span></div><div><b>${x.sent}</b><span>emails sent</span></div><div><b>${x.replied}</b><span>replied</span></div><div><b>${pct(x.replied, x.enrolled)}</b><span>reply rate</span></div></div>
+    ${x.sent ? `<table class="sq-steps"><thead><tr><th>Email</th><th>Sent</th><th>Replied after it</th></tr></thead><tbody>${x.steps.map((p, k) => `<tr><td>${k + 1}. ${esc((s.steps[k] || {}).subject || '')}</td><td>${p.sent}</td><td>${p.replied} <small>${pct(p.replied, p.sent)}</small></td></tr>`).join('')}</tbody></table>` : ''}`;
   async function openPeople(id) {
     const s = state.list.find(x => x.id === id); shell(`<h3>${esc(s.name)}</h3><p>Loading…</p>`);
     const d = await api('GET', `/api/seq/${encodeURIComponent(id)}/enrolled`);
-    const st = r => r.status === 'active' ? `<span class="app-st set">Email ${r.step + 1} of ${r.of} next</span>` : r.status === 'done' ? '<span class="app-st on">Finished</span>' : `<span class="app-st off">Stopped</span> <small>${esc(r.reason || '')}</small>`;
-    shell(`<h3>${esc(s.name)} · people</h3><div class="sq-people">${d.rows.map(r => `<div class="sq-person"><button class="linkish" data-sq="openlead" data-b="${esc(r.board)}" data-i="${esc(r.item)}">${esc(r.name)}</button> <small>${esc(bname(r.board))}</small> ${st(r)}${r.status === 'active' ? ` <button class="btn" data-sq="stop" data-id="${esc(r.id)}" data-back="${esc(id)}">Stop</button>` : ''}</div>`).join('') || '<p class="rail-note">Nobody yet.</p>'}</div>
+    const st = r => r.status === 'active' ? `<span class="app-st set">Email ${r.step + 1} of ${r.of} next</span>` : r.status === 'paused' ? `<span class="app-st off">Paused</span> <small>before email ${r.step + 1}</small>` : r.status === 'done' ? '<span class="app-st on">Finished</span>' : `<span class="app-st off">Stopped</span> <small>${esc(r.reason || '')}</small>`;
+    shell(`<h3>${esc(s.name)} · people</h3>${statsHtml(d.stats, s)}<div class="sq-people">${d.rows.map(r => `<div class="sq-person"><button class="linkish" data-sq="openlead" data-b="${esc(r.board)}" data-i="${esc(r.item)}">${esc(r.name)}</button> <small>${esc(bname(r.board))}</small> ${st(r)}${runBtns(r, id)}</div>`).join('') || '<p class="rail-note">Nobody yet.</p>'}${d.total > d.rows.length ? `<p class="rail-note">Showing the newest ${d.rows.length} of ${d.total}.</p>` : ''}</div>
       <div class="form-row"><button class="btn" data-sq="back">‹ Back</button></div>`);
   }
 
   // ---------- editor ----------
+  const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const win = s => s.window && Array.isArray(s.window.days) ? s.window : (s.window = { days: DAYS.slice(0, 6), from: 8, to: 20 });
+  const hrLabel = h => h === 0 ? '12am' : h === 24 ? 'midnight' : h === 12 ? 'noon' : (h % 12) + (h < 12 ? 'am' : 'pm');
+  const winText = s => { const w = s.window && Array.isArray(s.window.days) ? s.window : { days: DAYS.slice(0, 6), from: 8, to: 20 }; const i = w.days.map(d => DAYS.indexOf(d)).sort((a, b) => a - b); const run = i.length > 2 && i[i.length - 1] - i[0] === i.length - 1; return `${i.length === 7 ? 'every day' : run ? DAYS[i[0]] + '–' + DAYS[i[i.length - 1]] : i.map(k => DAYS[k]).join(', ')} ${hrLabel(w.from)}–${hrLabel(w.to)}`; };
+  const hrs = (a, b, cur) => { let o = ''; for (let h = a; h <= b; h++) o += `<option value="${h}" ${h === Number(cur) ? 'selected' : ''}>${hrLabel(h)}</option>`; return o; };
   function openEdit(id) {
     const s = id ? JSON.parse(JSON.stringify(state.list.find(x => x.id === id))) : { id: 'seq_' + Math.random().toString(36).slice(2, 10), name: '', boards: [S().boardId].filter(Boolean), trigger: { type: 'created' }, from: '', footer: true, stopOnReply: true, steps: [{ waitDays: 0, waitHours: 0, subject: '', body: '' }], active: false, _new: true };
     state.view = 'edit'; state.edit = s; drawEdit(); readForm(); state.orig = JSON.stringify(s);
@@ -74,6 +87,8 @@
         ${s.trigger.type === 'status' ? `<div class="sq-2"><select class="field-input" data-f="tcol">${statusCols.map(c => opt(c.id, sc && sc.id, c.title)).join('')}</select><select class="field-input" data-f="tlabel">${((sc && sc.labels) || []).map(l => opt(l.label, s.trigger.label, l.label)).join('')}</select></div>` : ''}
         ${s.trigger.type === 'group' ? `<select class="field-input" data-f="tgroup">${(b.groups || []).map(g => opt(g.id, s.trigger.group, g.name)).join('')}</select>` : ''}
         <label class="int-field"><span>Sent from</span><input class="field-input" data-f="from" value="${esc(s.from)}" placeholder="Leave empty: each board’s own rep"></label>
+        <div class="int-field"><span>Sends only on</span><div class="sq-days">${DAYS.map(x => `<label class="int-ev"><input type="checkbox" data-f="wday" value="${x}" ${win(s).days.includes(x) ? 'checked' : ''}><span>${x}</span></label>`).join('')}</div>
+          <div class="sq-hours">between <select class="field-input" data-f="wfrom" aria-label="From">${hrs(0, 23, win(s).from)}</select> and <select class="field-input" data-f="wto" aria-label="Until">${hrs(1, 24, win(s).to)}</select> <small>in the lead’s own province time</small></div></div>
         <label class="int-ev"><input type="checkbox" data-f="stopOnReply" ${s.stopOnReply ? 'checked' : ''}><span>Stop when the lead replies</span></label>
         <label class="int-ev"><input type="checkbox" data-f="footer" ${s.footer ? 'checked' : ''}><span>Add the “reply UNSUBSCRIBE” line (marketing emails)</span></label>
         <div class="int-field"><span>Emails</span>${s.steps.map((st, k) => `<div class="sq-step"><div class="sq-step-h"><b>Email ${k + 1}</b><span>Wait <input class="field-input sq-n" type="number" min="0" data-f="wd" data-k="${k}" value="${st.waitDays}"> days <input class="field-input sq-n" type="number" min="0" max="23" data-f="wh" data-k="${k}" value="${st.waitHours}"> h ${k ? 'after the last one' : 'after it starts'}</span>${s.steps.length > 1 ? `<button class="btn" data-sq="rmstep" data-k="${k}">Remove</button>` : ''}</div>
@@ -97,7 +112,10 @@
       else if (f === 'tcol') s.trigger.col = el.value;
       else if (f === 'tlabel') s.trigger.label = el.value;
       else if (f === 'tgroup') s.trigger.group = el.value;
+      else if (f === 'wfrom') win(s).from = Number(el.value);
+      else if (f === 'wto') win(s).to = Number(el.value);
     });
+    if (root.querySelector('[data-f="wday"]')) win(s).days = [...root.querySelectorAll('[data-f="wday"]:checked')].map(x => x.value);
     s.boards = [...root.querySelectorAll('[data-f="board"]:checked')].map(x => x.value);
     s.steps.forEach(st => { const h = Math.max(0, Math.floor(st.waitDays)) * 24 + Math.max(0, Math.floor(st.waitHours)); st.waitDays = Math.floor(h / 24); st.waitHours = h % 24; }); // 48 h is kept as 2 days
   }
@@ -114,12 +132,37 @@
   }
   function drawLead() {
     const d = state.data, item = (A().itemById || (() => null))(state.iid);
-    const st = r => r.status === 'active' ? (r.active ? `<span class="app-st set">Email ${r.step + 1} of ${r.of} next</span>` : '<span class="app-st off">Sequence is off</span>') : r.status === 'done' ? '<span class="app-st on">Finished</span>' : `<span class="app-st off">Stopped</span> <small>${esc(r.reason || '')}</small>`;
+    const st = r => r.status === 'active' ? (r.active ? `<span class="app-st set">Email ${r.step + 1} of ${r.of} next${r.next ? ` · ${esc(when(r.next))}` : ''}</span>` : '<span class="app-st off">Sequence is off</span>') : r.status === 'paused' ? `<span class="app-st off">Paused</span> <small>before email ${r.step + 1} of ${r.of}</small>` : r.status === 'done' ? '<span class="app-st on">Finished</span>' : `<span class="app-st off">Stopped</span> <small>${esc(r.reason || '')}</small>`;
     const used = new Set(d.rows.filter(r => !(r.status === 'stopped' && !r.step && r.reason === 'no sending address for this board')).map(r => r.seq)), avail = d.available.filter(s => !used.has(s.id));
     shell(`<h3>Sequences · ${esc(item ? item.name : '')}</h3>
-      ${d.rows.map(r => `<div class="sq-person"><b>${esc(r.name)}</b> ${st(r)}${r.status === 'active' ? ` <button class="btn" data-sq="stop" data-id="${esc(r.id)}">Stop</button>` : ''}</div>`).join('') || '<p class="rail-note">Not in any sequence.</p>'}
+      ${d.rows.map(r => `<div class="sq-person"><b>${esc(r.name)}</b> ${st(r)}${runBtns(r)}</div>`).join('') || '<p class="rail-note">Not in any sequence.</p>'}
       ${avail.length ? `<div class="sq-2" style="margin-top:12px"><select class="field-input" id="sq-add">${avail.map(s => `<option value="${esc(s.id)}">${esc(s.name)}${s.active ? '' : ' (off)'}</option>`).join('')}</select><button class="btn primary" data-sq="enroll">Add to sequence</button></div>` : ''}
       <div class="form-row"><button class="btn" data-sq="close">Close</button></div>`);
+  }
+
+  // ---------- many leads at once (the board's selection bar), like enrolling several items in Monday ----------
+  async function openBulk(bid, ids) {
+    shell('<h3>Add to a sequence</h3><p>Loading…</p>');
+    try {
+      const d = await api('GET', '/api/seq'), list = d.sequences.filter(s => s.boards.includes(bid));
+      state = { view: 'bulk', bid, ids: [...ids] };
+      shell(`<h3>Add ${ids.length} lead${ids.length === 1 ? '' : 's'} to a sequence</h3>
+        ${list.length ? `<div class="sq-2"><select class="field-input" id="sq-add" aria-label="Sequence">${list.map(s => `<option value="${esc(s.id)}">${esc(s.name)}${s.active ? '' : ' (off)'}</option>`).join('')}</select><button class="btn primary" data-sq="bulkgo">Add ${ids.length}</button></div>
+        <p class="rail-note">Leads that are Junk, Unqualified, opted out, referred, have no email, or were already in that sequence are skipped.</p>` : '<p class="rail-note">No sequence is set up for this board yet.</p>'}
+        <div id="sq-res"></div><div class="form-row"><button class="btn" data-sq="close">Close</button></div>`);
+    } catch (e) { shell(`<h3>Add to a sequence</h3><p class="em-warn">${esc(e.message)}</p><div class="form-row"><button class="btn" data-sq="close">Close</button></div>`); }
+  }
+  async function runBulk(btn) {
+    const seq = root.querySelector('#sq-add').value, out = root.querySelector('#sq-res'), why = {}; let ok = 0, n = 0, on = true;
+    btn.disabled = true; root.querySelector('#sq-add').disabled = true;
+    for (const iid of state.ids) {
+      if (!root || state.view !== 'bulk') return; // closed meanwhile: stop adding
+      try { const r = await api('POST', '/api/seq/enroll', { seq, board: state.bid, item: iid }); ok++; on = r.active; }
+      catch (e) { why[e.message] = (why[e.message] || 0) + 1; }
+      n++; out.innerHTML = `<p class="rail-note">${n} of ${state.ids.length}…</p>`;
+    }
+    out.innerHTML = `<p><b>${ok}</b> added${ok && !on ? ' (that sequence is off, so nothing sends until an admin turns it on)' : ''}.</p>${Object.keys(why).length ? `<ul class="sq-skip">${Object.entries(why).map(([m, c]) => `<li>${c} skipped: ${esc(m)}</li>`).join('')}</ul>` : ''}`;
+    btn.closest('.sq-2').remove(); // done: the Close button below is the way out
   }
 
   // ---------- clicks ----------
@@ -140,6 +183,8 @@
         await api('PUT', `/api/seq/${encodeURIComponent(id)}`, body); toast('Sequence saved.'); openList();
       } else if (a === 'delete') { if (!confirm('Delete this sequence? Anyone in it stops getting its emails.')) return; await api('DELETE', `/api/seq/${encodeURIComponent(state.edit.id)}`); toast('Deleted.'); openList(); }
       else if (a === 'stop') { if (!confirm('Stop this lead’s emails from this sequence?')) return; await api('POST', '/api/seq/stop', { id: t.dataset.id }); toast('Stopped.'); if (state.view === 'lead') openLead(state.bid, state.iid); else openPeople(t.dataset.back); }
+      else if (a === 'bulkgo') await runBulk(t);
+      else if (a === 'pause' || a === 'resume') { await api('POST', '/api/seq/pause', { id: t.dataset.id, pause: a === 'pause' }); toast(a === 'pause' ? 'Paused. Nothing sends to this lead until you resume.' : 'Resumed.'); if (state.view === 'lead') openLead(state.bid, state.iid); else openPeople(t.dataset.back); }
       else if (a === 'enroll') { const r = await api('POST', '/api/seq/enroll', { seq: root.querySelector('#sq-add').value, board: state.bid, item: state.iid }); toast(r.active ? 'Added. The first email goes out on schedule.' : 'Added, but that sequence is off, so nothing sends until an admin turns it on.'); openLead(state.bid, state.iid); }
       else if (a === 'openlead') { const b = t.dataset.b, i = t.dataset.i; close(); window.SolverOpen && window.SolverOpen(b, i); }
     } catch (err) { const m = root && root.querySelector('#sq-msg'); if (m) { m.hidden = false; m.textContent = err.message; } else toast(err.message); }
@@ -154,5 +199,5 @@
       readForm(); if (t.dataset.f === 'ttype') state.edit.trigger = { type: t.value }; drawEdit();
     }
   }
-  window.SolverSeq = { openList, openLead };
+  window.SolverSeq = { openList, openLead, openBulk };
 })();
